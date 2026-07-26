@@ -125,17 +125,27 @@ function Invoke-UciAcceptance {
         }
         if (-not $modelLine -or
             $modelLine -notmatch
-                "model loaded:backend:flashfork:([^:]+):fingerprint:(\d+):provider:([^:]+):") {
+                "fingerprint:(\d+):provider:([^:]+):") {
             throw "installed UCI engine did not load a typed model identity"
         }
-        $modelId = $Matches[1]
-        $fingerprint = $Matches[2]
-        $provider = $Matches[3]
+        $fingerprint = $Matches[1]
+        $provider = $Matches[2]
         $expectedModelRoot = Join-Path `
             (Join-Path (Split-Path -Parent (Split-Path -Parent $Engine)) "models") `
             "default"
         if ([IO.Path]::GetFullPath($modelRoot) -ne [IO.Path]::GetFullPath($expectedModelRoot)) {
             throw "installed ModelRoot mismatch: $modelRoot"
+        }
+        $modelMetadataPath = Join-Path $modelRoot "model.meta.json"
+        if (-not (Test-Path -LiteralPath $modelMetadataPath -PathType Leaf)) {
+            throw "installed model metadata is missing"
+        }
+        $modelMetadata =
+            Get-Content -Raw -LiteralPath $modelMetadataPath |
+                ConvertFrom-Json
+        $modelId = [string]$modelMetadata.model_id
+        if ([string]::IsNullOrWhiteSpace($modelId)) {
+            throw "installed model metadata has no typed model id"
         }
         $process.StandardInput.WriteLine("isready")
         while (($line = & $readLine "isready") -ne "readyok") {
