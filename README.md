@@ -39,9 +39,14 @@ npm run build --prefix web
 Run locally:
 
 ```powershell
-build\windows-release\Release\arena-service.exe --data-dir runtime
-build\windows-release\Release\arena.exe --data-dir runtime status
+.\run-local.cmd
 ```
+
+The launcher resolves every path from the repository root, starts or reuses the
+local service, waits for readiness, and opens the paired dashboard. It can be
+invoked from any working directory. Use `.\run-local.cmd -NoOpen` to print the
+pairing URL without opening a browser, and `.\run-local.cmd -Stop` to stop the
+service instance started by the launcher.
 
 The service binds to `127.0.0.1` only. Production packages install it through
 Windows SCM or systemd. See `specs/index.yaml` before changing behavior.

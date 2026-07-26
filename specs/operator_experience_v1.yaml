@@ -55,6 +55,15 @@ managed_service_experience:
     - Explain unavailable actions without presenting them as failures.
     - Do not show an unconfigured optional service as an unhealthy manager resource.
 
+local_development_launcher:
+  entrypoint: run-local.cmd
+  requirements:
+    - Resolve binaries, web assets, data, logs, and helper scripts from the repository root rather than the caller working directory.
+    - Reuse a healthy service already running on the selected port.
+    - Start the service hidden, wait for authenticated readiness, and then invoke the normal arena ui pairing flow.
+    - Fail with actionable build instructions when required artifacts are absent.
+    - Record and validate the launched process identity before stopping it.
+
 chessboard:
   implementation: custom_svg
   authority: backend_fen_snapshots
