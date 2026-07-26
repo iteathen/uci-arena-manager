@@ -81,13 +81,13 @@ arena service discover book_forge
 arena service add-book-forge --node "C:\Program Files\nodejs\node.exe" --cli C:\path\to\book_forge\src\cli.mjs --workspace E:\book-forge
 ```
 
-The UCI Arena Evidence Service can be tracked while its independent
-implementation is in development. It remains visibly unavailable until an
-endpoint satisfies the versioned capability and immutable snapshot contract:
+The UCI Arena Evidence Service is an implemented optional Node service. Point
+the manager at its public CLI and workspace; the manager validates and invokes
+that CLI without importing its source or reading its catalog:
 
 ```powershell
 arena service discover uci_arena_evidence
-arena service track-evidence-service --service-endpoint http://127.0.0.1:<port>
+arena service add-evidence-service --node "C:\Program Files\nodejs\node.exe" --cli C:\path\to\arena_evidence_service\src\cli.mjs --workspace E:\uci-arena-evidence
 ```
 
 ## License

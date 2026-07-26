@@ -106,61 +106,81 @@ profiles:
 
   uci_arena_evidence:
     display_name: UCI Arena Evidence Service
-    current_state: in_development_external
-    default_integration_state: unavailable
+    current_state: implemented_external
+    runtime: external_node_process_or_per_user_startup_registration
+    status_schema: uci_arena_evidence_status_v1
+    minimum_node: 24.15.0
+    default_integration_state: configured
     purpose: >
       Produce immutable, versioned arena evidence, including time-control
       performance curves, confidence intervals, match observations, and
       provenance that the manager may use for planning and reports.
-    planned_capabilities:
+    declared_capabilities:
       - status
       - start
       - stop
       - restart
       - pause
       - resume
-      - ingest_result_evidence
-      - rebuild_curves
-      - validate_snapshot
-      - publish_snapshot
-      - list_snapshots
-    planned_http_contract:
-      capability_document: /api/v1/capabilities
-      health: /api/v1/health
-      evidence: /api/v1/evidence
-      curves: /api/v1/curves
-      immutable_snapshots: /api/v1/snapshots
-      operations: /api/v1/operations
+      - init
+      - target_add
+      - target_list
+      - target_remove
+      - job_enqueue
+      - job_list
+      - job_cancel
+      - job_retry
+      - dataset_list
+      - dataset_show
+      - dataset_export
+      - prune
+      - startup_install
+      - startup_status
+      - startup_uninstall
+    cli_contract:
+      machine_output: json
+      status: [status, --json]
+      daemon: [daemon]
+      pause: [pause, --reason, uci-arena-manager]
+      resume: [resume]
+      global_workspace: [--workspace, PATH]
+    configuration:
+      - node_executable
+      - cli_entrypoint
+      - workspace
+      - optional_config_path
     discovery:
       sources:
         - process_environment_hints
+        - executable_path
       environment_hints:
-        - UCI_ARENA_EVIDENCE_ENDPOINT
+        - UCI_ARENA_EVIDENCE_NODE
+        - UCI_ARENA_EVIDENCE_CLI
+        - UCI_ARENA_EVIDENCE_ROOT
       behavior:
         - Discovery returns candidates but never enables the optional integration automatically.
-        - The operator may enter any loopback HTTP endpoint manually in the dashboard or CLI.
-        - Non-loopback endpoints are rejected in v1.
-    planned_artifact_contract:
-      required_fields:
-        - schema_version
-        - snapshot_id
-        - generated_at
-        - data_cutoff
-        - engine_fingerprints
-        - hardware_class
-        - time_control_domain
-        - sample_counts
-        - curve_points
-        - confidence_intervals
-        - content_hash
-        - provenance
+        - A complete candidate requires a Node executable, CLI entrypoint, and workspace.
+        - The dashboard always permits manual path entry when no complete candidate is found.
+    status_projection:
+      - control
+      - collection
+      - daemon
+      - jobs
+      - targets
+      - datasets
+      - sampledAt
+    ownership:
+      - The Evidence Service remains authority for scheduling, resource admission, evidence normalization, datasets, and qualified timing-profile publication.
+      - The manager invokes only its public CLI and reads only its machine-readable status.
+      - The manager never opens the Evidence Service SQLite catalog or reads raw artifact storage.
+      - Engine and model target identities remain Evidence Service-owned typed configuration.
     current_behavior:
-      - The built-in profile appears in service setup as In development.
-      - It may be omitted entirely or saved before its endpoint is available.
-      - Its observed state is unavailable and every runtime action explains which capability is missing.
-      - No placeholder process, synthetic health, or fabricated curve data is created.
-      - Completing the external service integration requires implementing this contract, not changing manager resource identity.
-      - Capability discovery, not product-name dispatch, determines which evidence actions become available.
+      - The built-in profile appears as an available optional external service.
+      - It may be omitted entirely without affecting manager readiness.
+      - Registration validates Node and CLI paths before saving.
+      - Start, stop, restart, pause, resume, and status use native argument arrays.
+      - A status schema mismatch produces incompatible state.
+      - Waiting for a target or idle resources remains healthy service state.
 
 validation:
   - The manager remains ready and local match planning works with neither optional profile configured.
@@ -169,6 +189,8 @@ validation:
   - Book Forge paths containing spaces remain separate argv values.
   - Book Forge status schema mismatches produce incompatible state.
   - Secret-looking fields in adapter output are rejected and redacted.
-  - An in-development UCI Arena Evidence Service resource persists and renders while unavailable.
+  - UCI Arena Evidence Service status schema mismatches produce incompatible state.
+  - UCI Arena Evidence Service waiting_for_target status remains healthy.
+  - Evidence Service paths containing spaces remain separate argv values.
   - Unsupported actions are rejected before any process, broker, or HTTP call.
   - Arbitrary executable paths cannot cross the privileged broker.

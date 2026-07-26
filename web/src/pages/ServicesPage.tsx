@@ -43,7 +43,9 @@ export function ServicesPage() {
   const [nodePath, setNodePath] = useState('')
   const [cliPath, setCliPath] = useState('')
   const [workspace, setWorkspace] = useState('')
-  const [evidenceEndpoint, setEvidenceEndpoint] = useState('')
+  const [evidenceNodePath, setEvidenceNodePath] = useState('')
+  const [evidenceCliPath, setEvidenceCliPath] = useState('')
+  const [evidenceWorkspace, setEvidenceWorkspace] = useState('')
   const [discoveryMessage, setDiscoveryMessage] = useState('')
   const serviceByProfile = new Map(
     services.data?.map((service) => [service.data.profile_id, service]),
@@ -87,7 +89,9 @@ export function ServicesPage() {
         setCliPath(candidate.configuration.cli_entrypoint ?? '')
         setWorkspace(candidate.configuration.workspace ?? '')
       } else {
-        setEvidenceEndpoint(candidate.configuration.endpoint ?? '')
+        setEvidenceNodePath(candidate.configuration.node_executable ?? '')
+        setEvidenceCliPath(candidate.configuration.cli_entrypoint ?? '')
+        setEvidenceWorkspace(candidate.configuration.workspace ?? '')
       }
       setDiscoveryMessage(
         candidate.complete
@@ -105,7 +109,9 @@ export function ServicesPage() {
     bookModal.open()
   }
   const openEvidenceSetup = () => {
-    setEvidenceEndpoint(evidenceService?.data.endpoint ?? '')
+    setEvidenceNodePath(evidenceService?.data.node_executable ?? '')
+    setEvidenceCliPath(evidenceService?.data.cli_entrypoint ?? '')
+    setEvidenceWorkspace(evidenceService?.data.workspace ?? '')
     setDiscoveryMessage('')
     evidenceModal.open()
   }
@@ -177,15 +183,15 @@ export function ServicesPage() {
               <IconClockHour4 size={24} />
             </ThemeIcon>
             <Badge color="violet" variant="light">
-              OPTIONAL · IN DEVELOPMENT
+              OPTIONAL · AVAILABLE
             </Badge>
           </Group>
           <Title order={2} mt="lg">
             UCI Arena Evidence Service
           </Title>
           <Text c="dimmed" mt={5}>
-            Arena evidence, immutable performance curves, confidence intervals, and
-            provenance—currently being built as an independent service.
+            Durable timing and strength evidence, identity-bound datasets, resource-aware
+            scheduling, and qualified timing-profile publication.
           </Text>
           <List
             mt="lg"
@@ -196,9 +202,9 @@ export function ServicesPage() {
               </ThemeIcon>
             }
           >
-            <List.Item>Versioned capabilities, health, curves, and snapshots API</List.Item>
+            <List.Item>Status, health, pause, resume, and restart</List.Item>
             <List.Item>Hardware and engine fingerprints in every artifact</List.Item>
-            <List.Item>Unavailable state—never synthetic data or a fake process</List.Item>
+            <List.Item>Jobs, targets, datasets, exports, and audited pruning</List.Item>
             <List.Item>Not required for arena scheduling or reports</List.Item>
           </List>
           <Button
@@ -208,7 +214,7 @@ export function ServicesPage() {
             leftSection={<IconSettings size={17} />}
             onClick={openEvidenceSetup}
           >
-            {evidenceService ? 'Edit endpoint' : 'Detect or configure'}
+            {evidenceService ? 'Edit locator' : 'Detect or configure'}
           </Button>
         </Paper>
       </SimpleGrid>
@@ -239,7 +245,8 @@ export function ServicesPage() {
                 <StatusPill value={service.data.observed_state} />
               </Grid.Col>
               <Grid.Col span={{ base: 12, md: 3 }}>
-                {service.data.profile_id === 'book_forge' ? (
+                {service.data.profile_id === 'book_forge' ||
+                service.data.profile_id === 'uci_arena_evidence' ? (
                   <Group gap="xs" justify="flex-end">
                     <Button
                       size="xs"
@@ -366,8 +373,9 @@ export function ServicesPage() {
       >
         <Stack>
           <Alert color="violet">
-            This optional integration uses the Evidence Service’s versioned HTTP capability
-            document. The service remains independently installed and owns its evidence store.
+            This adapter invokes the Evidence Service’s public CLI with native arguments and
+            reads only its JSON status. The service remains independently installed and owns its
+            catalog, workspace, datasets, and resource governor.
           </Alert>
           <Group justify="space-between">
             <Text size="sm" c="dimmed">
@@ -384,11 +392,22 @@ export function ServicesPage() {
           </Group>
           {discoveryMessage && <Alert color="gray">{discoveryMessage}</Alert>}
           <TextInput
-            label="Evidence Service endpoint"
-            description="Loopback HTTP endpoint only in v1"
-            placeholder="http://127.0.0.1:47900"
-            value={evidenceEndpoint}
-            onChange={(event) => setEvidenceEndpoint(event.currentTarget.value)}
+            label="Node executable"
+            placeholder="C:\Program Files\nodejs\node.exe"
+            value={evidenceNodePath}
+            onChange={(event) => setEvidenceNodePath(event.currentTarget.value)}
+          />
+          <TextInput
+            label="Evidence Service CLI entrypoint"
+            placeholder="C:\path\to\arena_evidence_service\src\cli.mjs"
+            value={evidenceCliPath}
+            onChange={(event) => setEvidenceCliPath(event.currentTarget.value)}
+          />
+          <TextInput
+            label="Evidence Service workspace"
+            placeholder="E:\uci-arena-evidence"
+            value={evidenceWorkspace}
+            onChange={(event) => setEvidenceWorkspace(event.currentTarget.value)}
           />
           {save.error && <Text c="red">{save.error.message}</Text>}
           <Group justify="flex-end">
@@ -398,18 +417,21 @@ export function ServicesPage() {
             <Button
               color="violet"
               loading={save.isPending}
+              disabled={!evidenceNodePath || !evidenceCliPath || !evidenceWorkspace}
               onClick={() =>
                 save.mutate({
                   parameters: {
                     profile_id: 'uci_arena_evidence',
                     display_name: 'UCI Arena Evidence Service',
-                    endpoint: evidenceEndpoint,
+                    node_executable: evidenceNodePath,
+                    cli_entrypoint: evidenceCliPath,
+                    workspace: evidenceWorkspace,
                   },
                   existing: evidenceService,
                 })
               }
             >
-              {evidenceEndpoint ? 'Save endpoint' : 'Track without endpoint'}
+              Validate and save
             </Button>
           </Group>
         </Stack>

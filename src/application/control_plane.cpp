@@ -547,20 +547,10 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
             expected_revision,
             "managed_service.configured");
     }
-    if (profile == "uci_arena_evidence") {
-        const bool endpoint_configured =
-            data.contains("endpoint") && data.at("endpoint").is_string() &&
-            !data.at("endpoint").get<std::string>().empty();
-        throw CommandFailure(
-            "capability_unavailable",
-            endpoint_configured
-                ? "UCI Arena Evidence Service endpoint is configured; its versioned capability handshake is not available yet"
-                : "configure an optional UCI Arena Evidence Service endpoint before using runtime actions",
-            409);
-    }
-    if (profile != "book_forge") {
+    if (profile != "book_forge" && profile != "uci_arena_evidence") {
         throw CommandFailure("unsupported_service_profile", "service profile has no runtime adapter", 409);
     }
+    const bool evidence_service = profile == "uci_arena_evidence";
 
     const std::filesystem::path node = data.at("node_executable").get<std::string>();
     const std::filesystem::path cli = data.at("cli_entrypoint").get<std::string>();
@@ -595,11 +585,14 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
         data["integration_state"] = "available";
     } else if (action == "service.pause" || action == "service.resume") {
         auto arguments = base;
-        arguments.insert(
-            arguments.end(),
-            {action == "service.pause" ? "pause" : "resume",
-             "--workspace",
-             workspace.string()});
+        arguments.insert(arguments.end(), {
+            action == "service.pause" ? "pause" : "resume",
+            "--workspace",
+            workspace.string(),
+        });
+        if (evidence_service && action == "service.pause") {
+            arguments.insert(arguments.end(), {"--reason", "uci-arena-manager"});
+        }
         if (!request.at("dry_run").get<bool>()) {
             data["last_control_result"] = process_supervisor_.run_json(
                 node, cli.parent_path(), arguments);
@@ -618,13 +611,41 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                 status.contains("status") && status.at("status").is_object()
                     ? status.at("status")
                     : status;
-            if (status_payload.value("schema", "") != "flashfork_book_forge_status_v2") {
+            const std::string expected_schema = evidence_service
+                ? "uci_arena_evidence_status_v1"
+                : "flashfork_book_forge_status_v2";
+            if (status_payload.value("schema", "") != expected_schema) {
                 data["integration_state"] = "incompatible";
                 data["observed_state"] = "degraded";
                 data["health"] = {
                     {"state", "degraded"},
-                    {"reason", "Book Forge status schema is incompatible"},
+                    {"reason",
+                     evidence_service
+                         ? "UCI Arena Evidence Service status schema is incompatible"
+                         : "Book Forge status schema is incompatible"},
                 };
+            } else if (evidence_service) {
+                const json control = status_payload.value("control", json::object());
+                const json collection = status_payload.value("collection", json::object());
+                const json daemon = status_payload.value("daemon", json::object());
+                const bool paused = control.value("paused", false);
+                const std::string daemon_phase = daemon.value("phase", "stopped");
+                const std::string last_error = daemon.value("lastError", "");
+                const bool daemon_active = process_supervisor_.running(id);
+                const bool degraded = daemon_phase == "failed" || !last_error.empty();
+                data["integration_state"] = "available";
+                data["observed_state"] =
+                    degraded ? "degraded" : paused ? "paused" :
+                    daemon_active ? "running" : "stopped";
+                data["health"] = {
+                    {"state", degraded ? "degraded" : "healthy"},
+                    {"reason",
+                     degraded
+                         ? last_error.empty() ? "Evidence Service daemon failed" : last_error
+                         : collection.value("reason", "Evidence Service status contract validated")},
+                    {"observed_at", domain::utc_now()},
+                };
+                data["status_projection"] = redact_external_status(status_payload);
             } else {
                 data["integration_state"] = "available";
                 data["observed_state"] =

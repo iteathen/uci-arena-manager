@@ -114,7 +114,7 @@ export function OverviewPage({ navigate }: { navigate: (page: string) => void })
                 <div>
                   <Text fw={600}>Evidence service integration ready</Text>
                   <Text size="sm" c="dimmed">
-                    UCI Arena Evidence Service is in development; capability discovery is ready.
+                    The optional service can be detected, configured, and controlled from here.
                   </Text>
                 </div>
                 <Button size="xs" variant="subtle" onClick={() => navigate('services')}>

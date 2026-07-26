@@ -1,13 +1,9 @@
 #include "arena/application/service_catalog.hpp"
 
-#include <algorithm>
-#include <charconv>
-#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <optional>
 #include <stdexcept>
-#include <string_view>
 #include <vector>
 
 namespace arena::application {
@@ -61,9 +57,10 @@ json evidence_service_profile() {
     return {
         {"profile_id", "uci_arena_evidence"},
         {"display_name", "UCI Arena Evidence Service"},
-        {"implementation_state", "in_development_external"},
+        {"implementation_state", "implemented_external"},
         {"optional", true},
-        {"description", "Versioned arena evidence, time-control curves, and provenance"},
+        {"description",
+         "Durable identity-bound timing, strength evidence, datasets, and qualified profiles"},
         {"capabilities",
          {
              "status",
@@ -72,28 +69,34 @@ json evidence_service_profile() {
              "restart",
              "pause",
              "resume",
-             "ingest_result_evidence",
-             "rebuild_curves",
-             "validate_snapshot",
-             "publish_snapshot",
-             "list_snapshots",
+             "init",
+             "target_add",
+             "target_list",
+             "target_remove",
+             "job_enqueue",
+             "job_list",
+             "job_cancel",
+             "job_retry",
+             "dataset_list",
+             "dataset_show",
+             "dataset_export",
+             "prune",
+             "startup_install",
+             "startup_status",
+             "startup_uninstall",
          }},
-        {"required_configuration", json::array()},
-        {"activation_configuration", {"endpoint"}},
+        {"required_configuration", {"node_executable", "cli_entrypoint", "workspace"}},
         {"discovery",
          {
              {"supported", true},
              {"manual_fallback", true},
-             {"sources", {"process_environment_hints"}},
+             {"sources", {"process_environment_hints", "executable_path"}},
          }},
-        {"planned_http_contract",
+        {"health_contract",
          {
-             {"capabilities", "/api/v1/capabilities"},
-             {"health", "/api/v1/health"},
-             {"evidence", "/api/v1/evidence"},
-             {"curves", "/api/v1/curves"},
-             {"snapshots", "/api/v1/snapshots"},
-             {"operations", "/api/v1/operations"},
+             {"schema", "uci_arena_evidence_status_v1"},
+             {"heartbeat_seconds", 15},
+             {"stale_seconds", 300},
          }},
     };
 }
@@ -161,35 +164,6 @@ std::optional<std::filesystem::path> executable_on_path(const std::string& name)
     return std::nullopt;
 }
 
-bool is_loopback_endpoint(const std::string& endpoint) {
-    std::string lower = endpoint;
-    std::ranges::transform(lower, lower.begin(), [](const unsigned char value) {
-        return static_cast<char>(std::tolower(value));
-    });
-    static constexpr const char* prefixes[] = {
-        "http://127.0.0.1:",
-        "https://127.0.0.1:",
-        "http://localhost:",
-        "https://localhost:",
-        "http://[::1]:",
-        "https://[::1]:",
-    };
-    for (const char* prefix : prefixes) {
-        if (!lower.starts_with(prefix)) {
-            continue;
-        }
-        const std::string_view remainder(lower.data() + std::char_traits<char>::length(prefix));
-        const auto delimiter = remainder.find_first_of("/?#");
-        const std::string_view port = remainder.substr(0, delimiter);
-        unsigned int value = 0;
-        const auto parsed =
-            std::from_chars(port.data(), port.data() + port.size(), value);
-        return !port.empty() && parsed.ec == std::errc{} &&
-               parsed.ptr == port.data() + port.size() && value > 0 && value <= 65'535;
-    }
-    return false;
-}
-
 }  // namespace
 
 json ServiceCatalog::profiles() {
@@ -229,17 +203,32 @@ json ServiceCatalog::discover(const std::string& profile_id) {
                 });
         }
     } else if (profile_id == "uci_arena_evidence") {
-        manual_configuration = {"endpoint"};
-        if (const auto endpoint = environment_value("UCI_ARENA_EVIDENCE_ENDPOINT")) {
+        manual_configuration = {"node_executable", "cli_entrypoint", "workspace"};
+        json configuration = json::object();
+        if (const auto configured_node = environment_value("UCI_ARENA_EVIDENCE_NODE")) {
+            configuration["node_executable"] = *configured_node;
+        } else if (const auto path_node = executable_on_path("node")) {
+            configuration["node_executable"] = path_node->string();
+        }
+        if (const auto cli = environment_value("UCI_ARENA_EVIDENCE_CLI")) {
+            configuration["cli_entrypoint"] = *cli;
+        }
+        if (const auto workspace = environment_value("UCI_ARENA_EVIDENCE_ROOT")) {
+            configuration["workspace"] = *workspace;
+        }
+        if (!configuration.empty()) {
+            json missing = json::array();
+            for (const auto* key : {"node_executable", "cli_entrypoint", "workspace"}) {
+                if (!configuration.contains(key)) {
+                    missing.push_back(key);
+                }
+            }
             candidates.push_back(
                 {
-                    {"source", "process_environment_hint"},
-                    {"complete", is_loopback_endpoint(*endpoint)},
-                    {"configuration", {{"endpoint", *endpoint}}},
-                    {"missing",
-                     is_loopback_endpoint(*endpoint)
-                         ? json::array()
-                         : json::array({"valid_loopback_endpoint"})},
+                    {"source", "environment_and_path"},
+                    {"complete", missing.empty()},
+                    {"configuration", configuration},
+                    {"missing", missing},
                 });
         }
     } else {
@@ -288,28 +277,33 @@ json ServiceCatalog::normalize_registration(const json& parameters) {
         return data;
     }
     if (profile_id == "uci_arena_evidence") {
+        const auto node = required_path(parameters, "node_executable");
+        const auto entrypoint = required_path(parameters, "cli_entrypoint");
+        const auto workspace = required_path(parameters, "workspace");
+        if (!std::filesystem::is_regular_file(node)) {
+            throw std::runtime_error("UCI Arena Evidence Service Node executable is unavailable");
+        }
+        if (!std::filesystem::is_regular_file(entrypoint)) {
+            throw std::runtime_error("UCI Arena Evidence Service CLI entrypoint is unavailable");
+        }
+        if (std::filesystem::exists(workspace) && !std::filesystem::is_directory(workspace)) {
+            throw std::runtime_error("UCI Arena Evidence Service workspace is not a directory");
+        }
         data["display_name"] =
             parameters.value("display_name", "UCI Arena Evidence Service");
-        const std::string endpoint = parameters.value("endpoint", "");
-        if (!endpoint.empty() && !is_loopback_endpoint(endpoint)) {
-            throw std::runtime_error(
-                "UCI Arena Evidence Service endpoint must use a loopback HTTP URL in v1");
-        }
-        data["endpoint"] = endpoint.empty() ? json(nullptr) : json(endpoint);
-        data["integration_state"] = endpoint.empty() ? "planned" : "configured";
+        data["node_executable"] = std::filesystem::absolute(node).string();
+        data["cli_entrypoint"] = std::filesystem::absolute(entrypoint).string();
+        data["workspace"] = std::filesystem::absolute(workspace).string();
+        data["integration_state"] = "configured";
         data["desired_state"] = "stopped";
-        data["observed_state"] = "unavailable";
-        data["transport"] = nullptr;
+        data["observed_state"] = "stopped";
+        data["transport"] = "process";
         data["capabilities"] = evidence_service_profile().at("capabilities");
         data["health"] = {
-            {"state", "unavailable"},
-            {"reason",
-             endpoint.empty()
-                 ? "optional UCI Arena Evidence Service endpoint is not configured"
-                 : "configured endpoint awaits the versioned capability handshake"},
+            {"state", "unknown"},
+            {"reason", "status has not been probed"},
+            {"stale_after_seconds", 300},
         };
-        data["planned_http_contract"] =
-            evidence_service_profile().at("planned_http_contract");
         return data;
     }
     throw std::runtime_error("unknown managed service profile: " + profile_id);

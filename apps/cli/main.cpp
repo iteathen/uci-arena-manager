@@ -317,24 +317,36 @@ int main(int argc, char** argv) {
             ->add_option("--workspace", configure_book_workspace)
             ->required();
         auto* service_evidence = service->add_subcommand(
-            "track-evidence-service",
-            "Register the in-development UCI Arena Evidence Service");
-        std::string evidence_endpoint;
-        service_evidence->add_option(
-            "--service-endpoint",
-            evidence_endpoint,
-            "Optional future Evidence Service base URL");
+            "add-evidence-service",
+            "Configure the UCI Arena Evidence Service adapter");
+        std::filesystem::path evidence_node;
+        std::filesystem::path evidence_cli;
+        std::filesystem::path evidence_workspace;
+        service_evidence
+            ->add_option("--node", evidence_node, "Node.js executable")
+            ->required();
+        service_evidence
+            ->add_option("--cli", evidence_cli, "Evidence Service CLI entrypoint")
+            ->required();
+        service_evidence
+            ->add_option("--workspace", evidence_workspace)
+            ->required();
         auto* service_configure_evidence = service->add_subcommand(
             "configure-evidence-service",
-            "Change the endpoint for a tracked UCI Arena Evidence Service");
+            "Change the locator for a configured UCI Arena Evidence Service");
         std::string configure_evidence_id;
-        std::string configure_evidence_endpoint;
+        std::filesystem::path configure_evidence_node;
+        std::filesystem::path configure_evidence_cli;
+        std::filesystem::path configure_evidence_workspace;
         service_configure_evidence->add_option("id", configure_evidence_id)->required();
         service_configure_evidence
-            ->add_option(
-                "--service-endpoint",
-                configure_evidence_endpoint,
-                "Loopback Evidence Service base URL")
+            ->add_option("--node", configure_evidence_node, "Node.js executable")
+            ->required();
+        service_configure_evidence
+            ->add_option("--cli", configure_evidence_cli, "Evidence Service CLI entrypoint")
+            ->required();
+        service_configure_evidence
+            ->add_option("--workspace", configure_evidence_workspace)
             ->required();
         std::string service_control_id;
         std::string service_control_action;
@@ -521,7 +533,9 @@ int main(int argc, char** argv) {
                         {
                             {"profile_id", "uci_arena_evidence"},
                             {"display_name", "UCI Arena Evidence Service"},
-                            {"endpoint", evidence_endpoint},
+                            {"node_executable", evidence_node.string()},
+                            {"cli_entrypoint", evidence_cli.string()},
+                            {"workspace", evidence_workspace.string()},
                         })),
                 output);
         } else if (*service_configure_evidence) {
@@ -531,7 +545,9 @@ int main(int argc, char** argv) {
                 {
                     {"profile_id", "uci_arena_evidence"},
                     {"display_name", "UCI Arena Evidence Service"},
-                    {"endpoint", configure_evidence_endpoint},
+                    {"node_executable", configure_evidence_node.string()},
+                    {"cli_entrypoint", configure_evidence_cli.string()},
+                    {"workspace", configure_evidence_workspace.string()},
                 });
             envelope["target"]["id"] = configure_evidence_id;
             print_json(client.post("/api/v1/commands", envelope), output);
@@ -539,7 +555,7 @@ int main(int argc, char** argv) {
             auto envelope = command(
                 "service." + service_control_action,
                 "managed_service",
-                {});
+                json::object());
             envelope["target"]["id"] = service_control_id;
             print_json(client.post("/api/v1/commands", envelope), output);
         }

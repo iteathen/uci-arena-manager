@@ -14,16 +14,13 @@ TEST_CASE("UUIDv7 identifiers are valid and carry the version nibble") {
     REQUIRE(id.at(14) == '7');
 }
 
-TEST_CASE("service catalog keeps planned services explicit and unavailable") {
+TEST_CASE("service catalog exposes both external services as optional and implemented") {
     const auto profiles = arena::application::ServiceCatalog::profiles();
     REQUIRE(profiles.size() == 2);
     REQUIRE(profiles.at(0).at("optional") == true);
     REQUIRE(profiles.at(1).at("optional") == true);
-    const auto planned = arena::application::ServiceCatalog::normalize_registration(
-        {{"profile_id", "uci_arena_evidence"}});
-    REQUIRE(planned.at("integration_state") == "planned");
-    REQUIRE(planned.at("observed_state") == "unavailable");
-    REQUIRE(planned.at("health").at("state") == "unavailable");
+    REQUIRE(profiles.at(0).at("implementation_state") == "implemented_external");
+    REQUIRE(profiles.at(1).at("implementation_state") == "implemented_external");
 }
 
 TEST_CASE("optional service discovery always exposes manual locator fallback") {
@@ -35,12 +32,41 @@ TEST_CASE("optional service discovery always exposes manual locator fallback") {
 
     const auto evidence =
         arena::application::ServiceCatalog::discover("uci_arena_evidence");
-    REQUIRE(evidence.at("manual_configuration") == nlohmann::json::array({"endpoint"}));
-    REQUIRE_THROWS(arena::application::ServiceCatalog::normalize_registration(
+    REQUIRE(evidence.at("manual_configuration") ==
+            nlohmann::json::array({"node_executable", "cli_entrypoint", "workspace"}));
+    REQUIRE_THROWS(
+        arena::application::ServiceCatalog::normalize_registration(
+            {{"profile_id", "uci_arena_evidence"}}));
+}
+
+TEST_CASE("Evidence Service registration validates the built CLI process contract") {
+    const auto directory =
+        std::filesystem::temp_directory_path() /
+        ("arena-evidence-profile-" + arena::domain::uuid_v7());
+    std::filesystem::create_directories(directory);
+    const auto node = directory / "node";
+    const auto cli = directory / "cli.mjs";
+    {
+        std::ofstream(node) << "fixture";
+        std::ofstream(cli) << "fixture";
+    }
+    const auto normalized = arena::application::ServiceCatalog::normalize_registration(
         {
             {"profile_id", "uci_arena_evidence"},
-            {"endpoint", "https://example.com"},
-        }));
+            {"node_executable", node.string()},
+            {"cli_entrypoint", cli.string()},
+            {"workspace", (directory / "workspace").string()},
+        });
+    REQUIRE(normalized.at("integration_state") == "configured");
+    REQUIRE(normalized.at("observed_state") == "stopped");
+    REQUIRE(normalized.at("transport") == "process");
+    REQUIRE(normalized.at("health").at("state") == "unknown");
+    REQUIRE(
+        normalized.at("capabilities") ==
+        arena::application::ServiceCatalog::profiles().at(1).at("capabilities"));
+    std::filesystem::remove(node);
+    std::filesystem::remove(cli);
+    std::filesystem::remove(directory);
 }
 
 TEST_CASE("broker policy rejects unallowlisted services and actions") {

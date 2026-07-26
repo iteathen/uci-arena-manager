@@ -42,8 +42,8 @@ managed_service_experience:
       state: available_when_configured
       callout: Existing external service
     - profile_id: uci_arena_evidence
-      state: in_development
-      callout: External implementation in progress
+      state: available_when_configured
+      callout: Existing optional external service
   setup:
     - Label Book Forge and UCI Arena Evidence Service as optional.
     - Offer Auto-detect without registering or enabling a discovered candidate.

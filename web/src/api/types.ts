@@ -124,5 +124,4 @@ export interface ManagedServiceData extends Record<string, unknown> {
   node_executable?: string
   cli_entrypoint?: string
   workspace?: string
-  endpoint?: string | null
 }
