@@ -40,6 +40,8 @@ class ControlPlane final {
         std::uint64_t cursor,
         std::uint32_t limit = 500) const;
     [[nodiscard]] nlohmann::json service_profiles() const;
+    [[nodiscard]] nlohmann::json discover_service_profile(
+        const std::string& profile_id) const;
 
   private:
     [[nodiscard]] nlohmann::json register_engine(

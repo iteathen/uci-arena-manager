@@ -3,6 +3,7 @@ import type {
   CommandEnvelope,
   Resource,
   ResourceKind,
+  ServiceDiscovery,
   ServiceProfile,
   SystemStatus,
 } from './types'
@@ -61,6 +62,8 @@ export const api = {
   events: (cursor = 0) =>
     request<ArenaEvent[]>(`/api/v1/events/snapshot?cursor=${cursor}`),
   serviceProfiles: () => request<ServiceProfile[]>('/api/v1/service-profiles'),
+  discoverService: (profileId: ServiceProfile['profile_id']) =>
+    request<ServiceDiscovery>(`/api/v1/service-profiles/${profileId}/discovery`),
   command: <T = Resource>(envelope: CommandEnvelope) =>
     request<{ status: string; command_id: string; resource: T }>('/api/v1/commands', {
       method: 'POST',
@@ -74,6 +77,7 @@ export function makeCommand(
   parameters: Record<string, unknown>,
   dryRun = false,
   targetId: string | null = null,
+  expectedRevision: number | null = null,
 ): CommandEnvelope {
   const id = crypto.randomUUID()
   return {
@@ -82,7 +86,7 @@ export function makeCommand(
     idempotency_key: `dashboard-${id}`,
     target: { kind, id: targetId },
     action,
-    expected_revision: null,
+    expected_revision: expectedRevision,
     dry_run: dryRun,
     parameters,
   }

@@ -62,10 +62,17 @@ arena tournament create --name "Local round robin" --format round_robin --engine
 ## External services
 
 External systems remain independent and cross only declared process, HTTP,
-health, and artifact contracts. Book Forge can be configured now through its
-public CLI without importing its source or storage:
+health, and artifact contracts. Book Forge and UCI Arena Evidence Service are
+both optional; omitting them never degrades local engine, match, tournament,
+CLI, or dashboard operation.
+
+The Services dashboard offers auto-detection from non-secret local installation
+hints and always keeps manual path or endpoint fields available. Book Forge can
+also be configured through its public CLI without importing its source or
+storage:
 
 ```powershell
+arena service discover book_forge
 arena service add-book-forge --node "C:\Program Files\nodejs\node.exe" --cli C:\path\to\book_forge\src\cli.mjs --workspace E:\book-forge
 ```
 
@@ -74,7 +81,8 @@ implementation is in development. It remains visibly unavailable until an
 endpoint satisfies the versioned capability and immutable snapshot contract:
 
 ```powershell
-arena service track-evidence-service
+arena service discover uci_arena_evidence
+arena service track-evidence-service --service-endpoint http://127.0.0.1:<port>
 ```
 
 ## License

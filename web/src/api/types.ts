@@ -90,8 +90,27 @@ export interface ServiceProfile {
     | 'in_development_external'
     | 'planned_external'
   description: string
+  optional: true
   capabilities: string[]
   required_configuration: string[]
+  discovery: {
+    supported: boolean
+    manual_fallback: true
+    sources: string[]
+  }
+}
+
+export interface ServiceDiscovery {
+  schema_version: 1
+  profile_id: 'book_forge' | 'uci_arena_evidence'
+  optional: true
+  candidates: Array<{
+    source: string
+    complete: boolean
+    configuration: Record<string, string>
+    missing: string[]
+  }>
+  manual_configuration: string[]
 }
 
 export interface ManagedServiceData extends Record<string, unknown> {
@@ -102,4 +121,8 @@ export interface ManagedServiceData extends Record<string, unknown> {
   observed_state: string
   capabilities: string[]
   health: { state: string; reason?: string }
+  node_executable?: string
+  cli_entrypoint?: string
+  workspace?: string
+  endpoint?: string | null
 }

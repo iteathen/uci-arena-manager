@@ -33,7 +33,8 @@ requirements:
   - websocket_batching
   - stale_data_indicators
   - service_profile_setup_for_book_forge
-  - planned_unavailable_state_for_future_services
+  - optional_external_service_integrations
+  - auto_discovery_with_manual_locator_fallback
 
 managed_service_experience:
   catalog_cards:
@@ -44,10 +45,15 @@ managed_service_experience:
       state: in_development
       callout: External implementation in progress
   setup:
+    - Label Book Forge and UCI Arena Evidence Service as optional.
+    - Offer Auto-detect without registering or enabling a discovered candidate.
+    - When discovery is incomplete or empty, keep manual paths and endpoint fields visible and editable.
+    - Permit the operator to reconfigure a previously saved locator.
     - Show every required path or endpoint before validation.
     - Preview capabilities and ownership boundaries.
     - Never request external-service secrets that are not manager-owned.
     - Explain unavailable actions without presenting them as failures.
+    - Do not show an unconfigured optional service as an unhealthy manager resource.
 
 chessboard:
   implementation: custom_svg

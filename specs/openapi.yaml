@@ -96,6 +96,27 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ServiceProfile"
+  /service-profiles/{profileId}/discovery:
+    get:
+      operationId: discoverServiceProfile
+      description: >
+        Resolve non-secret local hints for an optional service profile. An
+        empty candidates array is a successful result.
+      parameters:
+        - name: profileId
+          in: path
+          required: true
+          schema:
+            enum: [book_forge, uci_arena_evidence]
+      responses:
+        "200":
+          description: Service locator candidates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceDiscovery"
+        "404":
+          $ref: "#/components/responses/Problem"
   /commands:
     post:
       operationId: submitCommand
@@ -227,8 +248,10 @@ components:
         - profile_id
         - display_name
         - implementation_state
+        - optional
         - capabilities
         - required_configuration
+        - discovery
       properties:
         profile_id:
           enum: [book_forge, uci_arena_evidence]
@@ -236,11 +259,31 @@ components:
           type: string
         implementation_state:
           enum: [implemented_external, in_development_external, planned_external]
+        optional:
+          const: true
         capabilities:
           type: array
           items:
             type: string
         required_configuration:
+          type: array
+          items:
+            type: string
+        discovery:
+          type: object
+    ServiceDiscovery:
+      type: object
+      required: [schema_version, profile_id, candidates, manual_configuration]
+      properties:
+        schema_version:
+          const: 1
+        profile_id:
+          enum: [book_forge, uci_arena_evidence]
+        candidates:
+          type: array
+          items:
+            type: object
+        manual_configuration:
           type: array
           items:
             type: string

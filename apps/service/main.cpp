@@ -259,6 +259,28 @@ int run_control_plane(const Options& options) {
             {drogon::Get});
 
         app.registerHandler(
+            "/api/v1/service-profiles/{1}/discovery",
+            [control_plane, auth](
+                const HttpRequestPtr& request,
+                std::function<void(const HttpResponsePtr&)>&& callback,
+                const std::string& profile_id) {
+                if (!authorized(request, auth)) {
+                    callback(response(
+                        {{"code", "authentication_required"}},
+                        drogon::k401Unauthorized));
+                    return;
+                }
+                try {
+                    callback(response(control_plane->discover_service_profile(profile_id)));
+                } catch (const arena::application::CommandFailure& failure) {
+                    callback(response(
+                        arena::application::problem_json(failure),
+                        status_code(failure.http_status())));
+                }
+            },
+            {drogon::Get});
+
+        app.registerHandler(
             "/api/v1/events/snapshot",
             [control_plane, auth](
                 const HttpRequestPtr& request,

@@ -4,6 +4,7 @@ import {
   IconCircleCheck,
   IconClockHour4,
   IconPlugConnected,
+  IconSearch,
   IconSettings,
 } from '@tabler/icons-react'
 import {
@@ -38,18 +39,76 @@ export function ServicesPage() {
     queryFn: () => api.resources<ManagedServiceData>('managed_service'),
   })
   const [bookOpened, bookModal] = useDisclosure(false)
+  const [evidenceOpened, evidenceModal] = useDisclosure(false)
   const [nodePath, setNodePath] = useState('')
   const [cliPath, setCliPath] = useState('')
   const [workspace, setWorkspace] = useState('')
-  const registered = new Set(services.data?.map((service) => service.data.profile_id))
-  const register = useMutation({
-    mutationFn: (parameters: Record<string, unknown>) =>
-      api.command(makeCommand('service.register', 'managed_service', parameters)),
+  const [evidenceEndpoint, setEvidenceEndpoint] = useState('')
+  const [discoveryMessage, setDiscoveryMessage] = useState('')
+  const serviceByProfile = new Map(
+    services.data?.map((service) => [service.data.profile_id, service]),
+  )
+  const bookService = serviceByProfile.get('book_forge')
+  const evidenceService = serviceByProfile.get('uci_arena_evidence')
+  const save = useMutation({
+    mutationFn: ({
+      parameters,
+      existing,
+    }: {
+      parameters: Record<string, unknown>
+      existing?: { id: string; revision: number }
+    }) =>
+      api.command(
+        makeCommand(
+          existing ? 'service.configure' : 'service.register',
+          'managed_service',
+          parameters,
+          false,
+          existing?.id ?? null,
+          existing?.revision ?? null,
+        ),
+      ),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['resources', 'managed_service'] })
       bookModal.close()
+      evidenceModal.close()
     },
   })
+  const discover = useMutation({
+    mutationFn: api.discoverService,
+    onSuccess: (result) => {
+      const candidate = result.candidates[0]
+      if (!candidate) {
+        setDiscoveryMessage('No local service was detected. Enter its location manually.')
+        return
+      }
+      if (result.profile_id === 'book_forge') {
+        setNodePath(candidate.configuration.node_executable ?? '')
+        setCliPath(candidate.configuration.cli_entrypoint ?? '')
+        setWorkspace(candidate.configuration.workspace ?? '')
+      } else {
+        setEvidenceEndpoint(candidate.configuration.endpoint ?? '')
+      }
+      setDiscoveryMessage(
+        candidate.complete
+          ? 'A complete local candidate was found. Review it before saving.'
+          : `A partial candidate was found. Enter: ${candidate.missing.join(', ')}.`,
+      )
+    },
+    onError: (error) => setDiscoveryMessage(error.message),
+  })
+  const openBookSetup = () => {
+    setNodePath(bookService?.data.node_executable ?? '')
+    setCliPath(bookService?.data.cli_entrypoint ?? '')
+    setWorkspace(bookService?.data.workspace ?? '')
+    setDiscoveryMessage('')
+    bookModal.open()
+  }
+  const openEvidenceSetup = () => {
+    setEvidenceEndpoint(evidenceService?.data.endpoint ?? '')
+    setDiscoveryMessage('')
+    evidenceModal.open()
+  }
   const control = useMutation({
     mutationFn: ({ id, action }: { id: string; action: string }) =>
       api.command(
@@ -79,7 +138,7 @@ export function ServicesPage() {
               <IconBook2 size={24} />
             </ThemeIcon>
             <Badge color="teal" variant="light">
-              EXTERNAL · AVAILABLE
+              OPTIONAL · AVAILABLE
             </Badge>
           </Group>
           <Title order={2} mt="lg">
@@ -101,15 +160,15 @@ export function ServicesPage() {
             <List.Item>Status, health, pause, resume, and restart</List.Item>
             <List.Item>Acquisition, validation, maintenance, and publication</List.Item>
             <List.Item>External workspace and token ownership preserved</List.Item>
+            <List.Item>Not required for local matches or manager health</List.Item>
           </List>
           <Button
             mt="xl"
-            variant={registered.has('book_forge') ? 'default' : 'filled'}
+            variant={bookService ? 'default' : 'filled'}
             leftSection={<IconPlugConnected size={17} />}
-            onClick={bookModal.open}
-            disabled={registered.has('book_forge')}
+            onClick={openBookSetup}
           >
-            {registered.has('book_forge') ? 'Configured' : 'Configure adapter'}
+            {bookService ? 'Edit locator' : 'Detect or configure'}
           </Button>
         </Paper>
         <Paper withBorder className="service-profile profile-planned">
@@ -118,7 +177,7 @@ export function ServicesPage() {
               <IconClockHour4 size={24} />
             </ThemeIcon>
             <Badge color="violet" variant="light">
-            IN DEVELOPMENT · CONTRACT READY
+              OPTIONAL · IN DEVELOPMENT
             </Badge>
           </Group>
           <Title order={2} mt="lg">
@@ -140,22 +199,16 @@ export function ServicesPage() {
             <List.Item>Versioned capabilities, health, curves, and snapshots API</List.Item>
             <List.Item>Hardware and engine fingerprints in every artifact</List.Item>
             <List.Item>Unavailable state—never synthetic data or a fake process</List.Item>
+            <List.Item>Not required for arena scheduling or reports</List.Item>
           </List>
           <Button
             mt="xl"
             color="violet"
-            variant={registered.has('uci_arena_evidence') ? 'default' : 'light'}
+            variant={evidenceService ? 'default' : 'light'}
             leftSection={<IconSettings size={17} />}
-            disabled={registered.has('uci_arena_evidence')}
-            loading={register.isPending}
-            onClick={() =>
-              register.mutate({
-                profile_id: 'uci_arena_evidence',
-                display_name: 'UCI Arena Evidence Service',
-              })
-            }
+            onClick={openEvidenceSetup}
           >
-            {registered.has('uci_arena_evidence') ? 'Tracked' : 'Track integration'}
+            {evidenceService ? 'Edit endpoint' : 'Detect or configure'}
           </Button>
         </Paper>
       </SimpleGrid>
@@ -247,6 +300,20 @@ export function ServicesPage() {
             JSON status. Its catalog, workspace, resource governor, and credentials remain
             Book Forge-owned.
           </Alert>
+          <Group justify="space-between">
+            <Text size="sm" c="dimmed">
+              Optional integration · no resource is created until you save.
+            </Text>
+            <Button
+              variant="default"
+              leftSection={<IconSearch size={16} />}
+              loading={discover.isPending}
+              onClick={() => discover.mutate('book_forge')}
+            >
+              Auto-detect
+            </Button>
+          </Group>
+          {discoveryMessage && <Alert color="gray">{discoveryMessage}</Alert>}
           <TextInput
             label="Node executable"
             placeholder="C:\Program Files\nodejs\node.exe"
@@ -265,25 +332,84 @@ export function ServicesPage() {
             value={workspace}
             onChange={(event) => setWorkspace(event.currentTarget.value)}
           />
-          {register.error && <Text c="red">{register.error.message}</Text>}
+          {save.error && <Text c="red">{save.error.message}</Text>}
           <Group justify="flex-end">
             <Button variant="default" onClick={bookModal.close}>
               Cancel
             </Button>
             <Button
-              loading={register.isPending}
+              loading={save.isPending}
               disabled={!nodePath || !cliPath || !workspace}
               onClick={() =>
-                register.mutate({
-                  profile_id: 'book_forge',
-                  display_name: 'Book Forge',
-                  node_executable: nodePath,
-                  cli_entrypoint: cliPath,
-                  workspace,
+                save.mutate({
+                  parameters: {
+                    profile_id: 'book_forge',
+                    display_name: 'Book Forge',
+                    node_executable: nodePath,
+                    cli_entrypoint: cliPath,
+                    workspace,
+                  },
+                  existing: bookService,
                 })
               }
             >
               Validate and save
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+      <Modal
+        opened={evidenceOpened}
+        onClose={evidenceModal.close}
+        title="Configure UCI Arena Evidence Service"
+        size="lg"
+      >
+        <Stack>
+          <Alert color="violet">
+            This optional integration uses the Evidence Service’s versioned HTTP capability
+            document. The service remains independently installed and owns its evidence store.
+          </Alert>
+          <Group justify="space-between">
+            <Text size="sm" c="dimmed">
+              Omit this integration without affecting arena health or local matches.
+            </Text>
+            <Button
+              variant="default"
+              leftSection={<IconSearch size={16} />}
+              loading={discover.isPending}
+              onClick={() => discover.mutate('uci_arena_evidence')}
+            >
+              Auto-detect
+            </Button>
+          </Group>
+          {discoveryMessage && <Alert color="gray">{discoveryMessage}</Alert>}
+          <TextInput
+            label="Evidence Service endpoint"
+            description="Loopback HTTP endpoint only in v1"
+            placeholder="http://127.0.0.1:47900"
+            value={evidenceEndpoint}
+            onChange={(event) => setEvidenceEndpoint(event.currentTarget.value)}
+          />
+          {save.error && <Text c="red">{save.error.message}</Text>}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={evidenceModal.close}>
+              Cancel
+            </Button>
+            <Button
+              color="violet"
+              loading={save.isPending}
+              onClick={() =>
+                save.mutate({
+                  parameters: {
+                    profile_id: 'uci_arena_evidence',
+                    display_name: 'UCI Arena Evidence Service',
+                    endpoint: evidenceEndpoint,
+                  },
+                  existing: evidenceService,
+                })
+              }
+            >
+              {evidenceEndpoint ? 'Save endpoint' : 'Track without endpoint'}
             </Button>
           </Group>
         </Stack>

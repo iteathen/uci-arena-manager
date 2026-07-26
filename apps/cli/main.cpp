@@ -280,6 +280,15 @@ int main(int argc, char** argv) {
         service->require_subcommand(1);
         auto* service_profiles =
             service->add_subcommand("profiles", "List built-in capability profiles");
+        auto* service_discover =
+            service->add_subcommand("discover", "Detect local configuration hints");
+        std::string service_discovery_profile;
+        service_discover->add_option(
+            "profile",
+            service_discovery_profile,
+            "book_forge or uci_arena_evidence")
+            ->required()
+            ->check(CLI::IsMember({"book_forge", "uci_arena_evidence"}));
         auto* service_list =
             service->add_subcommand("list", "List configured managed services");
         auto* service_book_forge =
@@ -290,6 +299,23 @@ int main(int argc, char** argv) {
         service_book_forge->add_option("--node", book_node, "Node.js executable")->required();
         service_book_forge->add_option("--cli", book_cli, "Book Forge CLI entrypoint")->required();
         service_book_forge->add_option("--workspace", book_workspace)->required();
+        auto* service_configure_book_forge = service->add_subcommand(
+            "configure-book-forge",
+            "Change the locator for a configured Book Forge service");
+        std::string configure_book_id;
+        std::filesystem::path configure_book_node;
+        std::filesystem::path configure_book_cli;
+        std::filesystem::path configure_book_workspace;
+        service_configure_book_forge->add_option("id", configure_book_id)->required();
+        service_configure_book_forge
+            ->add_option("--node", configure_book_node, "Node.js executable")
+            ->required();
+        service_configure_book_forge
+            ->add_option("--cli", configure_book_cli, "Book Forge CLI entrypoint")
+            ->required();
+        service_configure_book_forge
+            ->add_option("--workspace", configure_book_workspace)
+            ->required();
         auto* service_evidence = service->add_subcommand(
             "track-evidence-service",
             "Register the in-development UCI Arena Evidence Service");
@@ -298,6 +324,18 @@ int main(int argc, char** argv) {
             "--service-endpoint",
             evidence_endpoint,
             "Optional future Evidence Service base URL");
+        auto* service_configure_evidence = service->add_subcommand(
+            "configure-evidence-service",
+            "Change the endpoint for a tracked UCI Arena Evidence Service");
+        std::string configure_evidence_id;
+        std::string configure_evidence_endpoint;
+        service_configure_evidence->add_option("id", configure_evidence_id)->required();
+        service_configure_evidence
+            ->add_option(
+                "--service-endpoint",
+                configure_evidence_endpoint,
+                "Loopback Evidence Service base URL")
+            ->required();
         std::string service_control_id;
         std::string service_control_action;
         auto* service_control =
@@ -438,6 +476,11 @@ int main(int argc, char** argv) {
             print_json(client.get("/api/v1/resources/" + resource_kind), output);
         } else if (*service_profiles) {
             print_json(client.get("/api/v1/service-profiles"), output);
+        } else if (*service_discover) {
+            print_json(
+                client.get(
+                    "/api/v1/service-profiles/" + service_discovery_profile + "/discovery"),
+                output);
         } else if (*service_list) {
             print_json(client.get("/api/v1/resources/managed_service"), output);
         } else if (*service_book_forge) {
@@ -455,6 +498,19 @@ int main(int argc, char** argv) {
                             {"workspace", book_workspace.string()},
                         })),
                 output);
+        } else if (*service_configure_book_forge) {
+            auto envelope = command(
+                "service.configure",
+                "managed_service",
+                {
+                    {"profile_id", "book_forge"},
+                    {"display_name", "Book Forge"},
+                    {"node_executable", configure_book_node.string()},
+                    {"cli_entrypoint", configure_book_cli.string()},
+                    {"workspace", configure_book_workspace.string()},
+                });
+            envelope["target"]["id"] = configure_book_id;
+            print_json(client.post("/api/v1/commands", envelope), output);
         } else if (*service_evidence) {
             print_json(
                 client.post(
@@ -468,6 +524,17 @@ int main(int argc, char** argv) {
                             {"endpoint", evidence_endpoint},
                         })),
                 output);
+        } else if (*service_configure_evidence) {
+            auto envelope = command(
+                "service.configure",
+                "managed_service",
+                {
+                    {"profile_id", "uci_arena_evidence"},
+                    {"display_name", "UCI Arena Evidence Service"},
+                    {"endpoint", configure_evidence_endpoint},
+                });
+            envelope["target"]["id"] = configure_evidence_id;
+            print_json(client.post("/api/v1/commands", envelope), output);
         } else if (*service_control) {
             auto envelope = command(
                 "service." + service_control_action,

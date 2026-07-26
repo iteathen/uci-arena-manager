@@ -11,6 +11,8 @@ purpose: >
 
 common_contract:
   resource_kind: managed_service
+  optional_profiles: true
+  manager_readiness_without_profiles: fully_operational
   required_fields:
     - profile_id
     - display_name
@@ -32,6 +34,8 @@ common_contract:
     - resume
     - status
   boundaries:
+    - Neither Book Forge nor UCI Arena Evidence Service is required for manager startup, local matches, tournaments, CLI use, or dashboard use.
+    - An unconfigured optional service creates no resource, warning, degraded state, or background process.
     - Configuration contains explicit executable, endpoint, and filesystem paths.
     - Process actions use native argv arrays and never a shell command.
     - Native service actions cross the allowlisted broker by manager resource id.
@@ -73,6 +77,18 @@ profiles:
       - workspace
       - optional_config_path
       - optional_native_launcher
+    discovery:
+      sources:
+        - process_environment_hints
+        - executable_path
+      environment_hints:
+        - BOOK_FORGE_NODE
+        - BOOK_FORGE_CLI
+        - BOOK_FORGE_WORKSPACE
+      behavior:
+        - Discovery returns zero or more candidates and never registers one automatically.
+        - A complete candidate requires a Node executable, CLI entrypoint, and workspace.
+        - The dashboard always permits manual path entry when no complete candidate is found.
     health_projection:
       - phase
       - heartbeat_age_seconds
@@ -115,6 +131,15 @@ profiles:
       curves: /api/v1/curves
       immutable_snapshots: /api/v1/snapshots
       operations: /api/v1/operations
+    discovery:
+      sources:
+        - process_environment_hints
+      environment_hints:
+        - UCI_ARENA_EVIDENCE_ENDPOINT
+      behavior:
+        - Discovery returns candidates but never enables the optional integration automatically.
+        - The operator may enter any loopback HTTP endpoint manually in the dashboard or CLI.
+        - Non-loopback endpoints are rejected in v1.
     planned_artifact_contract:
       required_fields:
         - schema_version
@@ -131,13 +156,16 @@ profiles:
         - provenance
     current_behavior:
       - The built-in profile appears in service setup as In development.
-      - It may be saved before its endpoint is available.
+      - It may be omitted entirely or saved before its endpoint is available.
       - Its observed state is unavailable and every runtime action explains which capability is missing.
       - No placeholder process, synthetic health, or fabricated curve data is created.
-      - Adding the future service requires implementing this contract, not changing manager resource identity.
+      - Completing the external service integration requires implementing this contract, not changing manager resource identity.
       - Capability discovery, not product-name dispatch, determines which evidence actions become available.
 
 validation:
+  - The manager remains ready and local match planning works with neither optional profile configured.
+  - Discovery returns an empty candidates array when no hints exist; this is not an error.
+  - Manual setup remains available after discovery returns no complete candidate.
   - Book Forge paths containing spaces remain separate argv values.
   - Book Forge status schema mismatches produce incompatible state.
   - Secret-looking fields in adapter output are rejected and redacted.

@@ -397,6 +397,14 @@ json ControlPlane::register_generic_resource(const json& request, const std::str
 
 json ControlPlane::service_profiles() const { return ServiceCatalog::profiles(); }
 
+json ControlPlane::discover_service_profile(const std::string& profile_id) const {
+    try {
+        return ServiceCatalog::discover(profile_id);
+    } catch (const std::exception& error) {
+        throw CommandFailure("service_profile_not_found", error.what(), 404);
+    }
+}
+
 json ControlPlane::complete_create(
     const json& request,
     const std::string& actor,
@@ -506,10 +514,48 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
     }
     json data = json::parse(existing->data_json);
     const std::string profile = data.value("profile_id", "");
+    const std::string action = request.at("action");
+    if (action == "service.configure") {
+        if (data.value("observed_state", "stopped") == "running" ||
+            data.value("observed_state", "stopped") == "paused") {
+            throw CommandFailure(
+                "service_running",
+                "stop the managed service before changing its locator",
+                409);
+        }
+        json parameters = request.at("parameters");
+        parameters["profile_id"] = profile;
+        parameters["display_name"] =
+            parameters.value("display_name", data.value("display_name", profile));
+        try {
+            data = ServiceCatalog::normalize_registration(parameters);
+        } catch (const std::exception& error) {
+            throw CommandFailure("invalid_service_profile", error.what(), 422);
+        }
+        ports::ResourceRecord updated = *existing;
+        updated.revision = existing->revision + 1;
+        updated.updated_at = domain::utc_now();
+        updated.data_json = data.dump();
+        const std::uint64_t expected_revision =
+            request.contains("expected_revision") && !request.at("expected_revision").is_null()
+                ? request.at("expected_revision").get<std::uint64_t>()
+                : existing->revision;
+        return complete_update(
+            request,
+            actor,
+            std::move(updated),
+            expected_revision,
+            "managed_service.configured");
+    }
     if (profile == "uci_arena_evidence") {
+        const bool endpoint_configured =
+            data.contains("endpoint") && data.at("endpoint").is_string() &&
+            !data.at("endpoint").get<std::string>().empty();
         throw CommandFailure(
             "capability_unavailable",
-            "UCI Arena Evidence Service capability discovery is unavailable until its endpoint is ready",
+            endpoint_configured
+                ? "UCI Arena Evidence Service endpoint is configured; its versioned capability handshake is not available yet"
+                : "configure an optional UCI Arena Evidence Service endpoint before using runtime actions",
             409);
     }
     if (profile != "book_forge") {
@@ -520,7 +566,6 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
     const std::filesystem::path cli = data.at("cli_entrypoint").get<std::string>();
     const std::filesystem::path workspace = data.at("workspace").get<std::string>();
     std::vector<std::string> base{cli.string()};
-    const std::string action = request.at("action");
     if (action == "service.start") {
         auto arguments = base;
         arguments.insert(
