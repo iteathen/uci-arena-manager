@@ -187,6 +187,18 @@ discovery:
     - standard_install_roots
     - provider_manifests
     - user_selected_roots
+  user_selected_root_behavior:
+    maximum_directory_depth: 1
+    detected_at_root_or_direct_child:
+      - opening_book_file_or_flat_directory
+      - syzygy_directory
+      - known_uci_engine_filename
+      - provider_component_manifest
+    ordering: normalized_path_ascending
+    rule: >
+      A user-selected or explicitly mounted root is inspected only at the root
+      and its direct non-symbolic-link children. It is never treated as
+      permission to recurse through the containing volume.
   whole_disk_recursive_scan: forbidden
   symbolic_link_traversal: forbidden
   registration_after_detection: explicit_only
@@ -221,6 +233,39 @@ local_import:
     - Managed-copy opening books reject symbolic links, nested directories, and payloads larger than the declared maximum.
     - Lichess token contents are never opened, hashed, copied, logged, returned, or placed in argv.
     - Restaurant remains visible as detect-only and is never registered, copied, installed, started, or controlled.
+
+vm_mounts:
+  immutable_asset_root:
+    runner_environment: ARENA_VM_ASSET_ROOT
+    contents:
+      - opening_books
+      - syzygy
+      - optional_external_uci_engines
+      - optional_provider_component_roots
+    installation_mode: in_place_reference
+    copy_into_manager_storage: forbidden
+    acceptance_evidence:
+      - bounded_scan_discovers_books_and_syzygy
+      - explicit_import_saves_normalized_locator
+      - no_managed_receipt_claims_asset_ownership
+      - file_name_size_and_timestamp_metadata_unchanged
+  writable_workspace_root:
+    runner_environment: ARENA_VM_WRITABLE_ROOT
+    contents:
+      - manager_state
+      - book_forge_workspace
+      - evidence_workspace
+    minimum_residual_gib: 75
+  lichess_secret_mount:
+    runner_environment: ARENA_LICHESS_TOKEN_FILE
+    mode: path_reference_only
+    account: existing_operator_bot_account
+    rules:
+      - The acceptance system does not require or create a second BOT account.
+      - The mounted token path is imported through Manager before it is passed
+        blindly to the installed adapter process that requires it.
+      - Manager and release automation never open, copy, hash, print, or embed
+        token contents.
 
 capacity:
   per_volume:
@@ -277,6 +322,11 @@ acceptance:
     integration snapshot, completes a minimal Evidence dataset job, and
     requires Manager to project both outputs through the public CLI contracts.
   - Missing opening books and tablebases can be downloaded from exact signed catalog entries or imported explicitly.
+  - Protected VM acceptance mounts existing opening books and Syzygy files,
+    discovers them through a bounded selected-root scan, and imports them in
+    place without copying or modifying the mounted collection.
+  - Protected VM acceptance places Book Forge and Evidence state on a separate
+    writable workspace volume with the required residual capacity.
   - Manager validates and projects Book Forge snapshot identities and Evidence Service dataset identities through their public CLIs.
   - Offline installation uses the same verified component bytes as stable online installation.
   - Interrupted apply, repair, upgrade, and uninstall preserve a recoverable transaction state.
@@ -300,9 +350,10 @@ release_gate_rules:
     turn an inconclusive optional-service result into a pass.
   - Clean-VM coverage includes Windows 11, Windows Server, Ubuntu, Debian,
     Fedora, and a RHEL-family image on protected ephemeral runners.
-  - The Lichess gate uses one staging BOT identity, a BOT-titled public online
-    opponent, casual standard chess, no more than three challenges in twenty
-    minutes, and exactly one required completed game.
+  - The Lichess gate uses the existing operator BOT identity, a BOT-titled
+    public online opponent, casual standard chess, no more than three
+    challenges in twenty minutes, and exactly one required completed game. It
+    never requires or provisions a second BOT account.
   - The Syzygy gate verifies signed full manifests without downloading the full
     collection, exercises range downloads against tiny local fixtures, and
     probes either a pinned real three-man test fixture or an explicitly supplied

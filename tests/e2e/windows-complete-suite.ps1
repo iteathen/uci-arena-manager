@@ -8,6 +8,7 @@ param(
     [string]$RunRoot,
     [Parameter(Mandatory = $true)]
     [string]$ResultPath,
+    [string]$WorkspaceRoot,
     [switch]$AllowUnsignedDevelopmentCatalog,
     [switch]$SkipStartupRegistration
 )
@@ -174,12 +175,17 @@ try {
     $resolvedSetup = (Resolve-Path -LiteralPath $Setup).Path
     $resolvedCatalog = (Resolve-Path -LiteralPath $Catalog).Path
     New-Item -ItemType Directory -Force -Path $RunRoot | Out-Null
+    if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) {
+        $WorkspaceRoot = Join-Path $RunRoot "workspace"
+    }
+    New-Item -ItemType Directory -Force -Path $WorkspaceRoot | Out-Null
+    $resolvedWorkspaceRoot = (Resolve-Path -LiteralPath $WorkspaceRoot).Path
     $common = @(
         "--catalog", $resolvedCatalog,
         "--install-root", (Join-Path $RunRoot "install"),
         "--data-root", (Join-Path $RunRoot "data"),
         "--cache-root", (Join-Path $RunRoot "cache"),
-        "--workspace-root", (Join-Path $RunRoot "workspace"),
+        "--workspace-root", $resolvedWorkspaceRoot,
         "--knowledge-root", (Join-Path $RunRoot "knowledge"),
         "--json"
     )
@@ -218,7 +224,7 @@ try {
 
     $bookCli = Get-Entrypoint "book_forge.service" "cli"
     $bookReceipt = Get-Receipt "book_forge.service"
-    $bookWorkspace = Join-Path (Join-Path $RunRoot "workspace") "book-forge"
+    $bookWorkspace = Join-Path $resolvedWorkspaceRoot "book-forge"
     $bookConfig = Join-Path $bookWorkspace "manager-config.json"
     [void](Invoke-JsonCommand $node @(
         $bookCli, "init", "--workspace", $bookWorkspace, "--config", $bookConfig
@@ -277,7 +283,7 @@ try {
     $stages.Add("book_forge")
 
     $evidenceCli = Get-Entrypoint "uci_arena_evidence.service" "cli"
-    $evidenceWorkspace = Join-Path (Join-Path $RunRoot "workspace") "evidence-service"
+    $evidenceWorkspace = Join-Path $resolvedWorkspaceRoot "evidence-service"
     $evidenceConfig = Join-Path $evidenceWorkspace "manager-config.json"
     [void](Invoke-JsonCommand $node @(
         $evidenceCli, "init", "--workspace", $evidenceWorkspace, "--config", $evidenceConfig
@@ -452,6 +458,7 @@ try {
         state = "passed"
         stages = @($stages)
         components = @($apply.components).Count
+        workspace_root = $resolvedWorkspaceRoot
         uci = $uci
         book_snapshot_id = $bookValidation.id
         evidence_dataset_id = $dataset.id

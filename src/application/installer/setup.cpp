@@ -1160,21 +1160,25 @@ void inspect_provider_root(
     }
 }
 
-void inspect_provider_roots(
-    json& rows,
-    std::map<std::string, std::set<std::string>>& seen,
+std::vector<fs::path> bounded_root_candidates(
     const std::vector<fs::path>& roots) {
-    std::set<std::string> inspected;
+    std::map<std::string, fs::path> candidates;
     for (const auto& candidate_root : roots) {
         if (candidate_root.empty()) {
             continue;
         }
         const fs::path root = normalized_absolute(candidate_root);
-        if (!inspected.insert(root.string()).second ||
-            !fs::is_directory(root) || contains_symbolic_link(root)) {
+        if (contains_symbolic_link(root)) {
             continue;
         }
-        inspect_provider_root(rows, seen, root);
+        if (fs::is_regular_file(root)) {
+            candidates.emplace(root.string(), root);
+            continue;
+        }
+        if (!fs::is_directory(root)) {
+            continue;
+        }
+        candidates.emplace(root.string(), root);
         std::error_code error;
         for (fs::directory_iterator iterator(
                  root, fs::directory_options::skip_permission_denied, error),
@@ -1182,11 +1186,32 @@ void inspect_provider_roots(
              iterator != end && !error;
              iterator.increment(error)) {
             if (iterator->is_directory(error) && !error &&
-                !iterator->is_symlink(error) && !error) {
-                inspect_provider_root(rows, seen, iterator->path());
+                !iterator->is_symlink(error) && !error &&
+                !contains_symbolic_link(iterator->path())) {
+                const fs::path child = normalized_absolute(iterator->path());
+                candidates.emplace(child.string(), child);
             }
             error.clear();
         }
+    }
+    std::vector<fs::path> result;
+    result.reserve(candidates.size());
+    for (auto& [key, path] : candidates) {
+        (void)key;
+        result.push_back(std::move(path));
+    }
+    return result;
+}
+
+void inspect_provider_roots(
+    json& rows,
+    std::map<std::string, std::set<std::string>>& seen,
+    const std::vector<fs::path>& roots) {
+    for (const auto& root : bounded_root_candidates(roots)) {
+        if (!fs::is_directory(root)) {
+            continue;
+        }
+        inspect_provider_root(rows, seen, root);
     }
 }
 
@@ -1331,6 +1356,47 @@ json discovery_rows(
             "detected_unmanaged");
     }
 
+    const auto selected_roots = bounded_root_candidates(extra_roots);
+    for (const auto& selected : selected_roots) {
+        if (fs::is_regular_file(selected)) {
+            std::string extension = selected.extension().string();
+            std::ranges::transform(
+                extension,
+                extension.begin(),
+                [](const unsigned char character) {
+                    return static_cast<char>(std::tolower(character));
+                });
+            if (extension == ".bin" || extension == ".book") {
+                append_discovery_candidate(
+                    rows,
+                    seen,
+                    "opening_book",
+                    "discovered",
+                    selected,
+                    "detected_unmanaged");
+            }
+            continue;
+        }
+        if (directory_has_extension(selected, {".bin", ".book"})) {
+            append_discovery_candidate(
+                rows,
+                seen,
+                "opening_book",
+                "discovered",
+                selected,
+                "detected_unmanaged");
+        }
+        if (directory_has_extension(selected, {".rtbw", ".rtbz"})) {
+            append_discovery_candidate(
+                rows,
+                seen,
+                "syzygy",
+                "discovered",
+                selected,
+                "detected_unmanaged");
+        }
+    }
+
     if (const char* path_environment = std::getenv("PATH")) {
 #ifdef _WIN32
         constexpr char separator = ';';
@@ -1352,13 +1418,22 @@ json discovery_rows(
 #endif
     };
     std::set<std::string> engine_roots;
-    for (const auto& root_value : bounded_roots) {
-        if (root_value.empty()) {
+    for (const auto& root : bounded_root_candidates(bounded_roots)) {
+        if (fs::is_regular_file(root)) {
+            if (engine_names.contains(root.filename().string())) {
+                append_discovery_candidate(
+                    rows,
+                    seen,
+                    "uci_engine",
+                    "discovered",
+                    root,
+                    "detected_unmanaged",
+                    {{"requires_probe", true}});
+            }
             continue;
         }
-        const fs::path root = normalized_absolute(root_value);
         if (!engine_roots.insert(root.string()).second ||
-            !fs::is_directory(root) || contains_symbolic_link(root)) {
+            !fs::is_directory(root)) {
             continue;
         }
         for (const auto& name : engine_names) {

@@ -363,6 +363,9 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: suite-candidate-${{ needs.validate.outputs.version }}
@@ -389,29 +392,13 @@ jobs:
           )
           New-Item -ItemType File -Force dist/import/lichess-token-reference | Out-Null
           $setup = Join-Path dist/import/bootstrap 'bin/${{ matrix.executable }}'
-          $common = @(
-            '--install-root', (Join-Path $PWD 'dist/import/install'),
-            '--data-root', (Join-Path $PWD 'dist/import/data'),
-            '--cache-root', (Join-Path $PWD 'dist/import/cache'),
-            '--workspace-root', (Join-Path $PWD 'dist/import/workspace'),
-            '--knowledge-root', (Join-Path $PWD 'dist/import/knowledge'),
-            '--json'
-          )
-          & $setup @common import --kind opening_book `
-            --path (Join-Path $PWD 'dist/import/assets/books')
-          if ($LASTEXITCODE -ne 0) { throw 'Opening-book import failed' }
-          & $setup @common import --kind syzygy `
-            --path (Join-Path $PWD 'dist/import/assets/syzygy')
-          if ($LASTEXITCODE -ne 0) { throw 'Syzygy in-place import failed' }
-          & $setup @common import --kind lichess_token_path `
-            --path (Join-Path $PWD 'dist/import/lichess-token-reference')
-          if ($LASTEXITCODE -ne 0) { throw 'Lichess token-path import failed' }
-          $inventory = & $setup @common inventory | ConvertFrom-Json
-          if ($inventory.discovery.opening_book.selection.source -ne 'saved_locator' -or
-              $inventory.discovery.syzygy.selection.source -ne 'saved_locator' -or
-              $inventory.discovery.lichess_token_path.selection.source -ne 'saved_locator') {
-            throw 'Saved external locators were not selected deterministically'
-          }
+          & tests/e2e/mounted-assets-acceptance.ps1 `
+            -Setup $setup `
+            -RunRoot (Join-Path $PWD 'dist/import/run') `
+            -AssetRoot (Join-Path $PWD 'dist/import/assets') `
+            -LichessTokenFile (Join-Path $PWD 'dist/import/lichess-token-reference') `
+            -ResultPath (Join-Path $PWD 'dist/import/mounted-assets-result.json')
+          if ($LASTEXITCODE -ne 0) { throw 'Mounted-asset import acceptance failed' }
           $catalog = Get-Content -Raw dist/candidate/catalog.json | ConvertFrom-Json
           foreach ($id in @('syzygy.wdl.3-4-5','syzygy.dtz.3-4-5')) {
             $component = $catalog.components |
@@ -470,6 +457,14 @@ jobs:
       - name: Exercise clean platform image with real per-user startup
         shell: pwsh
         run: |
+          if ([string]::IsNullOrWhiteSpace($env:ARENA_VM_ASSET_ROOT) -or
+              -not (Test-Path -LiteralPath $env:ARENA_VM_ASSET_ROOT -PathType Container)) {
+            throw 'Protected VM must expose ARENA_VM_ASSET_ROOT as a mounted asset directory'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:ARENA_VM_WRITABLE_ROOT)) {
+            throw 'Protected VM must expose ARENA_VM_WRITABLE_ROOT'
+          }
+          New-Item -ItemType Directory -Force $env:ARENA_VM_WRITABLE_ROOT | Out-Null
           $archive = Get-ChildItem dist/candidate/payloads -File `
             -Filter "*${{ matrix.target }}.tar.gz" |
             Where-Object { $_.Name -like 'uci-arena-manager-*' } |
@@ -481,9 +476,25 @@ jobs:
             -Setup (Join-Path dist/platform/bootstrap 'bin/${{ matrix.executable }}') `
             -Catalog (Join-Path $PWD 'dist/candidate/catalog.json') `
             -RunRoot (Join-Path $env:RUNNER_TEMP 'arena-suite-platform') `
+            -WorkspaceRoot (Join-Path $env:ARENA_VM_WRITABLE_ROOT '${{ matrix.image }}') `
             -ResultPath (Join-Path $PWD 'dist/platform/${{ matrix.image }}.json') `
             -AllowUnsignedDevelopmentCatalog
           if ($LASTEXITCODE -ne 0) { throw '${{ matrix.image }} acceptance failed' }
+          $mountedArguments = @{
+            Setup = Join-Path dist/platform/bootstrap 'bin/${{ matrix.executable }}'
+            RunRoot = Join-Path $env:RUNNER_TEMP 'arena-mounted-assets'
+            AssetRoot = $env:ARENA_VM_ASSET_ROOT
+            ResultPath = Join-Path $PWD 'dist/platform/${{ matrix.image }}-mounted-assets.json'
+            OpeningBookPath = $env:ARENA_VM_OPENING_BOOK_PATH
+            SyzygyPath = $env:ARENA_VM_SYZYGY_PATH
+            UciEnginePath = $env:ARENA_VM_UCI_ENGINE_PATH
+            BookForgePath = $env:ARENA_VM_BOOK_FORGE_PATH
+            EvidenceServicePath = $env:ARENA_VM_EVIDENCE_PATH
+          }
+          & tests/e2e/mounted-assets-acceptance.ps1 @mountedArguments
+          if ($LASTEXITCODE -ne 0) {
+            throw '${{ matrix.image }} mounted-asset acceptance failed'
+          }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -495,7 +506,7 @@ jobs:
   accept-lichess-live:
     if: inputs.publish
     needs: [validate, compose-candidate, accept-platform-matrix]
-    runs-on: [self-hosted, ephemeral, uci-suite, lichess-staging]
+    runs-on: [self-hosted, ephemeral, uci-suite, lichess]
     environment: lichess-live-acceptance
     permissions:
       contents: read
@@ -507,9 +518,22 @@ jobs:
         with:
           name: suite-candidate-${{ needs.validate.outputs.version }}
           path: dist/candidate
-      - name: Install the exact candidate and complete one protected staging game
+      - name: Install the exact candidate and complete one protected existing-account game
         shell: pwsh
         run: |
+          foreach ($name in @(
+            'ARENA_LICHESS_TOKEN_FILE',
+            'ARENA_LICHESS_CONFIG_PATH',
+            'ARENA_LICHESS_SINGLE_GAME_PROFILE_PATH',
+            'ARENA_LICHESS_TIME_PROFILE_PATH',
+            'ARENA_LICHESS_CAPACITY_PROFILE_PATH',
+            'ARENA_VM_WRITABLE_ROOT'
+          )) {
+            $value = [Environment]::GetEnvironmentVariable($name)
+            if ([string]::IsNullOrWhiteSpace($value)) {
+              throw "Protected runner environment variable $name is required"
+            }
+          }
           $target = if ($IsWindows) { 'windows-x86_64' } else { 'linux-x86_64' }
           $executable = if ($IsWindows) { 'arena-setup.exe' } else { 'arena-setup' }
           $archive = Get-ChildItem dist/candidate/payloads -File `
@@ -523,13 +547,14 @@ jobs:
             -Setup (Join-Path dist/lichess/bootstrap "bin/$executable") `
             -Catalog (Join-Path $PWD 'dist/candidate/catalog.json') `
             -RunRoot (Join-Path $env:RUNNER_TEMP 'arena-lichess-acceptance') `
-            -TokenFile '${{ vars.LICHESS_STAGING_TOKEN_FILE }}' `
-            -ExpectedAccount '${{ vars.LICHESS_STAGING_ACCOUNT }}' `
+            -WorkspaceRoot (Join-Path $env:ARENA_VM_WRITABLE_ROOT 'lichess-acceptance') `
+            -TokenFile $env:ARENA_LICHESS_TOKEN_FILE `
+            -ExpectedAccount '${{ vars.LICHESS_ACCOUNT }}' `
             -Opponent '${{ vars.LICHESS_PUBLIC_BOT }}' `
-            -Config '${{ vars.LICHESS_STAGING_CONFIG_PATH }}' `
-            -SingleGameProfile '${{ vars.LICHESS_SINGLE_GAME_PROFILE_PATH }}' `
-            -TimeProfile '${{ vars.LICHESS_TIME_PROFILE_PATH }}' `
-            -CapacityProfile '${{ vars.LICHESS_CAPACITY_PROFILE_PATH }}' `
+            -Config $env:ARENA_LICHESS_CONFIG_PATH `
+            -SingleGameProfile $env:ARENA_LICHESS_SINGLE_GAME_PROFILE_PATH `
+            -TimeProfile $env:ARENA_LICHESS_TIME_PROFILE_PATH `
+            -CapacityProfile $env:ARENA_LICHESS_CAPACITY_PROFILE_PATH `
             -AllowUnsignedDevelopmentCatalog
           if ($LASTEXITCODE -ne 0) { throw 'Protected Lichess acceptance failed' }
 

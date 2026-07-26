@@ -358,6 +358,47 @@ TEST_CASE("inventory returns bounded versioned discovery and browse contracts") 
     fs::remove_all(root);
 }
 
+TEST_CASE("selected asset roots discover books and Syzygy one level only") {
+    const fs::path root = temporary_directory();
+    const SetupPaths paths = paths_under(root);
+    const fs::path asset_root = root / "mounted-assets";
+    const fs::path first_books = asset_root / "a-books";
+    const fs::path second_books = asset_root / "z-books";
+    const fs::path syzygy = asset_root / "syzygy";
+    const fs::path too_deep = asset_root / "nested" / "too-deep";
+    fs::create_directories(first_books);
+    fs::create_directories(second_books);
+    fs::create_directories(syzygy);
+    fs::create_directories(too_deep);
+    std::ofstream(first_books / "first.bin") << "book-one";
+    std::ofstream(second_books / "second.book") << "book-two";
+    std::ofstream(syzygy / "KQvK.rtbw") << "tablebase";
+    std::ofstream(too_deep / "hidden.rtbz") << "not-discovered";
+
+    const json inventory = SetupEngine::inventory(paths, {asset_root});
+    const auto& discovery = inventory.at("discovery");
+    REQUIRE(
+        discovery.at("opening_book").at("selection").at("source") ==
+        "discovered");
+    REQUIRE(
+        discovery.at("opening_book").at("selection").at("path") ==
+        fs::absolute(first_books).lexically_normal().string());
+    REQUIRE(
+        discovery.at("syzygy").at("selection").at("path") ==
+        fs::absolute(syzygy).lexically_normal().string());
+    const auto& syzygy_candidates =
+        discovery.at("syzygy").at("candidates");
+    REQUIRE(std::none_of(
+        syzygy_candidates.begin(),
+        syzygy_candidates.end(),
+        [&too_deep](const json& candidate) {
+            return candidate.value("path", "") ==
+                   fs::absolute(too_deep).lexically_normal().string();
+        }));
+
+    fs::remove_all(root);
+}
+
 TEST_CASE("discovery precedence is receipt then locator then provider manifest") {
     const fs::path root = temporary_directory();
     const SetupPaths paths = paths_under(root);

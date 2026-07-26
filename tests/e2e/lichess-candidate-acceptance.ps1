@@ -20,6 +20,7 @@ param(
     [string]$TimeProfile,
     [Parameter(Mandatory = $true)]
     [string]$CapacityProfile,
+    [string]$WorkspaceRoot,
     [switch]$AllowUnsignedDevelopmentCatalog
 )
 
@@ -69,17 +70,44 @@ foreach ($path in @(
 }
 
 New-Item -ItemType Directory -Force $RunRoot | Out-Null
+if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) {
+    $WorkspaceRoot = Join-Path $RunRoot "workspace"
+}
+New-Item -ItemType Directory -Force $WorkspaceRoot | Out-Null
+$resolvedWorkspaceRoot = (Resolve-Path -LiteralPath $WorkspaceRoot).Path
 $common = @(
     "--catalog", (Resolve-Path -LiteralPath $Catalog).Path,
     "--install-root", (Join-Path $RunRoot "install"),
     "--data-root", (Join-Path $RunRoot "data"),
     "--cache-root", (Join-Path $RunRoot "cache"),
-    "--workspace-root", (Join-Path $RunRoot "workspace"),
+    "--workspace-root", $resolvedWorkspaceRoot,
     "--knowledge-root", (Join-Path $RunRoot "knowledge"),
     "--json"
 )
 if ($AllowUnsignedDevelopmentCatalog) {
     $common += "--allow-unsigned-development-catalog"
+}
+
+$tokenReference = @(
+    & $Setup @common import `
+        --kind lichess_token_path `
+        --path (Resolve-Path -LiteralPath $TokenFile).Path 2>&1
+) -join [Environment]::NewLine
+if ($LASTEXITCODE -ne 0) {
+    throw "Existing Lichess token-file reference import failed: $tokenReference"
+}
+$tokenImport = $tokenReference | ConvertFrom-Json
+if ($tokenImport.mode -ne "in_place_reference" -or
+    $tokenImport.validation.validation -ne "path_reference_only") {
+    throw "Manager did not retain the existing Lichess token as a path-only reference"
+}
+$inventoryText = @(& $Setup @common inventory 2>&1) -join [Environment]::NewLine
+if ($LASTEXITCODE -ne 0) {
+    throw "Lichess token-file inventory failed: $inventoryText"
+}
+$inventory = $inventoryText | ConvertFrom-Json
+if ($inventory.discovery.lichess_token_path.selection.source -ne "saved_locator") {
+    throw "Manager did not select the saved existing-account token-file reference"
 }
 
 & $Setup @common apply `
@@ -104,7 +132,7 @@ if (-not (Test-Path -LiteralPath $modelRoot -PathType Container)) {
 }
 
 & $node $acceptance `
-    --confirm I_ACCEPT_ONE_STAGING_BOT_GAME `
+    --confirm I_ACCEPT_ONE_BOT_GAME `
     --token-file (Resolve-Path -LiteralPath $TokenFile).Path `
     --expected-account $ExpectedAccount `
     --opponent $Opponent `
@@ -118,5 +146,5 @@ if (-not (Test-Path -LiteralPath $modelRoot -PathType Container)) {
     --attempts 3 `
     --minutes 20
 if ($LASTEXITCODE -ne 0) {
-    throw "Protected Lichess acceptance did not complete exactly one staging game"
+    throw "Protected Lichess acceptance did not complete exactly one existing-account game"
 }
