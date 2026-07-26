@@ -151,19 +151,115 @@ if ($LASTEXITCODE -ne 0) {
     throw "Candidate Lichess installation verification failed"
 }
 
-$initialEngineReceipt = Get-Receipt "uci_arena.engine"
-$initialEngineRoot = [string]$initialEngineReceipt.active_root
-& $Setup @common uninstall `
-    --component uci_arena.engine `
-    --yes
+$initialNode = Get-Entrypoint "node_runtime.private" "node"
+$initialBookCli = Get-Entrypoint "book_forge.service" "cli"
+$initialBookReceipt = Get-Receipt "book_forge.service"
+$initialBookWorkspace = [string]$initialBookReceipt.data_paths[0]
+$initialBookConfig = [string]$initialBookReceipt.configuration_path
+& $initialNode $initialBookCli `
+    init `
+    --workspace $initialBookWorkspace `
+    --config $initialBookConfig
 if ($LASTEXITCODE -ne 0) {
-    throw "Candidate UCI Arena uninstall failed"
+    throw "Installed Book Forge initialization failed before suite uninstall"
 }
-if (Test-Path -LiteralPath $initialEngineRoot) {
-    throw "Candidate UCI Arena immutable version root survived uninstall"
+$initialBookStartupText = @(
+    & $initialNode $initialBookCli `
+        startup install `
+        --workspace $initialBookWorkspace `
+        --config $initialBookConfig 2>&1
+) -join [Environment]::NewLine
+if ($LASTEXITCODE -ne 0 -or
+    -not ($initialBookStartupText | ConvertFrom-Json).startup.installed) {
+    throw "Installed Book Forge startup registration failed before suite uninstall"
 }
-if (Test-Path -LiteralPath (Join-Path (Join-Path $RunRoot "data/receipts") "uci_arena.engine.json")) {
-    throw "Candidate UCI Arena receipt survived uninstall"
+$initialEvidenceCli =
+    Get-Entrypoint "uci_arena_evidence.service" "cli"
+$initialEvidenceReceipt =
+    Get-Receipt "uci_arena_evidence.service"
+$initialEvidenceWorkspace =
+    [string]$initialEvidenceReceipt.data_paths[0]
+$initialEvidenceConfig =
+    [string]$initialEvidenceReceipt.configuration_path
+& $initialNode $initialEvidenceCli `
+    init `
+    --workspace $initialEvidenceWorkspace `
+    --config $initialEvidenceConfig
+if ($LASTEXITCODE -ne 0) {
+    throw "Installed Evidence initialization failed before suite uninstall"
+}
+$initialEvidenceStartupText = @(
+    & $initialNode $initialEvidenceCli `
+        startup install `
+        --workspace $initialEvidenceWorkspace `
+        --config $initialEvidenceConfig 2>&1
+) -join [Environment]::NewLine
+if ($LASTEXITCODE -ne 0 -or
+    -not ($initialEvidenceStartupText | ConvertFrom-Json).installed) {
+    throw "Installed Evidence startup registration failed before suite uninstall"
+}
+$initialReceipts = @(
+    Get-ChildItem -File (Join-Path $RunRoot "data/receipts") |
+        ForEach-Object {
+            Get-Content -Raw -LiteralPath $_.FullName |
+                ConvertFrom-Json
+        }
+)
+$initialRoots = @($initialReceipts | ForEach-Object { [string]$_.active_root })
+$uninstallText = @(
+    & $Setup @common uninstall --all --yes 2>&1
+) -join [Environment]::NewLine
+if ($LASTEXITCODE -ne 0) {
+    throw "Candidate suite uninstall failed: $uninstallText"
+}
+$uninstall = $uninstallText | ConvertFrom-Json
+if (-not $uninstall.all -or
+    @($uninstall.components).Count -ne $initialReceipts.Count) {
+    throw "Candidate suite uninstall did not remove every managed receipt"
+}
+foreach ($componentId in @(
+    "book_forge.service",
+    "uci_arena_evidence.service"
+)) {
+    $cleanup = $uninstall.components |
+        Where-Object { $_.component_id -eq $componentId } |
+        Select-Object -First 1
+    if ($cleanup.startup_cleanup.installed -ne $false) {
+        throw "$componentId startup registration survived suite uninstall"
+    }
+}
+foreach ($root in $initialRoots) {
+    if (Test-Path -LiteralPath $root) {
+        throw "Managed immutable root survived suite uninstall: $root"
+    }
+}
+if (@(Get-ChildItem -File (Join-Path $RunRoot "data/receipts")).Count -ne 0) {
+    throw "Managed receipts survived suite uninstall"
+}
+foreach ($taskName in @(
+    "UCI Arena Book Forge",
+    "UCI Arena Evidence Service"
+)) {
+    if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+        throw "Scheduled task survived suite uninstall: $taskName"
+    }
+}
+$providerRoots = @(
+    [string]$initialBookReceipt.active_root,
+    [string]$initialEvidenceReceipt.active_root
+)
+$remainingProviderProcesses = @(
+    Get-CimInstance Win32_Process |
+        Where-Object {
+            $commandLine = [string]$_.CommandLine
+            $commandLine -and @(
+                $providerRoots |
+                    Where-Object { $commandLine.Contains($_) }
+            ).Count -gt 0
+        }
+)
+if ($remainingProviderProcesses.Count -ne 0) {
+    throw "Provider process survived suite uninstall"
 }
 foreach ($path in @(
     $TokenFile,
@@ -175,6 +271,26 @@ foreach ($path in @(
         throw "Normal uninstall removed an imported external asset: $path"
     }
 }
+foreach ($kind in @(
+    "lichess_token_path",
+    "timing_profile",
+    "opening_book",
+    "syzygy"
+)) {
+    $locatorPath =
+        Join-Path (Join-Path $RunRoot "data/locators") "$kind.json"
+    if (-not (Test-Path -LiteralPath $locatorPath -PathType Leaf)) {
+        throw "Normal suite uninstall removed saved locator: $kind"
+    }
+}
+foreach ($workspace in @(
+    $initialBookWorkspace,
+    $initialEvidenceWorkspace
+)) {
+    if (-not (Test-Path -LiteralPath $workspace -PathType Container)) {
+        throw "Normal suite uninstall removed provider workspace: $workspace"
+    }
+}
 & $Setup @common apply `
     --preset custom `
     --component lichess.adapter `
@@ -183,11 +299,11 @@ foreach ($path in @(
     --offline `
     --yes
 if ($LASTEXITCODE -ne 0) {
-    throw "Candidate UCI Arena reinstall failed"
+    throw "Candidate suite reinstall failed"
 }
 & $Setup @common verify
 if ($LASTEXITCODE -ne 0) {
-    throw "Candidate UCI Arena reinstall verification failed"
+    throw "Candidate suite reinstall verification failed"
 }
 
 $node = Get-Entrypoint "node_runtime.private" "node"

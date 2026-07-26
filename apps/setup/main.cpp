@@ -169,11 +169,23 @@ int main(int argc, char** argv) {
 
         std::vector<std::string> uninstall_components;
         bool purge = false;
+        bool uninstall_all = false;
         auto* uninstall_command =
             app.add_subcommand("uninstall", "Remove managed component binaries");
-        uninstall_command->add_option("--component", uninstall_components)
-            ->required()
-            ->expected(-1);
+        auto* uninstall_component_option =
+            uninstall_command
+                ->add_option(
+                    "--component",
+                    uninstall_components,
+                    "Managed component id; may be repeated")
+                ->expected(-1);
+        auto* uninstall_all_option =
+            uninstall_command->add_flag(
+                "--all",
+                uninstall_all,
+                "Remove every receipt-selected managed component");
+        uninstall_component_option->excludes(uninstall_all_option);
+        uninstall_all_option->excludes(uninstall_component_option);
         uninstall_command->add_flag("--yes", yes, "Confirm uninstall");
         uninstall_command->add_flag(
             "--purge",
@@ -195,8 +207,18 @@ int main(int argc, char** argv) {
             curl_global_cleanup();
             return result.value("ok", false) ? 0 : 4;
         } else if (*uninstall_command) {
+            if (!uninstall_all &&
+                uninstall_components.empty()) {
+                throw std::runtime_error(
+                    "uninstall requires --component or --all");
+            }
             print(
-                SetupEngine::uninstall(paths, uninstall_components, yes, purge),
+                SetupEngine::uninstall(
+                    paths,
+                    uninstall_components,
+                    yes,
+                    purge,
+                    uninstall_all),
                 json_output);
         } else {
             if (catalog_option->count() == 0) {

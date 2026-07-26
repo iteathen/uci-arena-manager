@@ -123,11 +123,14 @@ function Invoke-UciAcceptance {
                 break
             }
         }
-        if (-not $modelLine -or $modelLine -notmatch "fingerprint:(\d+):provider:([^:]+):") {
+        if (-not $modelLine -or
+            $modelLine -notmatch
+                "model loaded:backend:flashfork:([^:]+):fingerprint:(\d+):provider:([^:]+):") {
             throw "installed UCI engine did not load a typed model identity"
         }
-        $fingerprint = $Matches[1]
-        $provider = $Matches[2]
+        $modelId = $Matches[1]
+        $fingerprint = $Matches[2]
+        $provider = $Matches[3]
         $expectedModelRoot = Join-Path `
             (Join-Path (Split-Path -Parent (Split-Path -Parent $Engine)) "models") `
             "default"
@@ -154,6 +157,7 @@ function Invoke-UciAcceptance {
             }
         }
         return @{
+            model_id = $modelId
             model_root = $modelRoot
             model_fingerprint = $fingerprint
             provider = $provider
@@ -213,36 +217,135 @@ try {
     }
     $stages.Add("verify")
 
-    $initialUciReceipt = Get-Receipt "uci_arena.engine"
-    $initialUciRoot = [string]$initialUciReceipt.active_root
-    $uninstall = Invoke-JsonCommand $resolvedSetup (
-        $common + @(
-            "uninstall",
-            "--component", "uci_arena.engine",
-            "--yes"
-        )
+    $initialNode = Get-Entrypoint "node_runtime.private" "node"
+    $initialBookCli = Get-Entrypoint "book_forge.service" "cli"
+    $initialBookReceipt = Get-Receipt "book_forge.service"
+    $initialBookWorkspace = Join-Path $resolvedWorkspaceRoot "book-forge"
+    $initialBookConfig = [string]$initialBookReceipt.configuration_path
+    [void](Invoke-JsonCommand $initialNode @(
+        $initialBookCli, "init",
+        "--workspace", $initialBookWorkspace,
+        "--config", $initialBookConfig
+    ))
+    $initialBookStartup = Invoke-JsonCommand $initialNode @(
+        $initialBookCli, "startup", "install",
+        "--workspace", $initialBookWorkspace,
+        "--config", $initialBookConfig
     )
-    if (Test-Path -LiteralPath $initialUciRoot) {
-        throw "UCI Arena immutable version root survived normal uninstall"
+    if (-not $initialBookStartup.startup.installed) {
+        throw "Book Forge startup registration was not installed before suite uninstall"
     }
-    $initialUciReceiptPath = Join-Path (
-        Join-Path $RunRoot "data/receipts"
-    ) "uci_arena.engine.json"
-    if (Test-Path -LiteralPath $initialUciReceiptPath) {
-        throw "UCI Arena receipt survived normal uninstall"
+    $initialEvidenceCli =
+        Get-Entrypoint "uci_arena_evidence.service" "cli"
+    $initialEvidenceReceipt =
+        Get-Receipt "uci_arena_evidence.service"
+    $initialEvidenceWorkspace =
+        Join-Path $resolvedWorkspaceRoot "evidence-service"
+    $initialEvidenceConfig =
+        [string]$initialEvidenceReceipt.configuration_path
+    [void](Invoke-JsonCommand $initialNode @(
+        $initialEvidenceCli, "init",
+        "--workspace", $initialEvidenceWorkspace,
+        "--config", $initialEvidenceConfig
+    ))
+    $initialEvidenceStartup = Invoke-JsonCommand $initialNode @(
+        $initialEvidenceCli, "startup", "install",
+        "--workspace", $initialEvidenceWorkspace,
+        "--config", $initialEvidenceConfig
+    )
+    if (-not $initialEvidenceStartup.installed) {
+        throw "Evidence startup registration was not installed before suite uninstall"
+    }
+    $initialReceipts = @(
+        Get-ChildItem -File (Join-Path $RunRoot "data/receipts") |
+            ForEach-Object {
+                Get-Content -Raw -LiteralPath $_.FullName |
+                    ConvertFrom-Json
+            }
+    )
+    $initialRoots = @($initialReceipts | ForEach-Object { [string]$_.active_root })
+    $initialKnowledgeFiles = @(
+        Get-ChildItem -Recurse -File (Join-Path $RunRoot "knowledge") |
+            ForEach-Object { $_.FullName }
+    )
+    $uninstall = Invoke-JsonCommand $resolvedSetup (
+        $common + @("uninstall", "--all", "--yes")
+    )
+    if (-not $uninstall.all -or
+        @($uninstall.components).Count -ne $initialReceipts.Count) {
+        throw "Complete suite uninstall did not remove every managed receipt"
+    }
+    foreach ($componentId in @(
+        "book_forge.service",
+        "uci_arena_evidence.service"
+    )) {
+        $cleanup = $uninstall.components |
+            Where-Object { $_.component_id -eq $componentId } |
+            Select-Object -First 1
+        if ($cleanup.startup_cleanup.installed -ne $false) {
+            throw "$componentId startup registration survived suite uninstall"
+        }
+    }
+    foreach ($root in $initialRoots) {
+        if (Test-Path -LiteralPath $root) {
+            throw "Managed immutable root survived suite uninstall: $root"
+        }
+    }
+    if (@(Get-ChildItem -File (Join-Path $RunRoot "data/receipts")).Count -ne 0) {
+        throw "Managed receipts survived suite uninstall"
+    }
+    foreach ($taskName in @(
+        "UCI Arena Book Forge",
+        "UCI Arena Evidence Service"
+    )) {
+        if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+            throw "Scheduled task survived suite uninstall: $taskName"
+        }
+    }
+    $providerRoots = @(
+        [string]$initialBookReceipt.active_root,
+        [string]$initialEvidenceReceipt.active_root
+    )
+    $remainingProviderProcesses = @(
+        Get-CimInstance Win32_Process |
+            Where-Object {
+                $commandLine = [string]$_.CommandLine
+                $commandLine -and @(
+                    $providerRoots |
+                        Where-Object { $commandLine.Contains($_) }
+                ).Count -gt 0
+            }
+    )
+    if ($remainingProviderProcesses.Count -ne 0) {
+        throw "Provider process survived suite uninstall"
+    }
+    foreach ($workspace in @(
+        $initialBookWorkspace,
+        $initialEvidenceWorkspace
+    )) {
+        if (-not (Test-Path -LiteralPath $workspace -PathType Container)) {
+            throw "Normal suite uninstall removed provider workspace: $workspace"
+        }
+    }
+    foreach ($knowledgeFile in $initialKnowledgeFiles) {
+        if (-not (Test-Path -LiteralPath $knowledgeFile -PathType Leaf)) {
+            throw "Normal suite uninstall removed knowledge asset: $knowledgeFile"
+        }
     }
     $apply = Invoke-JsonCommand $resolvedSetup (
         $common + @("apply", "--preset", "complete_arena", "--offline", "--yes")
     )
     $verify = Invoke-JsonCommand $resolvedSetup ($common + @("verify"))
     if (-not $verify.ok) {
-        throw "reinstalled UCI Arena verification failed"
+        throw "reinstalled complete suite verification failed"
     }
-    $reinstalledUciReceipt = Get-Receipt "uci_arena.engine"
-    if (-not (Test-Path -LiteralPath $reinstalledUciReceipt.active_root -PathType Container)) {
-        throw "UCI Arena immutable version root was not restored"
+    foreach ($receipt in $initialReceipts) {
+        $reinstalled = Get-Receipt ([string]$receipt.component_id)
+        if (-not (Test-Path -LiteralPath $reinstalled.active_root -PathType Container)) {
+            throw "Managed immutable root was not restored: $($receipt.component_id)"
+        }
     }
-    $stages.Add("uci_uninstall_reinstall")
+    $stages.Add("suite_uninstall_reinstall")
 
     $node = Get-Entrypoint "node_runtime.private" "node"
     $engine = Get-Entrypoint "uci_arena.engine" "uci"
@@ -333,7 +436,7 @@ try {
     )
     $target = Invoke-JsonCommand $node @(
         $evidenceCli, "target", "add",
-        "--model-id", "flashfork_pv12_mobile_nnue_v1",
+        "--model-id", $uci.model_id,
         "--model-root", $uci.model_root,
         "--fingerprint", $uci.model_fingerprint,
         "--engine", $engine,

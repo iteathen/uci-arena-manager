@@ -65,7 +65,8 @@ class SetupEngine final {
         const SetupPaths& paths,
         const std::vector<std::string>& component_ids,
         bool confirmed,
-        bool purge);
+        bool purge,
+        bool all = false);
 };
 
 }  // namespace arena::application::installer

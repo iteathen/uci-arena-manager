@@ -648,3 +648,70 @@ TEST_CASE("verified release media is retained for later repair and downloads") {
     REQUIRE(reloaded.at("suite_version") == "1.0.0");
     fs::remove_all(root);
 }
+
+TEST_CASE("suite uninstall removes every receipt while preserving workspaces") {
+    const fs::path root = temporary_directory();
+    const SetupPaths paths = paths_under(root);
+    const fs::path receipts = paths.data_root / "receipts";
+    fs::create_directories(receipts);
+    const auto install = [&](const std::string& id, const json& dependencies) {
+        const fs::path component_root =
+            paths.install_root / "components" / id / "1.0.0";
+        fs::create_directories(component_root);
+        std::ofstream(component_root / "payload") << id;
+        std::ofstream(receipts / (id + ".json"))
+            << json{
+                   {"schema", "arena_install_receipt_v1"},
+                   {"schema_version", 1},
+                   {"component_id", id},
+                   {"component_version", "1.0.0"},
+                   {"state", "installed_managed"},
+                   {"active_root", component_root.string()},
+                   {"artifact_sha256", std::string(64, 'a')},
+                   {"dependencies", dependencies},
+                   {"data_paths", json::array()},
+                   {"activated_files", json::array()},
+               }
+                   .dump(2);
+        return component_root;
+    };
+    const fs::path manager =
+        install("manager.core", json::array());
+    const fs::path node =
+        install("node_runtime.private", json::array());
+    const fs::path provider =
+        install(
+            "optional.provider",
+            json::array({"node_runtime.private"}));
+    const fs::path preserved =
+        paths.workspace_root / "provider" / "state.json";
+    fs::create_directories(preserved.parent_path());
+    std::ofstream(preserved) << "{}";
+
+    REQUIRE_THROWS(
+        SetupEngine::uninstall(
+            paths,
+            {"node_runtime.private"},
+            true,
+            false));
+    const json result =
+        SetupEngine::uninstall(
+            paths,
+            {},
+            true,
+            false,
+            true);
+    REQUIRE(result.at("all") == true);
+    REQUIRE(result.at("components").size() == 3);
+    REQUIRE_FALSE(fs::exists(manager));
+    REQUIRE_FALSE(fs::exists(node));
+    REQUIRE_FALSE(fs::exists(provider));
+    REQUIRE(fs::is_regular_file(preserved));
+    REQUIRE(
+        std::ranges::none_of(
+            fs::directory_iterator(receipts),
+            [](const fs::directory_entry& entry) {
+                return entry.path().extension() == ".json";
+            }));
+    fs::remove_all(root);
+}

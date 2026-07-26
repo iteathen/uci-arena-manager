@@ -319,6 +319,19 @@ transaction:
   backup: before_replacement_or_migration
   failure: restore_previous_activation_and_service_state
   normal_uninstall: preserve_user_data
+  suite_uninstall:
+    command: arena-setup uninstall --all --yes
+    ordering: startup_capable_consumers_before_runtimes_and_dependencies
+    rules:
+      - Provider-owned startup adapters are invoked through their verified
+        installed CLI and private Node runtime before payload removal.
+      - Uninstall fails closed if a provider startup registration cannot be
+        stopped and removed.
+      - Removing a shared runtime by itself is rejected while an installed
+        startup-capable provider still depends on it.
+      - Normal suite uninstall removes every managed receipt and immutable
+        component root while preserving workspaces, locators, imported
+        in-place assets, and retained release media.
   purge: preview_confirm_optional_export
   generated_service_configuration:
     owner: arena_setup
@@ -394,11 +407,12 @@ acceptance:
     admission, the bounded Evidence workload uses a separate acceptance-only
     configuration copy that changes resource thresholds but retains the exact
     installer-generated dependency and workspace paths.
-  - Complete and protected live acceptance uninstall the receipt-selected UCI
-    Arena component, prove its immutable version root and receipt were removed
-    without removing imported assets or saved locators, reinstall from the
-    candidate catalog, verify the new receipt, and only then run end-to-end
-    product and service checks.
+  - Complete and protected live acceptance register installed optional-service
+    startup adapters, uninstall the complete receipt-selected suite, prove all
+    startup registrations, immutable version roots, and receipts were removed
+    without removing workspaces, imported assets, saved locators, or retained
+    media, reinstall from the candidate catalog, verify every new receipt, and
+    only then run end-to-end product and service checks.
   - Missing opening books and tablebases can be downloaded from exact signed catalog entries or imported explicitly.
   - Protected VM acceptance mounts existing opening books and Syzygy files,
     discovers them through a bounded selected-root scan, and imports them in

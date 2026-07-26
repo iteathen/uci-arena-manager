@@ -1,6 +1,7 @@
 #include "arena/application/installer/setup.hpp"
 
 #include "arena/adapters/uci_process.hpp"
+#include "arena/application/process_supervisor.hpp"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -2258,6 +2259,108 @@ std::optional<json> generated_evidence_active_model_pointer(
     };
 }
 
+bool supports_startup_uninstall(const json& receipt) {
+    if (!receipt.contains("active_root") ||
+        !receipt.at("active_root").is_string()) {
+        return false;
+    }
+    const fs::path manifest_path =
+        fs::path(receipt.at("active_root").get<std::string>()) /
+        "arena-component.json";
+    if (!fs::is_regular_file(manifest_path) ||
+        fs::is_symlink(manifest_path)) {
+        return false;
+    }
+    const json manifest = read_json(manifest_path);
+    const auto capabilities =
+        manifest.value("capabilities", json::array());
+    return capabilities.is_array() &&
+           std::find(
+               capabilities.begin(),
+               capabilities.end(),
+               "startup_uninstall") != capabilities.end();
+}
+
+json uninstall_provider_startup(
+    const SetupPaths& paths,
+    const json& receipt) {
+    const std::string component_id =
+        receipt.at("component_id").get<std::string>();
+    const fs::path active_root =
+        receipt.at("active_root").get<std::string>();
+    const json manifest = validate_component_payload(
+        active_root,
+        component_id,
+        receipt.at("component_version").get<std::string>());
+    const json capabilities =
+        manifest.value("capabilities", json::array());
+    if (!capabilities.is_array() ||
+        std::find(
+            capabilities.begin(),
+            capabilities.end(),
+            "startup_uninstall") == capabilities.end()) {
+        return json();
+    }
+    const fs::path receipts_root = paths.data_root / "receipts";
+    const fs::path node =
+        installed_entrypoint(
+            receipts_root, "node_runtime.private", "node");
+    const fs::path cli =
+        installed_entrypoint(receipts_root, component_id, "cli");
+    const auto data_paths =
+        receipt.value("data_paths", json::array());
+    if (data_paths.empty() || !data_paths.at(0).is_string()) {
+        throw std::runtime_error(
+            "startup-capable component has no managed workspace: " +
+            component_id);
+    }
+    const fs::path workspace =
+        normalized_absolute(
+            data_paths.at(0).get<std::string>());
+    if (!within(paths.workspace_root, workspace)) {
+        throw std::runtime_error(
+            "startup-capable component workspace is outside the selected workspace root");
+    }
+    std::vector<std::string> arguments{
+        cli.string(),
+        "startup",
+        "uninstall",
+        "--workspace",
+        workspace.string(),
+    };
+    const std::string configuration_path =
+        receipt.value("configuration_path", "");
+    if (!configuration_path.empty()) {
+        const fs::path configuration =
+            normalized_absolute(configuration_path);
+        if (!within(workspace, configuration) ||
+            !fs::is_regular_file(configuration) ||
+            fs::is_symlink(configuration)) {
+            throw std::runtime_error(
+                "startup-capable component configuration is unavailable");
+        }
+        arguments.push_back("--config");
+        arguments.push_back(configuration.string());
+    }
+    arena::application::ProcessSupervisor process;
+    const json response = process.run_json(
+        node,
+        active_root,
+        arguments,
+        std::chrono::seconds(30));
+    const json status =
+        response.contains("startup") ?
+            response.at("startup") :
+            response;
+    if (!status.is_object() ||
+        status.value("installed", true)) {
+        throw std::runtime_error(
+            "provider startup adapter did not confirm removal: " +
+            component_id);
+    }
+    return status;
+}
+
 }  // namespace
 
 std::string SetupEngine::platform_key() {
@@ -2691,6 +2794,8 @@ json SetupEngine::plan(
             {{"action", "install"},
              {"component_id", id},
              {"version", component.at("version")},
+             {"dependencies",
+              component.value("dependencies", json::array())},
              {"enabled", true},
              {"artifact", artifact}});
     }
@@ -3036,6 +3141,8 @@ json SetupEngine::apply(
                 {"active_root", target.string()},
                 {"artifact_sha256", action.at("artifact").at("sha256")},
                 {"installed_at", current_utc_iso()},
+                {"dependencies",
+                 action.value("dependencies", json::array())},
                 {"data_paths", std::move(data_paths)},
                 {"configuration_path", configuration_path},
                 {"activated_files",
@@ -3261,15 +3368,127 @@ json SetupEngine::uninstall(
     const SetupPaths& paths,
     const std::vector<std::string>& component_ids,
     const bool confirmed,
-    const bool purge) {
+    const bool purge,
+    const bool all) {
     if (!confirmed) {
         throw std::runtime_error("uninstall requires explicit confirmation");
     }
-    json results = json::array();
-    for (const auto& id : component_ids) {
+    std::map<std::string, json, std::less<>> installed;
+    for (const auto& receipt : receipt_rows(paths)) {
+        if (receipt.value("schema", "") ==
+                "arena_install_receipt_v1" &&
+            receipt.contains("component_id") &&
+            receipt.at("component_id").is_string()) {
+            installed.emplace(
+                receipt.at("component_id").get<std::string>(),
+                receipt);
+        }
+    }
+    std::vector<std::string> requested = component_ids;
+    if (all) {
+        requested.clear();
+        for (const auto& [component_id, receipt] : installed) {
+            (void)receipt;
+            requested.push_back(component_id);
+        }
+    }
+    if (requested.empty()) {
+        throw std::runtime_error(
+            "uninstall requires at least one component or --all");
+    }
+    std::set<std::string, std::less<>> selected;
+    std::vector<std::string> unique;
+    for (const auto& id : requested) {
         if (!valid_identifier(id)) {
             throw std::runtime_error("invalid component id " + id);
         }
+        if (selected.insert(id).second) {
+            unique.push_back(id);
+        }
+    }
+    for (const auto& [consumer_id, receipt] : installed) {
+        if (selected.contains(consumer_id)) {
+            continue;
+        }
+        const json dependencies =
+            receipt.value("dependencies", json::array());
+        if (!dependencies.is_array()) {
+            throw std::runtime_error(
+                "installed component dependencies are invalid: " +
+                consumer_id);
+        }
+        for (const auto& dependency : dependencies) {
+            if (dependency.is_string() &&
+                selected.contains(
+                    dependency.get<std::string>())) {
+                throw std::runtime_error(
+                    "cannot uninstall dependency " +
+                    dependency.get<std::string>() +
+                    " while " + consumer_id +
+                    " remains installed");
+            }
+        }
+    }
+    const auto uninstall_priority =
+        [&installed](const std::string& id) {
+            const auto receipt = installed.find(id);
+            if (receipt != installed.end() &&
+                supports_startup_uninstall(receipt->second)) {
+                return 0;
+            }
+            if (id == "node_runtime.private") {
+                return 2;
+            }
+            if (id == "manager.core") {
+                return 3;
+            }
+            return 1;
+        };
+    std::ranges::stable_sort(
+        unique,
+        [&uninstall_priority](
+            const std::string& left,
+            const std::string& right) {
+            return uninstall_priority(left) <
+                   uninstall_priority(right);
+        });
+    std::map<std::string, int, std::less<>> visits;
+    std::vector<std::string> ordered;
+    std::function<void(const std::string&)> add =
+        [&](const std::string& id) {
+            if (visits[id] == 1) {
+                throw std::runtime_error(
+                    "installed component dependency cycle at " +
+                    id);
+            }
+            if (visits[id] == 2) {
+                return;
+            }
+            visits[id] = 1;
+            for (const auto& [candidate_id, receipt] :
+                 installed) {
+                if (!selected.contains(candidate_id)) {
+                    continue;
+                }
+                const json dependencies =
+                    receipt.value(
+                        "dependencies", json::array());
+                if (std::find(
+                        dependencies.begin(),
+                        dependencies.end(),
+                        id) != dependencies.end()) {
+                    add(candidate_id);
+                }
+            }
+            visits[id] = 2;
+            ordered.push_back(id);
+        };
+    for (const auto& id : unique) {
+        add(id);
+    }
+
+    json results = json::array();
+    for (const auto& id : ordered) {
         const fs::path receipt_path = paths.data_root / "receipts" / (id + ".json");
         if (!fs::is_regular_file(receipt_path)) {
             results.push_back({{"component_id", id}, {"state", "not_installed"}});
@@ -3279,6 +3498,11 @@ json SetupEngine::uninstall(
         const fs::path active_root = receipt.at("active_root").get<std::string>();
         if (!within(paths.install_root / "components", active_root)) {
             throw std::runtime_error("receipt active root is outside the managed component root");
+        }
+        json startup_cleanup;
+        if (supports_startup_uninstall(receipt)) {
+            startup_cleanup =
+                uninstall_provider_startup(paths, receipt);
         }
         std::error_code error;
         fs::remove_all(active_root, error);
@@ -3318,13 +3542,20 @@ json SetupEngine::uninstall(
             }
         }
         fs::remove(receipt_path);
-        results.push_back(
-            {{"component_id", id},
-             {"state", "uninstalled"},
-             {"data_preserved", !purge}});
+        json result{
+            {"component_id", id},
+            {"state", "uninstalled"},
+            {"data_preserved", !purge},
+        };
+        if (!startup_cleanup.empty()) {
+            result["startup_cleanup"] =
+                std::move(startup_cleanup);
+        }
+        results.push_back(std::move(result));
     }
     return {
         {"schema", "arena_install_uninstall_result_v1"},
+        {"all", all},
         {"components", std::move(results)},
     };
 }
