@@ -16,7 +16,6 @@ param(
     [string]$Config,
     [Parameter(Mandatory = $true)]
     [string]$SingleGameProfile,
-    [Parameter(Mandatory = $true)]
     [string]$TimeProfile,
     [Parameter(Mandatory = $true)]
     [string]$CapacityProfile,
@@ -61,12 +60,15 @@ foreach ($path in @(
     $TokenFile,
     $Config,
     $SingleGameProfile,
-    $TimeProfile,
     $CapacityProfile
 )) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Protected acceptance input is unavailable: $path"
     }
+}
+if (-not [string]::IsNullOrWhiteSpace($TimeProfile) -and
+    -not (Test-Path -LiteralPath $TimeProfile -PathType Leaf)) {
+    throw "Protected acceptance time profile is unavailable: $TimeProfile"
 }
 
 New-Item -ItemType Directory -Force $RunRoot | Out-Null
@@ -125,26 +127,38 @@ if ($LASTEXITCODE -ne 0) {
 
 $node = Get-Entrypoint "node_runtime.private" "node"
 $acceptance = Get-Entrypoint "lichess.adapter" "live_acceptance"
+$engine = Get-Entrypoint "uci_arena.engine" "uci"
 $engineReceipt = Get-Receipt "uci_arena.engine"
 $modelRoot = Join-Path (Join-Path $engineReceipt.active_root "models") "default"
 if (-not (Test-Path -LiteralPath $modelRoot -PathType Container)) {
     throw "Candidate model root is unavailable: $modelRoot"
 }
 
-& $node $acceptance `
-    --confirm I_ACCEPT_ONE_BOT_GAME `
-    --token-file (Resolve-Path -LiteralPath $TokenFile).Path `
-    --expected-account $ExpectedAccount `
-    --opponent $Opponent `
-    --config (Resolve-Path -LiteralPath $Config).Path `
-    --repo-root $engineReceipt.active_root `
-    --profile (Resolve-Path -LiteralPath $SingleGameProfile).Path `
-    --time-profile (Resolve-Path -LiteralPath $TimeProfile).Path `
-    --capacity-profile (Resolve-Path -LiteralPath $CapacityProfile).Path `
-    --model-root $modelRoot `
-    --runtime-dir (Join-Path $RunRoot "lichess-live") `
-    --attempts 3 `
-    --minutes 20
+$acceptanceArguments = @(
+    "--confirm", "I_ACCEPT_ONE_BOT_GAME",
+    "--token-file", (Resolve-Path -LiteralPath $TokenFile).Path,
+    "--expected-account", $ExpectedAccount,
+    "--opponent", $Opponent,
+    "--config", (Resolve-Path -LiteralPath $Config).Path,
+    "--repo-root", $engineReceipt.active_root,
+    "--engine", $engine,
+    "--working-directory", $engineReceipt.active_root,
+    "--profile", (Resolve-Path -LiteralPath $SingleGameProfile).Path,
+    "--capacity-profile", (Resolve-Path -LiteralPath $CapacityProfile).Path,
+    "--model-root", $modelRoot,
+    "--knowledge-root", (Join-Path $RunRoot "knowledge"),
+    "--runtime-dir", (Join-Path $RunRoot "lichess-live"),
+    "--attempts", "3",
+    "--minutes", "20"
+)
+if (-not [string]::IsNullOrWhiteSpace($TimeProfile)) {
+    $acceptanceArguments += @(
+        "--time-profile",
+        (Resolve-Path -LiteralPath $TimeProfile).Path
+    )
+}
+
+& $node $acceptance @acceptanceArguments
 if ($LASTEXITCODE -ne 0) {
     throw "Protected Lichess acceptance did not complete exactly one existing-account game"
 }
