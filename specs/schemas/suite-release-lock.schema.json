@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uci-arena.example/schemas/suite-release-lock.schema.json",
+  "title": "arena_suite_release_lock_v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "suite_version",
+    "release_ready",
+    "provider_repository",
+    "components",
+    "managed_components"
+  ],
+  "properties": {
+    "schema": {"const": "arena_suite_release_lock_v1"},
+    "suite_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(?:[-.][A-Za-z0-9.-]+)?$"
+    },
+    "release_ready": {"type": "boolean"},
+    "provider_repository": {"const": "iteathen/UCI_Arena"},
+    "components": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/providerComponent"}
+    },
+    "managed_components": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/managedComponent"}
+    }
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "componentFields": {
+      "type": "object",
+      "properties": {
+        "component_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "component_version": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "target_triple": {
+          "enum": ["windows-x86_64", "linux-x86_64", "any"]
+        },
+        "artifact_name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+\\.tar\\.gz$"
+        },
+        "artifact_sha256": {"$ref": "#/$defs/digest"},
+        "installed_bytes": {"type": "integer", "minimum": 0},
+        "staging_bytes": {"type": "integer", "minimum": 0},
+        "backup_bytes": {"type": "integer", "minimum": 0},
+        "workspace_reserve_bytes": {"type": "integer", "minimum": 0},
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "providerComponent": {
+      "allOf": [
+        {"$ref": "#/$defs/componentFields"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "component_id",
+            "component_version",
+            "target_triple",
+            "source_commit",
+            "provider_release_tag",
+            "artifact_name",
+            "artifact_sha256",
+            "provider_result_name",
+            "provider_result_sha256"
+          ],
+          "properties": {
+            "component_id": true,
+            "component_version": true,
+            "target_triple": true,
+            "artifact_name": true,
+            "artifact_sha256": true,
+            "installed_bytes": true,
+            "staging_bytes": true,
+            "backup_bytes": true,
+            "workspace_reserve_bytes": true,
+            "dependencies": true,
+            "source_commit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "provider_release_tag": {
+              "type": "string",
+              "pattern": "^component/[A-Za-z0-9._/-]+$"
+            },
+            "provider_result_name": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._-]+\\.provider-result\\.json$"
+            },
+            "provider_result_sha256": {"$ref": "#/$defs/digest"}
+          }
+        }
+      ]
+    },
+    "managedComponent": {
+      "allOf": [
+        {"$ref": "#/$defs/componentFields"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "component_id",
+            "component_version",
+            "target_triple",
+            "artifact_name",
+            "artifact_url",
+            "artifact_sha256",
+            "artifact_size_bytes",
+            "component_manifest_sha256",
+            "licenses_sha256",
+            "provenance_url",
+            "provenance_sha256"
+          ],
+          "properties": {
+            "component_id": true,
+            "component_version": true,
+            "target_triple": true,
+            "artifact_name": true,
+            "artifact_sha256": true,
+            "installed_bytes": true,
+            "staging_bytes": true,
+            "backup_bytes": true,
+            "workspace_reserve_bytes": true,
+            "dependencies": true,
+            "artifact_url": {
+              "type": "string",
+              "pattern": "^https://"
+            },
+            "artifact_size_bytes": {"type": "integer", "minimum": 1},
+            "component_manifest_sha256": {"$ref": "#/$defs/digest"},
+            "licenses_sha256": {"$ref": "#/$defs/digest"},
+            "provenance_url": {
+              "type": "string",
+              "pattern": "^https://"
+            },
+            "provenance_sha256": {"$ref": "#/$defs/digest"},
+            "source_offer_url": {
+              "type": "string",
+              "pattern": "^https://"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

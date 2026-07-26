@@ -28,8 +28,16 @@ child_isolation:
     - graceful_then_forced_stop
 
 packages:
-  windows: [msi, zip]
-  linux: [deb, rpm, tar_gz]
+  release_authority: manager_repository_protected_ci
+  official_build_location: protected_ci_only
+  windows: [signed_setup_exe, msi, zip]
+  linux: [deb, rpm, signed_portable_run, tar_gz]
   normal_uninstall: preserve_data
   purge: explicit_preview_confirm_optional_export
   self_update: false
+  installer:
+    executable: arena-setup
+    privilege: unprivileged_plan_elevated_commit_only
+    broker_dependency: false
+    allowed_operations: [inventory, plan, apply, verify, repair, upgrade, uninstall]
+    runtime_service_release_authority: false

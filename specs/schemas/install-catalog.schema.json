@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uci-arena.example/schemas/install-catalog.schema.json",
+  "title": "arena_install_catalog_v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "suite_version", "presets", "components"],
+  "properties": {
+    "schema": {"const": "arena_install_catalog_v1"},
+    "schema_version": {"const": 1},
+    "suite_version": {"type": "string", "minLength": 1},
+    "channel": {"enum": ["candidate", "stable", "offline", "development"]},
+    "presets": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+        "uniqueItems": true
+      }
+    },
+    "components": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/component"},
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "sha256", "size_bytes"],
+      "properties": {
+        "source": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "size_bytes": {"type": "integer", "minimum": 0}
+      }
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "artifacts"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+        "version": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+        "dependencies": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+          "uniqueItems": true
+        },
+        "installed_bytes": {"type": "integer", "minimum": 0},
+        "staging_bytes": {"type": "integer", "minimum": 0},
+        "backup_bytes": {"type": "integer", "minimum": 0},
+        "workspace_reserve_bytes": {"type": "integer", "minimum": 0},
+        "artifacts": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {"$ref": "#/$defs/artifact"}
+        }
+      }
+    }
+  }
+}

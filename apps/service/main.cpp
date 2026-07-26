@@ -123,6 +123,7 @@ int run_control_plane(const Options& options) {
             options.data_directory / "arena.db");
         auto control_plane = std::make_shared<arena::application::ControlPlane>(store);
         control_plane->initialize();
+        control_plane->reconcile_installed_services(options.data_directory);
         auto auth = std::make_shared<arena::application::LocalAuth>(options.data_directory);
         auth->initialize();
         arena::service::EventsWebSocket::configure(control_plane, auth);

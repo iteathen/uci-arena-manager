@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<?ifndef ProductVersion ?>
+  <?define ProductVersion="0.1.0" ?>
+<?endif?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package
     Name="UCI Arena Manager"
     Manufacturer="UCI Arena Manager contributors"
-    Version="0.1.0"
+    Version="$(var.ProductVersion)"
     UpgradeCode="930B856A-66FB-4A34-B998-8A61684EA345"
     Scope="perMachine">
     <MajorUpgrade DowngradeErrorMessage="A newer UCI Arena Manager is already installed." />
@@ -37,6 +40,9 @@
         <Component Id="BrokerComponent" Guid="*">
           <File Id="ArenaBroker" Source="$(var.NativeOutput)\arena-broker.exe" KeyPath="yes" />
         </Component>
+        <Component Id="SetupComponent" Guid="*">
+          <File Id="ArenaSetup" Source="$(var.NativeOutput)\arena-setup.exe" KeyPath="yes" />
+        </Component>
       </Directory>
     </StandardDirectory>
 
@@ -44,6 +50,7 @@
       <ComponentRef Id="ServiceComponent" />
       <ComponentRef Id="CliComponent" />
       <ComponentRef Id="BrokerComponent" />
+      <ComponentRef Id="SetupComponent" />
     </Feature>
   </Package>
 </Wix>

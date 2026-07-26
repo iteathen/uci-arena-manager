@@ -119,6 +119,17 @@ json redact_external_status(const json& value) {
     return result;
 }
 
+json bounded_redacted_external_value(
+    const json& value,
+    const std::size_t maximum_bytes,
+    const char* label) {
+    if (value.dump().size() > maximum_bytes) {
+        throw std::runtime_error(
+            std::string(label) + " exceeds the integration size limit");
+    }
+    return redact_external_status(value);
+}
+
 }  // namespace
 
 CommandFailure::CommandFailure(std::string code, std::string detail, int http_status)
@@ -132,6 +143,121 @@ ControlPlane::ControlPlane(std::shared_ptr<ports::Store> store)
 
 void ControlPlane::initialize() { store_->initialize(); }
 
+void ControlPlane::reconcile_installed_services(
+    const std::filesystem::path& manager_data_root) {
+    try {
+        const json discovered =
+            ServiceCatalog::installed_registrations(manager_data_root);
+        json changes = json::array();
+        for (const auto& registration : discovered.at("services")) {
+        const std::string component_id =
+            registration.at("installed_component_id").get<std::string>();
+        std::optional<ports::ResourceRecord> existing;
+        for (const auto& resource :
+             store_->list_resources("managed_service", 10'000, 0)) {
+            try {
+                const json data = json::parse(resource.data_json);
+                if (data.value("installed_component_id", "") == component_id) {
+                    existing = resource;
+                    break;
+                }
+            } catch (const json::exception&) {
+            }
+        }
+        if (existing.has_value()) {
+            const json current = json::parse(existing->data_json);
+            if (current.value("installed_artifact_sha256", "") ==
+                    registration.value("installed_artifact_sha256", "") &&
+                current.value("runtime_artifact_sha256", "") ==
+                    registration.value("runtime_artifact_sha256", "")) {
+                changes.push_back(
+                    {{"component_id", component_id}, {"state", "current"}});
+                continue;
+            }
+        }
+
+        const std::string now = domain::utc_now();
+        const std::string command_id = domain::uuid_v7();
+        ports::ResourceRecord resource{
+            existing.has_value() ? existing->id : domain::uuid_v7(),
+            "managed_service",
+            "local",
+            existing.has_value() ? existing->revision + 1 : 1,
+            existing.has_value() ? existing->created_at : now,
+            now,
+            R"({"managed_by":"arena-setup"})",
+            registration.dump(),
+        };
+        const json result{
+            {"schema", "arena_installed_service_reconciliation_result_v1"},
+            {"component_id", component_id},
+            {"resource_id", resource.id},
+            {"revision", resource.revision},
+        };
+        ports::CommandRecord command{
+            command_id,
+            domain::uuid_v7(),
+            "installer-reconcile:" + command_id,
+            existing.has_value() ? "service.reconcile_update" :
+                                   "service.reconcile_create",
+            "completed",
+            result.dump(),
+            now,
+        };
+        ports::EventRecord event{
+            0,
+            domain::uuid_v7(),
+            now,
+            "state",
+            existing.has_value() ? "managed_service.reconciled" :
+                                   "managed_service.created",
+            "managed_service",
+            resource.id,
+            resource.revision,
+            command_id,
+            json{
+                {"actor", "arena-setup"},
+                {"component_id", component_id},
+                {"artifact_sha256",
+                 registration.at("installed_artifact_sha256")},
+                {"runtime_artifact_sha256",
+                 registration.at("runtime_artifact_sha256")},
+            }.dump(),
+        };
+        if (existing.has_value()) {
+            store_->update_resource(
+                resource, existing->revision, command, std::move(event));
+        } else {
+            store_->create_resource(resource, command, std::move(event));
+        }
+            changes.push_back(
+                {{"component_id", component_id},
+                 {"state", existing.has_value() ? "updated" : "created"},
+                 {"resource_id", resource.id}});
+        }
+        installed_service_reconciliation_ = {
+            {"schema", "arena_installed_service_reconciliation_v1"},
+            {"state",
+             discovered.at("errors").empty() ? "complete" :
+                                               "complete_with_errors"},
+            {"observed_at", domain::utc_now()},
+            {"changes", std::move(changes)},
+            {"errors", discovered.at("errors")},
+        };
+    } catch (const std::exception& error) {
+        installed_service_reconciliation_ = {
+            {"schema", "arena_installed_service_reconciliation_v1"},
+            {"state", "failed"},
+            {"observed_at", domain::utc_now()},
+            {"changes", json::array()},
+            {"errors",
+             json::array(
+                 {{{"code", "installed_service_reconciliation_failed"},
+                    {"detail", error.what()}}})},
+        };
+    }
+}
+
 json ControlPlane::status() const {
     return {
         {"schema_version", 1},
@@ -141,6 +267,8 @@ json ControlPlane::status() const {
         {"started_at", started_at_},
         {"database", "ready"},
         {"counts", store_->resource_counts()},
+        {"installed_service_reconciliation",
+         installed_service_reconciliation_},
     };
 }
 
@@ -556,10 +684,17 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
     const std::filesystem::path cli = data.at("cli_entrypoint").get<std::string>();
     const std::filesystem::path workspace = data.at("workspace").get<std::string>();
     std::vector<std::string> base{cli.string()};
+    const auto add_locator_options = [&data, &workspace](std::vector<std::string>& arguments) {
+        arguments.insert(arguments.end(), {"--workspace", workspace.string()});
+        const std::string config_path = data.value("config_path", "");
+        if (!config_path.empty()) {
+            arguments.insert(arguments.end(), {"--config", config_path});
+        }
+    };
     if (action == "service.start") {
         auto arguments = base;
-        arguments.insert(
-            arguments.end(), {"daemon", "--workspace", workspace.string()});
+        arguments.push_back("daemon");
+        add_locator_options(arguments);
         if (!request.at("dry_run").get<bool>()) {
             process_supervisor_.start(id, node, cli.parent_path(), arguments);
         }
@@ -576,8 +711,8 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
         if (!request.at("dry_run").get<bool>()) {
             process_supervisor_.stop(id);
             auto arguments = base;
-            arguments.insert(
-                arguments.end(), {"daemon", "--workspace", workspace.string()});
+            arguments.push_back("daemon");
+            add_locator_options(arguments);
             process_supervisor_.start(id, node, cli.parent_path(), arguments);
         }
         data["desired_state"] = "running";
@@ -585,11 +720,8 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
         data["integration_state"] = "available";
     } else if (action == "service.pause" || action == "service.resume") {
         auto arguments = base;
-        arguments.insert(arguments.end(), {
-            action == "service.pause" ? "pause" : "resume",
-            "--workspace",
-            workspace.string(),
-        });
+        arguments.push_back(action == "service.pause" ? "pause" : "resume");
+        add_locator_options(arguments);
         if (evidence_service && action == "service.pause") {
             arguments.insert(arguments.end(), {"--reason", "uci-arena-manager"});
         }
@@ -602,8 +734,9 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
             (process_supervisor_.running(id) ? "running" : "stopped");
     } else if (action == "service.status") {
         auto arguments = base;
-        arguments.insert(
-            arguments.end(), {"status", "--workspace", workspace.string(), "--json"});
+        arguments.push_back("status");
+        add_locator_options(arguments);
+        arguments.push_back("--json");
         if (!request.at("dry_run").get<bool>()) {
             const json status = process_supervisor_.run_json(
                 node, cli.parent_path(), arguments);
@@ -624,40 +757,195 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                          ? "UCI Arena Evidence Service status schema is incompatible"
                          : "Book Forge status schema is incompatible"},
                 };
-            } else if (evidence_service) {
-                const json control = status_payload.value("control", json::object());
-                const json collection = status_payload.value("collection", json::object());
-                const json daemon = status_payload.value("daemon", json::object());
-                const bool paused = control.value("paused", false);
-                const std::string daemon_phase = daemon.value("phase", "stopped");
-                const std::string last_error = daemon.value("lastError", "");
-                const bool daemon_active = process_supervisor_.running(id);
-                const bool degraded = daemon_phase == "failed" || !last_error.empty();
-                data["integration_state"] = "available";
-                data["observed_state"] =
-                    degraded ? "degraded" : paused ? "paused" :
-                    daemon_active ? "running" : "stopped";
-                data["health"] = {
-                    {"state", degraded ? "degraded" : "healthy"},
-                    {"reason",
-                     degraded
-                         ? last_error.empty() ? "Evidence Service daemon failed" : last_error
-                         : collection.value("reason", "Evidence Service status contract validated")},
-                    {"observed_at", domain::utc_now()},
-                };
-                data["status_projection"] = redact_external_status(status_payload);
             } else {
-                data["integration_state"] = "available";
-                data["observed_state"] =
-                    status_payload.value("control", json::object()).value("paused", false)
-                        ? "paused"
-                        : process_supervisor_.running(id) ? "running" : "stopped";
-                data["health"] = {
-                    {"state", "healthy"},
-                    {"reason", "Book Forge status contract validated"},
-                    {"observed_at", domain::utc_now()},
-                };
-                data["status_projection"] = redact_external_status(status_payload);
+                try {
+                    if (evidence_service) {
+                        auto dataset_arguments = base;
+                        dataset_arguments.insert(
+                            dataset_arguments.end(), {"dataset", "list"});
+                        add_locator_options(dataset_arguments);
+                        dataset_arguments.push_back("--json");
+                        const json datasets = process_supervisor_.run_json(
+                            node, cli.parent_path(), dataset_arguments);
+                        if (!datasets.is_array() || datasets.size() > 10'000 ||
+                            status_payload.value("datasets", datasets.size()) !=
+                                datasets.size()) {
+                            throw std::runtime_error(
+                                "Evidence Service dataset projection is inconsistent");
+                        }
+                        json dataset_projection = json::array();
+                        for (const auto& dataset : datasets) {
+                            if (dataset.value("schema", "") !=
+                                    "uci_arena_evidence_dataset_v1" ||
+                                !dataset.contains("id") ||
+                                !dataset.at("id").is_string() ||
+                                dataset.at("id").get_ref<
+                                    const std::string&>().size() > 128 ||
+                                !dataset.contains("targetIdentity") ||
+                                !dataset.at("targetIdentity").is_object() ||
+                                !dataset.contains("authority") ||
+                                !dataset.at("authority").is_object() ||
+                                !dataset.contains("observationCount") ||
+                                !dataset.at("observationCount").is_number_unsigned() ||
+                                (dataset.value("state", "") != "collecting" &&
+                                 dataset.value("state", "") != "completed")) {
+                                throw std::runtime_error(
+                                    "Evidence Service dataset identity contract mismatch");
+                            }
+                            dataset_projection.push_back(
+                                {
+                                    {"schema", "uci_arena_evidence_dataset_v1"},
+                                    {"id", dataset.at("id")},
+                                    {"campaign",
+                                     dataset.value("campaign", "")},
+                                    {"state", dataset.at("state")},
+                                    {"target_identity",
+                                     bounded_redacted_external_value(
+                                         dataset.at("targetIdentity"),
+                                         64 * 1024,
+                                         "Evidence target identity")},
+                                    {"authority",
+                                     bounded_redacted_external_value(
+                                         dataset.at("authority"),
+                                         64 * 1024,
+                                         "Evidence authority")},
+                                    {"observation_count",
+                                     dataset.at("observationCount")},
+                                    {"created_at",
+                                     dataset.contains("createdAt") &&
+                                             dataset.at("createdAt").is_string()
+                                         ? dataset.at("createdAt")
+                                         : json("")},
+                                    {"completed_at",
+                                     dataset.contains("completedAt") &&
+                                             dataset.at("completedAt").is_string()
+                                         ? dataset.at("completedAt")
+                                         : json(nullptr)},
+                                });
+                        }
+
+                        const json control =
+                            status_payload.value("control", json::object());
+                        const json collection =
+                            status_payload.value("collection", json::object());
+                        const json daemon =
+                            status_payload.value("daemon", json::object());
+                        const bool paused = control.value("paused", false);
+                        const std::string daemon_phase =
+                            daemon.value("phase", "stopped");
+                        const std::string last_error =
+                            daemon.value("lastError", "");
+                        const bool daemon_active =
+                            process_supervisor_.running(id);
+                        const bool degraded =
+                            daemon_phase == "failed" || !last_error.empty();
+                        data["integration_state"] = "available";
+                        data["observed_state"] =
+                            degraded ? "degraded" :
+                            paused ? "paused" :
+                            daemon_active ? "running" : "stopped";
+                        data["health"] = {
+                            {"state", degraded ? "degraded" : "healthy"},
+                            {"reason",
+                             degraded ?
+                                 last_error.empty() ?
+                                     "Evidence Service daemon failed" :
+                                     last_error :
+                                 collection.value(
+                                     "reason",
+                                     "Evidence Service status and dataset contracts validated")},
+                            {"observed_at", domain::utc_now()},
+                        };
+                        data["output_integration"] = {
+                            {"authority", "uci_arena_evidence_service"},
+                            {"dataset_count", datasets.size()},
+                            {"datasets", std::move(dataset_projection)},
+                        };
+                    } else {
+                        json snapshots = json::array();
+                        const json channels =
+                            status_payload.value("channels", json::array());
+                        if (!channels.is_array() || channels.size() > 2) {
+                            throw std::runtime_error(
+                                "Book Forge channel projection is invalid");
+                        }
+                        for (const auto& channel : channels) {
+                            const std::string channel_name =
+                                required_string(channel, "channel");
+                            const std::string snapshot_id =
+                                required_string(channel, "snapshot_id");
+                            const std::string directory =
+                                required_string(channel, "directory");
+                            if (channel_name != "integration" &&
+                                channel_name != "qualified") {
+                                throw std::runtime_error(
+                                    "Book Forge advertised an unknown channel");
+                            }
+                            auto validate_arguments = base;
+                            validate_arguments.insert(
+                                validate_arguments.end(),
+                                {"validate", directory});
+                            add_locator_options(validate_arguments);
+                            const json validation =
+                                process_supervisor_.run_json(
+                                    node,
+                                    cli.parent_path(),
+                                    validate_arguments);
+                            if (!validation.value("ok", false) ||
+                                validation.value("id", "") != snapshot_id ||
+                                validation.value("channel", "") != channel_name ||
+                                !validation.contains("manifestSha256") ||
+                                !validation.at("manifestSha256").is_string()) {
+                                throw std::runtime_error(
+                                    "Book Forge snapshot validation mismatch");
+                            }
+                            snapshots.push_back(
+                                {{"snapshot_id", snapshot_id},
+                                 {"channel", channel_name},
+                                 {"manifest_sha256",
+                                  validation.at("manifestSha256")},
+                                 {"record_count",
+                                  validation.value("recordCount", 0)},
+                                 {"qualified",
+                                  validation.value("qualified", false)},
+                                 {"includes_fixture",
+                                  validation.value("includesFixture", false)},
+                                 {"published_at",
+                                  channel.value("published_at", "")}});
+                        }
+                        data["integration_state"] = "available";
+                        data["observed_state"] =
+                            status_payload.value("control", json::object())
+                                    .value("paused", false)
+                                ? "paused"
+                                : process_supervisor_.running(id) ? "running" :
+                                                                   "stopped";
+                        data["health"] = {
+                            {"state", "healthy"},
+                            {"reason",
+                             "Book Forge status and snapshot contracts validated"},
+                            {"observed_at", domain::utc_now()},
+                        };
+                        data["output_integration"] = {
+                            {"authority", "book_forge"},
+                            {"snapshots", std::move(snapshots)},
+                        };
+                    }
+                    data["status_projection"] =
+                        bounded_redacted_external_value(
+                            status_payload,
+                            1024 * 1024,
+                            "External service status");
+                } catch (const std::exception& error) {
+                    data["integration_state"] = "incompatible";
+                    data["observed_state"] = "degraded";
+                    data["health"] = {
+                        {"state", "degraded"},
+                        {"reason", error.what()},
+                        {"observed_at", domain::utc_now()},
+                    };
+                    data.erase("output_integration");
+                }
             }
         }
     } else {

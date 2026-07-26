@@ -90,6 +90,43 @@ arena service discover uci_arena_evidence
 arena service add-evidence-service --node "C:\Program Files\nodejs\node.exe" --cli C:\path\to\arena_evidence_service\src\cli.mjs --workspace E:\uci-arena-evidence
 ```
 
+Installed Book Forge and Evidence Service components are reconciled from
+`arena-setup` receipts. The receipt and complete provider/private-runtime file
+manifests must match before Manager registers either service. A status refresh
+validates every
+advertised Book Forge snapshot through `book-forge validate` and projects only
+the snapshot identity, channel, manifest digest, qualification, and record
+count. Evidence integration similarly validates the public dataset-list
+contract and projects bounded dataset identities and authority. Manager never
+opens either provider's database or rewrites provider output.
+
+## Installer and releases
+
+This repository is the suite composition and release authority. Provider
+repositories build immutable component candidates; they cannot publish suite
+installers or advance release channels.
+
+Installer sources and official output locations are:
+
+- Windows: `packaging/windows` → `dist/windows`
+- Linux: `packaging/linux` → `dist/linux`
+
+`arena-setup` supports `inventory`, `plan`, `apply`, `verify`, `repair`,
+`upgrade`, and `uninstall`; every command supports `--json`. It detects
+Restaurant but never installs or changes it. To review signed catalog actions
+for missing chess knowledge:
+
+```powershell
+arena-setup plan --preset manager_only --download-missing-books
+arena-setup plan --preset manager_only --download-missing-tablebases
+arena-setup plan --preset manager_only --download-missing-knowledge
+```
+
+The first two options are independently selectable. The combined option adds
+the standard opening-book and bounded Syzygy WDL components. Normal uninstall
+preserves these assets; explicit purge removes only receipt-declared files that
+still match their installed digest.
+
 ## License
 
 AGPL-3.0-or-later.

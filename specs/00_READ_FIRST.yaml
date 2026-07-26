@@ -52,4 +52,6 @@ hard_rules:
   - Canonical chess state validates every engine move.
   - Raw engine output cannot block UCI control messages.
   - Secret values are write-only and never logged or returned.
-  - Node.js is never required by a production installation.
+  - Manager Core never requires Node.js; optional provider components may use a
+    private, pinned runtime that is installed and lifecycle-managed as a
+    separate component.

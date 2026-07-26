@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?ifndef ProductVersion ?>
+  <?define ProductVersion="0.1.0" ?>
+<?endif?>
+<Wix
+  xmlns="http://wixtoolset.org/schemas/v4/wxs"
+  xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+  <Bundle
+    Name="UCI Arena Suite Setup"
+    Manufacturer="UCI Arena Manager contributors"
+    Version="$(var.ProductVersion)"
+    UpgradeCode="8E2B374D-B0B2-4998-BEEA-AFCBCFB9406C">
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication
+        Theme="hyperlinkLicense"
+        LicenseUrl=""
+        SuppressOptionsUI="no" />
+    </BootstrapperApplication>
+    <Chain>
+      <MsiPackage
+        Id="ManagerCore"
+        SourceFile="$(var.ManagerMsi)"
+        DisplayInternalUI="no"
+        Visible="yes"
+        Vital="yes" />
+    </Chain>
+  </Bundle>
+</Wix>

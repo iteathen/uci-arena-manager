@@ -3,6 +3,7 @@
 #include "arena/ports/store.hpp"
 #include "arena/application/process_supervisor.hpp"
 
+#include <filesystem>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
@@ -28,6 +29,8 @@ class ControlPlane final {
     explicit ControlPlane(std::shared_ptr<ports::Store> store);
 
     void initialize();
+    void reconcile_installed_services(
+        const std::filesystem::path& manager_data_root);
     [[nodiscard]] nlohmann::json status() const;
     [[nodiscard]] nlohmann::json submit(
         const nlohmann::json& request,
@@ -77,6 +80,9 @@ class ControlPlane final {
     std::shared_ptr<ports::Store> store_;
     ProcessSupervisor process_supervisor_;
     std::string started_at_;
+    nlohmann::json installed_service_reconciliation_{
+        {"schema", "arena_installed_service_reconciliation_v1"},
+        {"state", "not_run"}};
 };
 
 [[nodiscard]] nlohmann::json problem_json(const CommandFailure& failure);

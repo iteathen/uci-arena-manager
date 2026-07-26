@@ -35,6 +35,16 @@ specs:
       - apps/broker
       - src/platform
       - packaging
+  - spec_id: arena_installation_contract_v1
+    path: specs/installation_contract_v1.yaml
+    owner: release_engineering
+    applies_to:
+      - apps/setup
+      - include/arena/application/installer
+      - src/application/installer
+      - release
+      - packaging
+      - .github/workflows/release.yml
   - spec_id: arena_operator_experience_v1
     path: specs/operator_experience_v1.yaml
     owner: operator_surface

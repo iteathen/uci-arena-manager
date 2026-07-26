@@ -1,0 +1,178 @@
+meta:
+  spec_id: arena_installation_contract_v1
+  version: 1
+  status: active
+  owner: release_engineering
+
+authority:
+  suite_release_repository: iteathen/uci-arena-manager
+  component_candidate_repository: iteathen/UCI_Arena
+  release_steward: "@iteathen"
+  official_builder: protected_manager_ci
+  stable_publisher: protected_manager_ci_after_production_environment_approval
+  forbidden_release_authorities:
+    - manager_runtime_service
+    - manager_broker
+    - developer_workstation
+    - book_forge_runtime
+    - evidence_service_runtime
+  rules:
+    - Provider automation may publish only immutable, attested component candidates.
+    - Suite composition pins exact provider, commit, manifest, provenance, and artifact digests.
+    - Stable promotion republishes the exact tested candidate bytes and never rebuilds.
+    - Build identities never receive private signing keys.
+
+interfaces:
+  catalog: arena_install_catalog_v1
+  component: arena_install_component_v1
+  provider_result: arena_provider_release_result_v1
+  plan: arena_install_plan_v1
+  receipt: arena_install_receipt_v1
+  transaction: arena_install_transaction_v1
+  release_lock: arena_suite_release_lock_v1
+  schema_compatibility: reject_unknown_major_accept_additive_minor
+
+setup:
+  executable: arena-setup
+  operations: [inventory, plan, apply, verify, repair, upgrade, uninstall]
+  presets: [complete_arena, manager_only, custom]
+  machine_output: json
+  linux_noninteractive: [yes, offline]
+  discovery_is_read_only: true
+  apply_requires_explicit_confirmation: true
+  elevation: commit_phase_only
+  broker_dependency: false
+  self_update: false
+
+packaging:
+  windows_sources: packaging/windows
+  linux_sources: packaging/linux
+  windows_outputs: dist/windows
+  linux_outputs: dist/linux
+  artifact_names:
+    - UCI-Arena-Setup-<version>-windows-x64-online.exe
+    - UCI-Arena-Setup-<version>-windows-x64-offline.exe
+    - UCI-Arena-Manager-<version>-windows-x64.msi
+    - uci-arena-manager_<version>_amd64.deb
+    - uci-arena-manager-<version>-1.x86_64.rpm
+    - uci-arena-setup-<version>-linux-x86_64-online.run
+    - uci-arena-setup-<version>-linux-x86_64-offline.run
+
+components:
+  required:
+    - manager.core
+  complete_arena:
+    - manager.core
+    - uci_arena.engine
+    - uci_arena.model.default
+    - node_runtime.private
+    - stockfish.engine
+    - book_forge.service
+    - opening_book.standard
+    - uci_arena_evidence.service
+  optional:
+    - lichess.adapter
+    - opening_book.standard
+    - syzygy.wdl.3-4-5
+    - syzygy.dtz.3-4-5
+    - syzygy.operator_import
+    - external_uci_engine
+  detect_only:
+    - restaurant.training_system
+
+knowledge_assets:
+  download_missing_option: true
+  command_options:
+    all: --download-missing-knowledge
+    opening_books: --download-missing-books
+    endgame_tables: --download-missing-tablebases
+  opening_book:
+    default_component: opening_book.standard
+    required_files:
+      - strong_rare_v1.bin
+      - strong_rare_v1.ffstats
+      - strong_rare_v1.policy
+      - snapshot.manifest.json
+    behavior: >
+      Install a mutually validated provider snapshot. If only the Book Forge
+      bootstrap snapshot is available, label it integration and do not claim
+      strength qualification.
+  syzygy:
+    default_download_component: syzygy.wdl.3-4-5
+    optional_download_component: syzygy.dtz.3-4-5
+    import_existing: true
+    artifact_size_and_digest_source: signed_catalog_only
+    whole_collection_guessing: forbidden
+  rules:
+    - The engine remains network-free and consumes local immutable assets only.
+    - Missing assets are visible and actionable, never silently substituted.
+    - A user may select download, import an existing directory, or continue in degraded mode.
+
+discovery:
+  bounded_sources:
+    - install_receipts
+    - package_databases
+    - windows_registry
+    - windows_services
+    - windows_task_scheduler
+    - systemd
+    - path_environment
+    - standard_install_roots
+    - provider_manifests
+    - user_selected_roots
+  whole_disk_recursive_scan: forbidden
+  registration_after_detection: explicit_only
+  engine_probe: [process_launch, uciok, readyok, typed_options, legal_startpos_bestmove]
+
+capacity:
+  per_volume:
+    - download_cache_bytes
+    - staging_bytes
+    - installed_bytes
+    - backup_bytes
+    - operational_reserve_bytes
+    - peak_required_bytes
+  shared_dependency_count: once
+  staging_headroom: max_1_gib_or_10_percent
+  book_forge_residual_workspace_gib: 75
+  evidence_residual_workspace_gib: 75
+  same_volume_residual_threshold: maximum_not_sum
+  complete_preset_insufficient_workspace: block
+  custom_preset_insufficient_workspace: install_disabled_only
+
+transaction:
+  staging: immutable
+  verification: before_activation
+  activation: atomic_version_pointer
+  journal: durable_before_each_side_effect
+  backup: before_replacement_or_migration
+  failure: restore_previous_activation_and_service_state
+  normal_uninstall: preserve_user_data
+  purge: preview_confirm_optional_export
+  generated_service_configuration:
+    owner: arena_setup
+    location: selected_service_workspace
+    inputs: exact_receipt_verified_dependency_entrypoints
+    book_forge: [stockfish]
+    evidence_service: [uci_arena_engine, stockfish, complete_game_referee]
+    rollback: restore_previous_configuration
+
+trust:
+  metadata: tuf
+  roles: [root, targets, snapshot, timestamp, candidate, stable, offline]
+  root_keys: offline
+  root_bootstrap: exact_root_metadata_sha256_compiled_into_official_arena_setup
+  rollback_protection: required
+  rollback_state: highest_verified_root_targets_snapshot_and_timestamp_versions_under_manager_data
+  artifact_digest: sha256
+  windows_defense_in_depth: authenticode
+  linux_defense_in_depth: signed_apt_and_rpm_metadata
+  secrets_in_argv_logs_catalogs: forbidden
+
+acceptance:
+  - Manager-only install works without Node.js.
+  - Complete Arena installs Manager, UCI Arena, Book Forge, and Evidence Service without a source checkout.
+  - Missing opening books and tablebases can be downloaded from exact signed catalog entries or imported explicitly.
+  - Manager validates and projects Book Forge snapshot identities and Evidence Service dataset identities through their public CLIs.
+  - Offline installation uses the same verified component bytes as stable online installation.
+  - Interrupted apply, repair, upgrade, and uninstall preserve a recoverable transaction state.

@@ -43,6 +43,9 @@ common_contract:
     - No adapter imports service source, reads a service-owned database, or assumes a repository root.
     - Secrets use SecretReference ids and are never copied into managed-service data.
     - Missing optional capabilities produce unavailable actions, not startup failure.
+    - Installed services are reconciled only from enabled arena_install_receipt_v1 receipts.
+    - Reconciliation verifies the complete immutable private runtime and provider component file sets by exact size and SHA-256, rejects symbolic links and unlisted files, and never launches an unverifiable component.
+    - Installer-generated provider configuration may reference only exact dependency entrypoints from verified receipts and must remain inside the declared provider workspace.
 
 profiles:
   book_forge:
@@ -97,6 +100,14 @@ profiles:
       - daily_request_budget
       - last_cycle
       - redacted_last_error
+    output_integration:
+      authority: book_forge
+      source: public_cli_only
+      contract:
+        - Status channel rows identify the current integration and qualified snapshots.
+        - Manager invokes Book Forge validate for every advertised current snapshot.
+        - Snapshot id, channel, manifest digest, qualification state, and record count are projected without rewriting the snapshot.
+        - A digest, identity, channel, or schema mismatch marks the integration incompatible.
     safety:
       - Book Forge remains authority for its workspace, catalog, resource governor, and publication.
       - The manager invokes only its public CLI and reads only its machine-readable status.
@@ -169,6 +180,16 @@ profiles:
       - targets
       - datasets
       - sampledAt
+    output_integration:
+      authority: uci_arena_evidence_service
+      source: public_cli_only
+      contract:
+        - Manager validates the status schema and obtains dataset metadata through dataset list.
+        - Every dataset must use uci_arena_evidence_dataset_v1 and retain its typed target identity, authority, observation count, and completion state.
+        - Manager stores only a bounded allowlisted projection of dataset identity, campaign, state, target identity, authority, observation count, and timestamps; unknown fields are discarded and sensitive-looking nested fields are redacted.
+        - Manager never requests or stores raw observations and never reads the service SQLite catalog.
+        - Waiting for a target and an empty dataset set remain healthy.
+        - A dataset schema or identity mismatch marks the integration incompatible.
     ownership:
       - The Evidence Service remains authority for scheduling, resource admission, evidence normalization, datasets, and qualified timing-profile publication.
       - The manager invokes only its public CLI and reads only its machine-readable status.

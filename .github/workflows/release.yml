@@ -1,0 +1,333 @@
+name: Suite release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Promote the tested candidate through the protected production environment
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: suite-release-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.lock.outputs.version }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.15.0
+      - run: node tools/spec-check.mjs
+      - run: node --test tools/release/*.test.mjs
+      - run: node tools/release/validate-lock.mjs release/catalog.lock.json
+      - id: lock
+        run: echo "version=$(node -p "require('./release/catalog.lock.json').suite_version")" >> "$GITHUB_OUTPUT"
+
+  build-manager:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            preset: windows-release
+            target: windows-x86_64
+          - os: ubuntu-latest
+            preset: linux-release
+            target: linux-x86_64
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.15.0
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm test
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      - uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce
+        if: runner.os == 'Windows'
+      - uses: lukka/run-vcpkg@5e0cab206a5ea620130caf672fce3e4a6b5666a1
+        with:
+          vcpkgGitCommitId: 40f3c709db80acf154ac4b17a1f83c564ebd022e
+      - name: Configure, build, and test Manager Core
+        shell: pwsh
+        run: |
+          if ('${{ vars.TUF_ROOT_SHA256 }}' -notmatch '^[0-9a-f]{64}$') {
+            throw 'TUF_ROOT_SHA256 must pin the exact offline-root metadata'
+          }
+          cmake --preset '${{ matrix.preset }}' `
+            "-DARENA_VERSION=${{ needs.validate.outputs.version }}" `
+            "-DARENA_TUF_ROOT_SHA256=${{ vars.TUF_ROOT_SHA256 }}"
+          cmake --build --preset '${{ matrix.preset }}'
+          ctest --preset '${{ matrix.preset }}'
+      - name: Install pinned WiX toolset
+        if: runner.os == 'Windows'
+        run: dotnet tool install --global wix --version 7.0.0
+      - name: Install Linux package validators
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y lintian rpm rpmlint
+      - name: Stage Manager Core
+        shell: pwsh
+        run: |
+          cmake --install "build/${{ matrix.preset }}" --config Release --prefix dist/manager-install
+          $epoch = git show -s --format=%ct HEAD
+          node tools/release/build-manager-component.mjs `
+            --install-tree dist/manager-install `
+            --version '${{ needs.validate.outputs.version }}' `
+            --target '${{ matrix.target }}' `
+            --output "dist/uci-arena-manager-${{ needs.validate.outputs.version }}-${{ matrix.target }}.tar.gz" `
+            --source-date-epoch "$epoch"
+      - name: Build native packages
+        shell: pwsh
+        run: |
+          Push-Location "build/${{ matrix.preset }}"
+          if ('${{ runner.os }}' -eq 'Windows') {
+            cpack -C Release -G WIX
+            cpack -C Release -G ZIP
+          } else {
+            cpack -G DEB
+            cpack -G RPM
+            cpack -G TGZ
+          }
+          Pop-Location
+          $platformDirectory = if ('${{ runner.os }}' -eq 'Windows') {
+            'dist/windows'
+          } else {
+            'dist/linux'
+          }
+          New-Item -ItemType Directory -Force $platformDirectory | Out-Null
+          Get-ChildItem "build/${{ matrix.preset }}" -File |
+            Where-Object { $_.Extension -in @('.msi','.zip','.deb','.rpm','.gz') } |
+            Copy-Item -Destination $platformDirectory
+      - name: Validate Linux native packages
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          lintian dist/linux/*.deb
+          rpmlint dist/linux/*.rpm
+          systemd-analyze verify packaging/linux/uci-arena-manager.service
+          systemd-analyze verify packaging/linux/uci-arena-broker.service
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/windows/*
+            dist/linux/*
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: manager-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/windows/*
+            dist/linux/*
+          if-no-files-found: error
+          retention-days: 30
+
+  compose-candidate:
+    needs: [validate, build-manager]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/create-github-app-token@67018539274d69449ef7c02e8e71183d1719ab42
+        id: provider-token
+        with:
+          app-id: ${{ vars.COMPONENT_READER_APP_ID }}
+          private-key: ${{ secrets.COMPONENT_READER_PRIVATE_KEY }}
+          owner: iteathen
+          repositories: UCI_Arena
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: manager-*
+          path: dist/manager
+          merge-multiple: true
+      - name: Fetch exact provider candidates
+        env:
+          GH_PROVIDER_TOKEN: ${{ steps.provider-token.outputs.token }}
+        run: node tools/release/fetch-components.mjs release/catalog.lock.json dist/provider
+      - name: Assemble immutable suite catalog
+        run: |
+          windows="$(find dist/manager -maxdepth 1 -name '*windows-x86_64.tar.gz' -print -quit)"
+          linux="$(find dist/manager -maxdepth 1 -name '*linux-x86_64.tar.gz' -print -quit)"
+          test -n "$windows"
+          test -n "$linux"
+          node tools/release/assemble-catalog.mjs \
+            --lock release/catalog.lock.json \
+            --provider-dir dist/provider \
+            --output-dir dist/candidate \
+            --manager-windows "$windows" \
+            --manager-linux "$linux"
+          cp -R dist/manager/windows dist/candidate/
+          cp -R dist/manager/linux dist/candidate/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: suite-candidate-${{ needs.validate.outputs.version }}
+          path: dist/candidate
+          if-no-files-found: error
+          retention-days: 30
+
+  accept-manager-only:
+    needs: [validate, compose-candidate]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-x86_64
+            executable: arena-setup.exe
+          - os: ubuntu-latest
+            target: linux-x86_64
+            executable: arena-setup
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: suite-candidate-${{ needs.validate.outputs.version }}
+          path: dist/candidate
+      - name: Exercise clean Manager-only lifecycle
+        shell: pwsh
+        run: |
+          $archive = Get-ChildItem dist/candidate/payloads -File `
+            -Filter "*${{ matrix.target }}.tar.gz" |
+            Where-Object { $_.Name -like 'uci-arena-manager-*' } |
+            Select-Object -First 1
+          if ($null -eq $archive) { throw 'Manager component archive is missing' }
+          New-Item -ItemType Directory -Force dist/accept/bin | Out-Null
+          cmake -E chdir dist/accept/bin cmake -E tar xf $archive.FullName
+          $setup = Join-Path dist/accept/bin 'bin/${{ matrix.executable }}'
+          $common = @(
+            '--allow-unsigned-development-catalog',
+            '--catalog', (Resolve-Path dist/candidate/catalog.json),
+            '--install-root', (Join-Path $PWD 'dist/accept/install'),
+            '--data-root', (Join-Path $PWD 'dist/accept/data'),
+            '--cache-root', (Join-Path $PWD 'dist/accept/cache'),
+            '--workspace-root', (Join-Path $PWD 'dist/accept/workspace'),
+            '--knowledge-root', (Join-Path $PWD 'dist/accept/knowledge'),
+            '--json'
+          )
+          & $setup @common inventory
+          if ($LASTEXITCODE -ne 0) { throw 'inventory failed' }
+          & $setup @common plan --preset manager_only --offline
+          if ($LASTEXITCODE -ne 0) { throw 'Manager-only plan failed' }
+          & $setup @common apply --preset manager_only --offline --yes
+          if ($LASTEXITCODE -ne 0) { throw 'Manager-only apply failed' }
+          & $setup @common verify
+          if ($LASTEXITCODE -ne 0) { throw 'Manager-only verification failed' }
+          & $setup @common uninstall --component manager.core --yes
+          if ($LASTEXITCODE -ne 0) { throw 'Manager-only uninstall failed' }
+
+  sign-windows:
+    if: inputs.publish
+    needs: [validate, compose-candidate, accept-manager-only]
+    runs-on: windows-latest
+    environment: production-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: suite-candidate-${{ needs.validate.outputs.version }}
+          path: dist/candidate
+      - uses: azure/login@eec3c95657c1536435858eda1f3ff5437fee8474
+        with:
+          client-id: ${{ vars.AZURE_SIGNING_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_SIGNING_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SIGNING_SUBSCRIPTION_ID }}
+      - uses: azure/trusted-signing-action@fc390cf8ed0f14e248a542af1d838388a47c7a7c
+        with:
+          endpoint: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_TRUSTED_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\dist\candidate
+          files-folder-filter: exe,dll,msi
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: signed-windows-${{ needs.validate.outputs.version }}
+          path: dist/candidate
+          if-no-files-found: error
+
+  sign-linux-and-metadata:
+    if: inputs.publish
+    needs: [validate, compose-candidate, accept-manager-only]
+    runs-on: ubuntu-latest
+    environment: production-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: suite-candidate-${{ needs.validate.outputs.version }}
+          path: dist/candidate
+      - name: Request isolated Linux and TUF signatures
+        env:
+          RELEASE_SIGNING_ENDPOINT: ${{ vars.RELEASE_SIGNING_ENDPOINT }}
+          RELEASE_SIGNING_AUDIENCE: ${{ vars.RELEASE_SIGNING_AUDIENCE }}
+        run: node tools/release/request-remote-signatures.mjs dist/candidate dist/signed
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: signed-linux-metadata-${{ needs.validate.outputs.version }}
+          path: dist/signed
+          if-no-files-found: error
+
+  publish:
+    if: inputs.publish
+    needs: [validate, sign-windows, sign-linux-and-metadata]
+    runs-on: ubuntu-latest
+    environment: production-release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: signed-*
+          path: dist/release
+          merge-multiple: true
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-path: dist/release/**/*
+      - name: Publish exact signed digests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="suite-v${{ needs.validate.outputs.version }}"
+          gh release create "$tag" dist/release/**/* \
+            --repo "${{ github.repository }}" \
+            --title "UCI Arena Suite ${{ needs.validate.outputs.version }}" \
+            --notes "Built only from release/catalog.lock.json and protected provider attestations."

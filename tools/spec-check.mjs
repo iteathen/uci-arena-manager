@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
@@ -20,11 +20,11 @@ for (const relative of referenced) {
   }
 }
 
-for (const schema of [
-  "specs/schemas/command-envelope.schema.json",
-  "specs/schemas/event-envelope.schema.json",
-  "specs/schemas/service-profile.schema.json",
-]) {
+const schemaDirectory = path.join(root, "specs", "schemas");
+const schemas = (await readdir(schemaDirectory))
+  .filter((name) => name.endsWith(".schema.json"))
+  .map((name) => `specs/schemas/${name}`);
+for (const schema of schemas) {
   try {
     JSON.parse(await readFile(path.join(root, schema), "utf8"));
   } catch (error) {
@@ -41,4 +41,6 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-process.stdout.write(`spec-check: ${referenced.length} registered specs valid\n`);
+process.stdout.write(
+  `spec-check: ${referenced.length} registered specs and ${schemas.length} schemas valid\n`,
+);
