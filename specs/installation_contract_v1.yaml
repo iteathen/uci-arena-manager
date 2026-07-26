@@ -189,6 +189,7 @@ discovery:
     - user_selected_roots
   user_selected_root_behavior:
     maximum_directory_depth: 1
+    multiple_explicit_roots: supported
     detected_at_root_or_direct_child:
       - opening_book_file_or_flat_directory
       - syzygy_directory
@@ -199,6 +200,11 @@ discovery:
       A user-selected or explicitly mounted root is inspected only at the root
       and its direct non-symbolic-link children. It is never treated as
       permission to recurse through the containing volume.
+    explicit_mount_rule: >
+      Opening-book, Syzygy, engine, and provider paths mounted at different VM
+      locations are each supplied as an independent bounded scan root. The
+      acceptance harness never requires a synthetic combined directory,
+      symbolic link, junction, or copy of provider-owned assets.
   whole_disk_recursive_scan: forbidden
   symbolic_link_traversal: forbidden
   registration_after_detection: explicit_only
@@ -246,6 +252,7 @@ vm_mounts:
     copy_into_manager_storage: forbidden
     acceptance_evidence:
       - bounded_scan_discovers_books_and_syzygy
+      - separate_explicit_mount_roots_are_supported
       - explicit_import_saves_normalized_locator
       - no_managed_receipt_claims_asset_ownership
       - file_name_size_and_timestamp_metadata_unchanged

@@ -178,9 +178,25 @@ try {
         opening_book = Get-MetadataSnapshot $OpeningBookPath
         syzygy = Get-MetadataSnapshot $SyzygyPath
     }
-    $discovery = Invoke-JsonCommand $resolvedSetup (
-        $common + @("inventory", "--scan-root", $AssetRoot)
-    )
+    $scanRoots = [ordered]@{}
+    foreach ($candidate in @(
+        $AssetRoot,
+        $OpeningBookPath,
+        $SyzygyPath,
+        $UciEnginePath,
+        $BookForgePath,
+        $EvidenceServicePath
+    )) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+            $resolvedCandidate = (Resolve-Path -LiteralPath $candidate).Path
+            $scanRoots[[IO.Path]::GetFullPath($resolvedCandidate)] = $resolvedCandidate
+        }
+    }
+    $inventoryArguments = $common + @("inventory")
+    foreach ($root in $scanRoots.Values) {
+        $inventoryArguments += @("--scan-root", $root)
+    }
+    $discovery = Invoke-JsonCommand $resolvedSetup $inventoryArguments
     Assert-Discovered $discovery "opening_book" $OpeningBookPath
     Assert-Discovered $discovery "syzygy" $SyzygyPath
 
