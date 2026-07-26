@@ -327,6 +327,8 @@ transaction:
         installed CLI and private Node runtime before payload removal.
       - Uninstall fails closed if a provider startup registration cannot be
         stopped and removed.
+      - Payload removal uses a bounded retry after provider shutdown so Windows
+        process teardown cannot strand a partially removed immutable root.
       - Removing a shared runtime by itself is rejected while an installed
         startup-capable provider still depends on it.
       - Normal suite uninstall removes every managed receipt and immutable

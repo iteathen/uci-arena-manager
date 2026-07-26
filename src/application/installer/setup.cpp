@@ -24,6 +24,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <tuple>
 
 #ifndef _WIN32
@@ -2361,6 +2362,36 @@ json uninstall_provider_startup(
     return status;
 }
 
+void remove_managed_component_tree(
+    const fs::path& active_root,
+    const std::string& component_id) {
+    constexpr int attempts = 100;
+    constexpr auto retry_delay =
+        std::chrono::milliseconds(100);
+    std::string failure = "path remains present";
+    for (int attempt = 0; attempt < attempts; ++attempt) {
+        std::error_code remove_error;
+        fs::remove_all(active_root, remove_error);
+        std::error_code exists_error;
+        const bool remains =
+            fs::exists(active_root, exists_error);
+        if (!remove_error && !exists_error && !remains) {
+            return;
+        }
+        if (remove_error) {
+            failure = remove_error.message();
+        } else if (exists_error) {
+            failure = exists_error.message();
+        }
+        if (attempt + 1 < attempts) {
+            std::this_thread::sleep_for(retry_delay);
+        }
+    }
+    throw std::runtime_error(
+        "cannot remove managed component " +
+        component_id + " after shutdown: " + failure);
+}
+
 }  // namespace
 
 std::string SetupEngine::platform_key() {
@@ -3504,11 +3535,8 @@ json SetupEngine::uninstall(
             startup_cleanup =
                 uninstall_provider_startup(paths, receipt);
         }
+        remove_managed_component_tree(active_root, id);
         std::error_code error;
-        fs::remove_all(active_root, error);
-        if (error) {
-            throw std::runtime_error("cannot remove managed component " + id);
-        }
         if (purge) {
             for (const auto& data_path_value :
                  receipt.value("data_paths", json::array())) {
