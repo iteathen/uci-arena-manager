@@ -260,16 +260,6 @@ try {
     [void](Invoke-JsonCommand $node @(
         $bookCli, "init", "--workspace", $bookWorkspace, "--config", $bookConfig
     ))
-    $bookConfigDocument = Get-Content -Raw -LiteralPath $bookConfig | ConvertFrom-Json
-    $bookConfigDocument | Add-Member -Force -NotePropertyName resources -NotePropertyValue @{
-        minimumFreeWorkspaceGb = 1
-        pauseAvailableMemoryGb = 1
-        priorityProcessNames = @()
-    }
-    [IO.File]::WriteAllText(
-        $bookConfig,
-        ($bookConfigDocument | ConvertTo-Json -Depth 20) + [Environment]::NewLine
-    )
     [void](Invoke-JsonCommand $node @(
         $bookCli, "source", "add", "--fixture", "bootstrap_v1",
         "--workspace", $bookWorkspace, "--config", $bookConfig
@@ -319,21 +309,6 @@ try {
     [void](Invoke-JsonCommand $node @(
         $evidenceCli, "init", "--workspace", $evidenceWorkspace, "--config", $evidenceConfig
     ))
-    $configDocument = Get-Content -Raw -LiteralPath $evidenceConfig | ConvertFrom-Json
-    $configDocument | Add-Member -Force -NotePropertyName resources -NotePropertyValue @{
-        consecutiveIdleSamples = 1
-        inputIdleMs = 0
-        maximumUsedMemoryPercent = 99
-        maximumGpuUtilPercent = 100
-        maximumUsedCpuPercent = 99
-        minimumFreeWorkspaceGb = 1
-        pauseAvailableMemoryGb = 1
-        priorityProcessNames = @()
-    }
-    [IO.File]::WriteAllText(
-        $evidenceConfig,
-        ($configDocument | ConvertTo-Json -Depth 20) + [Environment]::NewLine
-    )
     $target = Invoke-JsonCommand $node @(
         $evidenceCli, "target", "add",
         "--model-id", "flashfork_pv12_mobile_nnue_v1",

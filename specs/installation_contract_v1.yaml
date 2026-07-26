@@ -357,6 +357,10 @@ transaction:
         missing, stale, or altered generated configuration.
       - Runtime verification requires opening_book_active and syzygy_active,
         not merely the presence of saved locators.
+      - Protected live acceptance requires the selected timing profile to be
+        accepted, applied, exact-identity-bound, and provider-safety-qualified
+        with a positive reserve after installer-owned knowledge locators are
+        applied.
 
 trust:
   metadata: tuf
@@ -379,6 +383,8 @@ acceptance:
     receipts, loads the bundled model, builds and validates a Book Forge
     integration snapshot, completes a minimal Evidence dataset job, and
     requires Manager to project both outputs through the public CLI contracts.
+    It uses installer-generated provider configuration without test-time
+    resource-policy rewrites.
   - Complete and protected live acceptance uninstall the receipt-selected UCI
     Arena component, prove its immutable version root and receipt were removed
     without removing imported assets or saved locators, reinstall from the
@@ -422,9 +428,10 @@ release_gate_rules:
     receipts and passes them with the installed model root and configured
     shared knowledge root to the installed adapter. It never relies on
     provider-checkout-relative template paths.
-  - A calibrated time profile is optional for the bounded protected Lichess
-    gate; when absent, the adapter's visible conservative fallback applies.
-    Exact single-game and one-child capacity qualification remain mandatory.
+  - The bounded protected Lichess gate requires the installed, exact-identity
+    calibrated time profile to be accepted and applied with provider safety
+    qualification and a positive service reserve. Exact single-game and
+    one-child capacity qualification remain mandatory.
   - The Syzygy gate verifies signed full manifests without downloading the full
     collection, exercises range downloads against tiny local fixtures, and
     probes either a pinned real three-man test fixture or an explicitly supplied

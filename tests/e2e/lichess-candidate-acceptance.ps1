@@ -291,7 +291,6 @@ $acceptanceArguments = @(
     "--profile", (Resolve-Path -LiteralPath $SingleGameProfile).Path,
     "--capacity-profile", (Resolve-Path -LiteralPath $CapacityProfile).Path,
     "--model-root", $modelRoot,
-    "--knowledge-root", (Join-Path $RunRoot "knowledge"),
     "--runtime-dir", (Join-Path $RunRoot "lichess-live"),
     "--attempts", "3",
     "--minutes", "20"
@@ -301,7 +300,26 @@ $acceptanceArguments += @(
     (Resolve-Path -LiteralPath $TimeProfile).Path
 )
 
-& $node $acceptance @acceptanceArguments
+$liveAcceptanceText = @(
+    & $node $acceptance @acceptanceArguments 2>&1
+) -join [Environment]::NewLine
 if ($LASTEXITCODE -ne 0) {
-    throw "Protected Lichess acceptance did not complete exactly one existing-account game"
+    throw "Protected Lichess acceptance did not complete exactly one existing-account game: $liveAcceptanceText"
 }
+$liveAcceptance = $liveAcceptanceText | ConvertFrom-Json
+if ($liveAcceptance.status -ne "passed") {
+    throw "Protected Lichess acceptance did not report a passing game"
+}
+$runtimePath = Join-Path (Join-Path $RunRoot "lichess-live") "runtime.json"
+if (-not (Test-Path -LiteralPath $runtimePath -PathType Leaf)) {
+    throw "Protected Lichess runtime evidence is unavailable"
+}
+$runtime = Get-Content -Raw -LiteralPath $runtimePath | ConvertFrom-Json
+if ($runtime.timing_profile.status -ne "accepted" -or
+    $runtime.timing_profile.accepted -ne $true -or
+    $runtime.timing_profile.applied -ne $true -or
+    $runtime.timing_profile.permissions.provider_safety_qualified -ne $true -or
+    [int64]$runtime.timing_profile.provider_service_reserve_us -le 0) {
+    throw "Installed timing profile was not accepted and applied during the live game"
+}
+$liveAcceptance | ConvertTo-Json -Depth 20
