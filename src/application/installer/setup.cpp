@@ -624,22 +624,12 @@ json activate_knowledge(
     const SetupPaths& paths,
     const std::string& transaction_id,
     const std::string& component_id) {
-    const auto capabilities =
-        manifest.value("capabilities", std::vector<std::string>{});
     std::optional<std::pair<fs::path, fs::path>> mapping;
-    if (std::find(capabilities.begin(), capabilities.end(), "opening_book") !=
-        capabilities.end()) {
+    if (component_id.rfind("opening_book.", 0) == 0) {
         mapping = std::pair{
             component_root / "opening_books",
             paths.knowledge_root / "opening_books"};
-    } else if (
-        std::find_if(
-            capabilities.begin(),
-            capabilities.end(),
-            [](const std::string& capability) {
-                return capability == "syzygy" ||
-                       capability.rfind("syzygy_", 0) == 0;
-            }) != capabilities.end()) {
+    } else if (component_id.rfind("syzygy.", 0) == 0) {
         mapping = std::pair{
             component_root / "tablebases",
             paths.knowledge_root / "tablebases"};
@@ -780,6 +770,45 @@ json receipt_rows(const SetupPaths& paths) {
         }
     }
     return rows;
+}
+
+json managed_knowledge_components(
+    const SetupPaths& paths,
+    const std::string_view component_prefix) {
+    json components = json::array();
+    for (const auto& receipt : receipt_rows(paths)) {
+        const std::string component_id = receipt.value("component_id", "");
+        if (receipt.value("schema", "") != "arena_install_receipt_v1" ||
+            receipt.value("state", "") != "installed_managed" ||
+            component_id.rfind(component_prefix, 0) != 0 ||
+            !receipt.contains("activated_files") ||
+            !receipt.at("activated_files").is_array() ||
+            receipt.at("activated_files").empty()) {
+            continue;
+        }
+        bool present = true;
+        for (const auto& activated : receipt.at("activated_files")) {
+            if (!activated.contains("path") ||
+                !activated.at("path").is_string() ||
+                !activated.contains("size_bytes") ||
+                !activated.at("size_bytes").is_number_unsigned()) {
+                present = false;
+                break;
+            }
+            const fs::path path = activated.at("path").get<std::string>();
+            if (!within(paths.knowledge_root, path) ||
+                !fs::is_regular_file(path) ||
+                fs::is_symlink(path) ||
+                fs::file_size(path) != integer_field(activated, "size_bytes")) {
+                present = false;
+                break;
+            }
+        }
+        if (present) {
+            components.push_back(component_id);
+        }
+    }
+    return components;
 }
 
 fs::path installed_entrypoint(
@@ -931,6 +960,12 @@ json SetupEngine::inventory(
     if (knowledge["opening_book"]["missing_files"].empty()) {
         knowledge["opening_book"]["state"] = "detected_unmanaged";
         knowledge["opening_book"]["path"] = book_root.string();
+        const json managed =
+            managed_knowledge_components(paths, "opening_book.");
+        if (!managed.empty()) {
+            knowledge["opening_book"]["state"] = "installed_managed";
+            knowledge["opening_book"]["managed_components"] = managed;
+        }
     }
     const fs::path tablebase_root = paths.knowledge_root / "tablebases";
     if (fs::is_directory(tablebase_root)) {
@@ -954,6 +989,12 @@ json SetupEngine::inventory(
         if (knowledge["syzygy"]["wdl_files"].get<std::uint64_t>() > 0) {
             knowledge["syzygy"]["state"] = "detected_unmanaged";
             knowledge["syzygy"]["path"] = tablebase_root.string();
+            const json managed =
+                managed_knowledge_components(paths, "syzygy.");
+            if (!managed.empty()) {
+                knowledge["syzygy"]["state"] = "installed_managed";
+                knowledge["syzygy"]["managed_components"] = managed;
+            }
         }
     }
 

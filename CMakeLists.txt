@@ -22,6 +22,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(ARENA_BUILD_TESTS "Build tests" ON)
 option(ARENA_ENABLE_PACKAGING "Enable CPack packaging" ON)
 
+if(MSVC)
+  set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION bin)
+  set(CMAKE_INSTALL_UCRT_LIBRARIES TRUE)
+  include(InstallRequiredSystemLibraries)
+endif()
+
 include(FetchContent)
 
 FetchContent_Declare(

@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   copyFileSync,
@@ -15,6 +14,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { gzipSync } from "node:zlib";
 
 function parse(argv) {
   const result = {};
@@ -44,12 +44,72 @@ function files(root, relative = "") {
   return rows;
 }
 
+function writeOctal(buffer, offset, length, value) {
+  const encoded = Math.trunc(value).toString(8).padStart(length - 1, "0");
+  if (encoded.length >= length) {
+    throw new Error(`tar numeric field overflow: ${value}`);
+  }
+  buffer.write(encoded, offset, length - 1, "ascii");
+  buffer[offset + length - 1] = 0;
+}
+
+function splitTarPath(relative) {
+  if (Buffer.byteLength(relative) <= 100) {
+    return { name: relative, prefix: "" };
+  }
+  for (
+    let index = relative.lastIndexOf("/");
+    index > 0;
+    index = relative.lastIndexOf("/", index - 1)
+  ) {
+    const prefix = relative.slice(0, index);
+    const name = relative.slice(index + 1);
+    if (Buffer.byteLength(prefix) <= 155 && Buffer.byteLength(name) <= 100) {
+      return { name, prefix };
+    }
+  }
+  throw new Error(`manager component path is too long for deterministic ustar: ${relative}`);
+}
+
+function tarHeader(relative, size, mode, epoch) {
+  const { name, prefix } = splitTarPath(relative);
+  const header = Buffer.alloc(512);
+  header.write(name, 0, 100, "utf8");
+  writeOctal(header, 100, 8, mode);
+  writeOctal(header, 108, 8, 0);
+  writeOctal(header, 116, 8, 0);
+  writeOctal(header, 124, 12, size);
+  writeOctal(header, 136, 12, epoch);
+  header.fill(0x20, 148, 156);
+  header[156] = "0".charCodeAt(0);
+  header.write("ustar\0", 257, 6, "ascii");
+  header.write("00", 263, 2, "ascii");
+  header.write("root", 265, 32, "ascii");
+  header.write("root", 297, 32, "ascii");
+  header.write(prefix, 345, 155, "utf8");
+  const checksum = header.reduce((sum, value) => sum + value, 0);
+  header.write(checksum.toString(8).padStart(6, "0"), 148, 6, "ascii");
+  header[154] = 0;
+  header[155] = 0x20;
+  return header;
+}
+
 function archive(stage, output, epoch) {
-  execFileSync(
-    "cmake",
-    ["-E", "tar", "cfz", output, "--format=gnutar", `--mtime=${epoch}`, "."],
-    { cwd: stage, windowsHide: true },
-  );
+  const chunks = [];
+  for (const relative of files(stage)) {
+    const bytes = readFileSync(path.join(stage, relative));
+    chunks.push(tarHeader(
+      relative,
+      bytes.length,
+      relative.startsWith("bin/") ? 0o755 : 0o644,
+      epoch,
+    ));
+    chunks.push(bytes);
+    const padding = (512 - (bytes.length % 512)) % 512;
+    if (padding) chunks.push(Buffer.alloc(padding));
+  }
+  chunks.push(Buffer.alloc(1024));
+  writeFileSync(output, gzipSync(Buffer.concat(chunks), { level: 9, mtime: 0 }));
 }
 
 const args = parse(process.argv.slice(2));
@@ -59,6 +119,9 @@ for (const required of ["install-tree", "version", "target", "output", "source-d
 const source = path.resolve(args["install-tree"]);
 const output = path.resolve(args.output);
 const epoch = Number(args["source-date-epoch"]);
+if (!Number.isSafeInteger(epoch) || epoch < 0) {
+  throw new Error("--source-date-epoch must be a nonnegative integer");
+}
 const stage = `${output}.stage`;
 rmSync(stage, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });

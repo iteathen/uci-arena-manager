@@ -184,6 +184,41 @@ TEST_CASE("inventory reports actionable missing and present knowledge assets") {
         inventory.at("knowledge").at("syzygy").at("state") ==
         "detected_unmanaged");
     REQUIRE(inventory.at("knowledge").at("syzygy").at("wdl_files") == 1);
+
+    const fs::path receipts = paths.data_root / "receipts";
+    fs::create_directories(receipts);
+    const auto activated = [](const fs::path& path) {
+        return json{
+            {"path", path.string()},
+            {"size_bytes", fs::file_size(path)},
+            {"sha256", std::string(64, '0')},
+        };
+    };
+    std::ofstream(receipts / "opening_book.standard.json")
+        << json{
+               {"schema", "arena_install_receipt_v1"},
+               {"component_id", "opening_book.standard"},
+               {"state", "installed_managed"},
+               {"activated_files",
+                json::array({activated(book_root / "strong_rare_v1.bin")})},
+           }
+               .dump();
+    std::ofstream(receipts / "syzygy.wdl.3-4-5.json")
+        << json{
+               {"schema", "arena_install_receipt_v1"},
+               {"component_id", "syzygy.wdl.3-4-5"},
+               {"state", "installed_managed"},
+               {"activated_files",
+                json::array({activated(tablebase_root / "KQvK.rtbw")})},
+           }
+               .dump();
+    inventory = SetupEngine::inventory(paths);
+    REQUIRE(
+        inventory.at("knowledge").at("opening_book").at("state") ==
+        "installed_managed");
+    REQUIRE(
+        inventory.at("knowledge").at("syzygy").at("state") ==
+        "installed_managed");
     fs::remove_all(root);
 }
 

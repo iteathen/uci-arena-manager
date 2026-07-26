@@ -107,6 +107,14 @@ knowledge_assets:
     - The engine remains network-free and consumes local immutable assets only.
     - Missing assets are visible and actionable, never silently substituted.
     - A user may select download, import an existing directory, or continue in degraded mode.
+    - Inventory reports an activated knowledge asset as installed_managed only
+      when an installed-managed receipt owns activation files that still exist
+      under the configured knowledge root with their recorded sizes. Full
+      content integrity remains the verify command's responsibility.
+    - Dedicated opening_book.* and syzygy.* component identities alone own
+      knowledge-file activation; an engine capability named opening_book or
+      syzygy describes consumption support and never makes the engine payload
+      an activation source.
 
 discovery:
   bounded_sources:
@@ -171,7 +179,13 @@ trust:
 
 acceptance:
   - Manager-only install works without Node.js.
+  - Windows bootstrap and Manager binaries launch on a clean supported Windows
+    image without a preinstalled Visual C++ redistributable.
   - Complete Arena installs Manager, UCI Arena, Book Forge, and Evidence Service without a source checkout.
+  - The Windows Complete acceptance launches installed entrypoints from their
+    receipts, loads the bundled model, builds and validates a Book Forge
+    integration snapshot, completes a minimal Evidence dataset job, and
+    requires Manager to project both outputs through the public CLI contracts.
   - Missing opening books and tablebases can be downloaded from exact signed catalog entries or imported explicitly.
   - Manager validates and projects Book Forge snapshot identities and Evidence Service dataset identities through their public CLIs.
   - Offline installation uses the same verified component bytes as stable online installation.
