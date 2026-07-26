@@ -309,6 +309,28 @@ try {
     [void](Invoke-JsonCommand $node @(
         $evidenceCli, "init", "--workspace", $evidenceWorkspace, "--config", $evidenceConfig
     ))
+    $evidenceAcceptanceConfig = Join-Path $evidenceWorkspace "acceptance-config.json"
+    $evidenceAcceptanceDocument =
+        Get-Content -Raw -LiteralPath $evidenceConfig |
+        ConvertFrom-Json
+    $evidenceAcceptanceDocument | Add-Member `
+        -Force `
+        -NotePropertyName resources `
+        -NotePropertyValue @{
+            consecutiveIdleSamples = 1
+            inputIdleMs = 0
+            maximumUsedMemoryPercent = 99
+            maximumGpuUtilPercent = 100
+            maximumUsedCpuPercent = 99
+            minimumFreeWorkspaceGb = 1
+            pauseAvailableMemoryGb = 1
+            priorityProcessNames = @()
+        }
+    [IO.File]::WriteAllText(
+        $evidenceAcceptanceConfig,
+        ($evidenceAcceptanceDocument | ConvertTo-Json -Depth 20) +
+            [Environment]::NewLine
+    )
     $target = Invoke-JsonCommand $node @(
         $evidenceCli, "target", "add",
         "--model-id", "flashfork_pv12_mobile_nnue_v1",
@@ -317,7 +339,7 @@ try {
         "--engine", $engine,
         "--provider", $uci.provider,
         "--workspace", $evidenceWorkspace,
-        "--config", $evidenceConfig
+        "--config", $evidenceAcceptanceConfig
     )
     $jobConfig = @{
         campaign = "suite_clean_e2e"
@@ -337,12 +359,12 @@ try {
         "--target", $target.id,
         "--config-json", $jobConfig,
         "--workspace", $evidenceWorkspace,
-        "--config", $evidenceConfig
+        "--config", $evidenceAcceptanceConfig
     )
     $evidenceRun = Invoke-JsonCommand $node @(
         $evidenceCli, "daemon", "--once",
         "--workspace", $evidenceWorkspace,
-        "--config", $evidenceConfig
+        "--config", $evidenceAcceptanceConfig
     )
     if ($evidenceRun.state -ne "completed" -or $evidenceRun.observations -lt 1) {
         throw "Evidence Service did not complete its minimal packaged job"
@@ -350,7 +372,7 @@ try {
     $datasets = @(Invoke-JsonCommand $node @(
         $evidenceCli, "dataset", "list",
         "--workspace", $evidenceWorkspace,
-        "--config", $evidenceConfig
+        "--config", $evidenceAcceptanceConfig
     ))
     $dataset = $datasets | Where-Object { $_.id -eq $job.datasetId } | Select-Object -First 1
     if ($dataset.state -ne "completed" -or $dataset.observationCount -lt 1) {
@@ -359,18 +381,18 @@ try {
     if (-not $SkipStartupRegistration) {
         [void](Invoke-JsonCommand $node @(
             $evidenceCli, "startup", "install",
-            "--workspace", $evidenceWorkspace, "--config", $evidenceConfig
+            "--workspace", $evidenceWorkspace, "--config", $evidenceAcceptanceConfig
         ))
         $evidenceStartup = Invoke-JsonCommand $node @(
             $evidenceCli, "startup", "status",
-            "--workspace", $evidenceWorkspace, "--config", $evidenceConfig
+            "--workspace", $evidenceWorkspace, "--config", $evidenceAcceptanceConfig
         )
         if (-not $evidenceStartup.installed) {
             throw "Evidence Service startup registration is not installed"
         }
         [void](Invoke-JsonCommand $node @(
             $evidenceCli, "startup", "uninstall",
-            "--workspace", $evidenceWorkspace, "--config", $evidenceConfig
+            "--workspace", $evidenceWorkspace, "--config", $evidenceAcceptanceConfig
         ))
     }
     $stages.Add("evidence")

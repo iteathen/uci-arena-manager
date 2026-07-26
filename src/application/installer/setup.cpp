@@ -2162,7 +2162,8 @@ json generated_component_config(
             {"schema", "uci_arena_evidence_service_config_v1"},
             {"workspace", workspace.string()},
             {"activeModelPointer",
-             (workspace / "manager-config.json").string()},
+             (workspace / "runtime-models" /
+              "active_model_runtime.json").string()},
             {"runtimeModelsRoot",
              (workspace / "runtime-models").string()},
             {"profileImports", json::array()},
@@ -2234,6 +2235,27 @@ json generated_component_config(
         return config;
     }
     return json();
+}
+
+std::optional<json> generated_evidence_active_model_pointer(
+    const json& config) {
+    if (config.value("schema", "") !=
+            "uci_arena_evidence_service_config_v1" ||
+        !config.contains("model_id")) {
+        return std::nullopt;
+    }
+    return json{
+        {"schema", "arena_installed_active_model_runtime_v1"},
+        {"model_id", config.at("model_id")},
+        {"model_root", config.at("model_root")},
+        {"model_fingerprint", config.at("model_fingerprint")},
+        {"provider", config.at("provider")},
+        {"hardware_driver_fingerprint",
+         config.value("hardware_driver_fingerprint", "")},
+        {"engine_path", config.at("engine_path")},
+        {"engine_sha256", config.at("engine_sha256")},
+        {"uci_options", config.at("uci_options")},
+    };
 }
 
 }  // namespace
@@ -2961,13 +2983,44 @@ json SetupEngine::apply(
                         journal["actions"].back()["configuration_backup"] =
                             backup.string();
                     }
-                    write_json_atomic(
-                        config_path,
+                    const json generated_config =
                         generated_component_config(
                             id,
                             receipts_root,
                             workspace,
-                            target));
+                            target);
+                    if (const auto active_pointer =
+                            generated_evidence_active_model_pointer(
+                                generated_config);
+                        active_pointer.has_value()) {
+                        const fs::path pointer_path =
+                            generated_config.at("activeModelPointer")
+                                .get<std::string>();
+                        if (!within(workspace, pointer_path)) {
+                            throw std::runtime_error(
+                                "generated Evidence active-model pointer escapes its workspace");
+                        }
+                        fs::create_directories(pointer_path.parent_path());
+                        journal["actions"].back()
+                               ["active_model_pointer_path"] =
+                            pointer_path.string();
+                        if (fs::is_regular_file(pointer_path)) {
+                            const fs::path backup =
+                                pointer_path.parent_path() /
+                                ("active_model_runtime.rollback-" +
+                                 transaction_id + ".json");
+                            fs::copy_file(
+                                pointer_path,
+                                backup,
+                                fs::copy_options::overwrite_existing);
+                            journal["actions"].back()
+                                   ["active_model_pointer_backup"] =
+                                backup.string();
+                        }
+                        write_json_atomic(journal_path, journal);
+                        write_json_atomic(pointer_path, *active_pointer);
+                    }
+                    write_json_atomic(config_path, generated_config);
                     configuration_path = config_path.string();
                 }
                 data_paths.push_back(workspace.string());
@@ -3016,6 +3069,13 @@ json SetupEngine::apply(
             if (action.contains("configuration_backup")) {
                 fs::remove(
                     action.at("configuration_backup").get<std::string>(),
+                    ignored);
+                ignored.clear();
+            }
+            if (action.contains("active_model_pointer_backup")) {
+                fs::remove(
+                    action.at("active_model_pointer_backup")
+                        .get<std::string>(),
                     ignored);
                 ignored.clear();
             }
@@ -3079,6 +3139,22 @@ json SetupEngine::apply(
                     if (fs::exists(backup)) {
                         fs::rename(
                             backup, configuration, rollback_error);
+                        rollback_error.clear();
+                    }
+                }
+            }
+            if (action->contains("active_model_pointer_path")) {
+                const fs::path pointer =
+                    action->at("active_model_pointer_path")
+                        .get<std::string>();
+                fs::remove(pointer, rollback_error);
+                rollback_error.clear();
+                if (action->contains("active_model_pointer_backup")) {
+                    const fs::path backup =
+                        action->at("active_model_pointer_backup")
+                            .get<std::string>();
+                    if (fs::exists(backup)) {
+                        fs::rename(backup, pointer, rollback_error);
                         rollback_error.clear();
                     }
                 }
@@ -3148,6 +3224,20 @@ json SetupEngine::verify(const SetupPaths& paths) {
                 if (read_json(configuration) != expected) {
                     throw std::runtime_error(
                         "generated component configuration drifted from its verified installer inputs");
+                }
+                if (const auto expected_pointer =
+                        generated_evidence_active_model_pointer(expected);
+                    expected_pointer.has_value()) {
+                    const fs::path pointer =
+                        expected.at("activeModelPointer")
+                            .get<std::string>();
+                    if (!within(configuration.parent_path(), pointer) ||
+                        !fs::is_regular_file(pointer) ||
+                        contains_symbolic_link(pointer) ||
+                        read_json(pointer) != *expected_pointer) {
+                        throw std::runtime_error(
+                            "generated Evidence active-model pointer drifted from its verified installer inputs");
+                    }
                 }
             }
             results.push_back(

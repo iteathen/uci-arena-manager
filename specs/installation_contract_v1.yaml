@@ -331,6 +331,7 @@ transaction:
       - stockfish
       - complete_game_referee
       - manager_owned_runtime_models_root
+      - manager_owned_active_model_pointer
       - explicit_timing_profile_imports
     lichess_adapter:
       - uci_arena_engine
@@ -355,6 +356,11 @@ transaction:
       - Verify regenerates the expected configuration from receipt-verified
         component roots and currently valid saved locators, and fails on
         missing, stale, or altered generated configuration.
+      - When an exact qualified timing profile is selected, arena-setup writes
+        and transactionally verifies an Evidence-compatible active-model
+        pointer bound to the installed engine, model root, provider, options,
+        and executable digest. It never points the service at its own
+        configuration file.
       - Runtime verification requires opening_book_active and syzygy_active,
         not merely the presence of saved locators.
       - Protected live acceptance requires the selected timing profile to be
@@ -383,8 +389,11 @@ acceptance:
     receipts, loads the bundled model, builds and validates a Book Forge
     integration snapshot, completes a minimal Evidence dataset job, and
     requires Manager to project both outputs through the public CLI contracts.
-    It uses installer-generated provider configuration without test-time
-    resource-policy rewrites.
+    It leaves installer-generated provider configuration unchanged. Because a
+    developer workstation may legitimately fail Evidence background-idle
+    admission, the bounded Evidence workload uses a separate acceptance-only
+    configuration copy that changes resource thresholds but retains the exact
+    installer-generated dependency and workspace paths.
   - Complete and protected live acceptance uninstall the receipt-selected UCI
     Arena component, prove its immutable version root and receipt were removed
     without removing imported assets or saved locators, reinstall from the

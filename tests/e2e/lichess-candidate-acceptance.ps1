@@ -258,6 +258,35 @@ $modelRoot = Join-Path (Join-Path $engineReceipt.active_root "models") "default"
 if (-not (Test-Path -LiteralPath $modelRoot -PathType Container)) {
     throw "Candidate model root is unavailable: $modelRoot"
 }
+$evidenceConfig =
+    Get-Content -Raw -LiteralPath $evidenceConfigPath |
+    ConvertFrom-Json
+$activeModelPointerPath = [string]$evidenceConfig.activeModelPointer
+if (-not (Test-Path -LiteralPath $activeModelPointerPath -PathType Leaf)) {
+    throw "Installer did not generate the Evidence Service active-model pointer"
+}
+$activeModelPointer =
+    Get-Content -Raw -LiteralPath $activeModelPointerPath |
+    ConvertFrom-Json
+$qualifiedProfile =
+    Get-Content -Raw -LiteralPath (Resolve-Path -LiteralPath $TimeProfile) |
+    ConvertFrom-Json
+$installedEngineSha256 =
+    (Get-FileHash -Algorithm SHA256 -LiteralPath $Engine).Hash.ToLowerInvariant()
+$declaredEngineSha256 =
+    ([string]$activeModelPointer.engine_sha256 -replace '^sha256:', '').ToLowerInvariant()
+if ($activeModelPointer.model_id -ne $qualifiedProfile.identity.model.model_id -or
+    $activeModelPointer.model_fingerprint -ne
+        $qualifiedProfile.identity.model.model_fingerprint -or
+    $activeModelPointer.provider -ne
+        $qualifiedProfile.identity.search.provider_effective -or
+    [IO.Path]::GetFullPath([string]$activeModelPointer.engine_path) -ne
+        [IO.Path]::GetFullPath($Engine) -or
+    [IO.Path]::GetFullPath([string]$activeModelPointer.model_root) -ne
+        [IO.Path]::GetFullPath($modelRoot) -or
+    $declaredEngineSha256 -ne $installedEngineSha256) {
+    throw "Installer-generated Evidence active-model pointer does not match the imported timing identity"
+}
 
 $uciSmokeText = @(
     & $node $uciSmoke `
