@@ -265,12 +265,18 @@ const providerDependencies = {
     "uci_arena.engine",
     "stockfish.engine",
   ],
+  "lichess.adapter": [
+    "node_runtime.private",
+    "uci_arena.engine",
+    "opening_book.standard",
+  ],
 };
 for (const id of [
   "uci_arena.engine",
   "book_forge.service",
   "opening_book.standard",
   "uci_arena_evidence.service",
+  "lichess.adapter",
 ]) {
   const resultName = readdirSync(providerDirectory)
     .filter(

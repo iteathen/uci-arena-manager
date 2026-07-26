@@ -241,6 +241,23 @@ local_import:
     - Restaurant remains visible as detect-only and is never registered, copied, installed, started, or controlled.
 
 vm_mounts:
+  protected_runner_provisioning:
+    implementation: tools/release/provision-hyperv-runner.ps1
+    physical_host_registration: forbidden
+    runner_registration: repository_scoped_ephemeral
+    runner_update: disabled_and_version_pinned
+    host_access:
+      account: generated_least_privilege_matching_local_identity
+      opening_books: read_only_smb
+      syzygy: read_only_smb
+      workspace: change_smb
+      firewall_scope: hyper_v_default_switch_subnet_only
+    secret_lifecycle:
+      - Registration tokens are obtained just in time and embedded only in the
+        disposable guest bootstrap.
+      - The guest bootstrap deletes itself after runner registration.
+      - Lichess shares are omitted unless the explicit Lichess runner mode is
+        selected.
   immutable_asset_root:
     runner_environment: ARENA_VM_ASSET_ROOT
     contents:
