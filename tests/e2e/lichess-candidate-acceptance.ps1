@@ -12,7 +12,6 @@ param(
     [string]$ExpectedAccount,
     [Parameter(Mandatory = $true)]
     [string]$Opponent,
-    [Parameter(Mandatory = $true)]
     [string]$Config,
     [Parameter(Mandatory = $true)]
     [string]$SingleGameProfile,
@@ -58,13 +57,16 @@ foreach ($path in @(
     $Setup,
     $Catalog,
     $TokenFile,
-    $Config,
     $SingleGameProfile,
     $CapacityProfile
 )) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Protected acceptance input is unavailable: $path"
     }
+}
+if (-not [string]::IsNullOrWhiteSpace($Config) -and
+    -not (Test-Path -LiteralPath $Config -PathType Leaf)) {
+    throw "Protected acceptance config is unavailable: $Config"
 }
 if (-not [string]::IsNullOrWhiteSpace($TimeProfile) -and
     -not (Test-Path -LiteralPath $TimeProfile -PathType Leaf)) {
@@ -128,7 +130,15 @@ if ($LASTEXITCODE -ne 0) {
 $node = Get-Entrypoint "node_runtime.private" "node"
 $acceptance = Get-Entrypoint "lichess.adapter" "live_acceptance"
 $engine = Get-Entrypoint "uci_arena.engine" "uci"
+$adapterReceipt = Get-Receipt "lichess.adapter"
 $engineReceipt = Get-Receipt "uci_arena.engine"
+$installedConfig = Join-Path $adapterReceipt.active_root "deploy/lichess/config.uci_arena.template.yml"
+if ([string]::IsNullOrWhiteSpace($Config)) {
+    $Config = $installedConfig
+}
+if (-not (Test-Path -LiteralPath $Config -PathType Leaf)) {
+    throw "Candidate Lichess configuration is unavailable: $Config"
+}
 $modelRoot = Join-Path (Join-Path $engineReceipt.active_root "models") "default"
 if (-not (Test-Path -LiteralPath $modelRoot -PathType Container)) {
     throw "Candidate model root is unavailable: $modelRoot"
