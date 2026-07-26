@@ -347,18 +347,103 @@ std::optional<std::filesystem::path> executable_on_path(const std::string& name)
     return std::nullopt;
 }
 
+struct SavedServiceLocator {
+    std::optional<fs::path> cli_entrypoint;
+    std::optional<std::string> warning;
+};
+
+SavedServiceLocator saved_service_locator(
+    const fs::path& manager_data_root,
+    const std::string& kind,
+    const std::string& component_id) {
+    if (manager_data_root.empty()) {
+        return {};
+    }
+    const fs::path locator_path =
+        manager_data_root / "locators" / (kind + ".json");
+    if (!fs::exists(locator_path)) {
+        return {};
+    }
+    try {
+        if (!fs::is_regular_file(locator_path) ||
+            fs::is_symlink(locator_path) ||
+            fs::file_size(locator_path) > 1024ULL * 1024ULL) {
+            throw std::runtime_error("saved locator metadata is unsafe");
+        }
+        const json locator = read_json_file(locator_path);
+        if (locator.value("schema", "") != "arena_saved_locator_v1" ||
+            locator.value("schema_version", 0) != 1 ||
+            locator.value("kind", "") != kind ||
+            locator.value("mode", "") != "in_place_reference" ||
+            !locator.contains("path") || !locator.at("path").is_string()) {
+            throw std::runtime_error("saved locator metadata is incompatible");
+        }
+        const fs::path target =
+            fs::absolute(locator.at("path").get<std::string>()).lexically_normal();
+        if (fs::is_symlink(target)) {
+            throw std::runtime_error("saved locator target is a symbolic link");
+        }
+        if (fs::is_regular_file(target)) {
+            return {target, std::nullopt};
+        }
+        if (!fs::is_directory(target)) {
+            throw std::runtime_error("saved locator target is unavailable");
+        }
+        const fs::path manifest_path = target / "arena-component.json";
+        if (!fs::is_regular_file(manifest_path) ||
+            fs::is_symlink(manifest_path) ||
+            fs::file_size(manifest_path) > 1024ULL * 1024ULL) {
+            throw std::runtime_error(
+                "saved provider root has no safe component manifest");
+        }
+        const json manifest = read_json_file(manifest_path);
+        if (manifest.value("schema", "") != "arena_install_component_v1" ||
+            manifest.value("component_id", "") != component_id ||
+            !manifest.contains("entrypoints") ||
+            !manifest.at("entrypoints").is_object() ||
+            !manifest.at("entrypoints").contains("cli") ||
+            !manifest.at("entrypoints").at("cli").is_string()) {
+            throw std::runtime_error(
+                "saved provider manifest has an incompatible CLI contract");
+        }
+        const fs::path relative =
+            manifest.at("entrypoints").at("cli").get<std::string>();
+        if (!safe_relative_path(relative)) {
+            throw std::runtime_error(
+                "saved provider manifest has an unsafe CLI entrypoint");
+        }
+        const fs::path cli = target / relative;
+        if (!within(target, cli) || !fs::is_regular_file(cli) ||
+            fs::is_symlink(cli)) {
+            throw std::runtime_error(
+                "saved provider CLI entrypoint is unavailable");
+        }
+        return {fs::absolute(cli).lexically_normal(), std::nullopt};
+    } catch (const std::exception& error) {
+        return {std::nullopt, error.what()};
+    }
+}
+
 }  // namespace
 
 json ServiceCatalog::profiles() {
     return json::array({book_forge_profile(), evidence_service_profile()});
 }
 
-json ServiceCatalog::discover(const std::string& profile_id) {
+json ServiceCatalog::discover(
+    const std::string& profile_id,
+    const std::filesystem::path& manager_data_root) {
     json candidates = json::array();
     json manual_configuration = json::array();
     if (profile_id == "book_forge") {
         manual_configuration = {"node_executable", "cli_entrypoint", "workspace"};
         json configuration = json::object();
+        const auto saved = saved_service_locator(
+            manager_data_root, "book_forge", "book_forge.service");
+        if (saved.cli_entrypoint) {
+            configuration["cli_entrypoint"] =
+                saved.cli_entrypoint->string();
+        }
         if (const auto configured_node = environment_value("BOOK_FORGE_NODE")) {
             configuration["node_executable"] = *configured_node;
         } else if (const auto path_node = executable_on_path("node")) {
@@ -379,15 +464,36 @@ json ServiceCatalog::discover(const std::string& profile_id) {
             }
             candidates.push_back(
                 {
-                    {"source", "environment_and_path"},
+                    {"source",
+                     saved.cli_entrypoint || saved.warning
+                         ? "saved_locator"
+                         : "environment_and_path"},
                     {"complete", missing.empty()},
                     {"configuration", configuration},
                     {"missing", missing},
+                    {"warning", saved.warning ? json(*saved.warning) : json(nullptr)},
+                });
+        } else if (saved.warning) {
+            candidates.push_back(
+                {
+                    {"source", "saved_locator"},
+                    {"complete", false},
+                    {"configuration", configuration},
+                    {"missing", manual_configuration},
+                    {"warning", *saved.warning},
                 });
         }
     } else if (profile_id == "uci_arena_evidence") {
         manual_configuration = {"node_executable", "cli_entrypoint", "workspace"};
         json configuration = json::object();
+        const auto saved = saved_service_locator(
+            manager_data_root,
+            "evidence_service",
+            "uci_arena_evidence.service");
+        if (saved.cli_entrypoint) {
+            configuration["cli_entrypoint"] =
+                saved.cli_entrypoint->string();
+        }
         if (const auto configured_node = environment_value("UCI_ARENA_EVIDENCE_NODE")) {
             configuration["node_executable"] = *configured_node;
         } else if (const auto path_node = executable_on_path("node")) {
@@ -408,10 +514,23 @@ json ServiceCatalog::discover(const std::string& profile_id) {
             }
             candidates.push_back(
                 {
-                    {"source", "environment_and_path"},
+                    {"source",
+                     saved.cli_entrypoint || saved.warning
+                         ? "saved_locator"
+                         : "environment_and_path"},
                     {"complete", missing.empty()},
                     {"configuration", configuration},
                     {"missing", missing},
+                    {"warning", saved.warning ? json(*saved.warning) : json(nullptr)},
+                });
+        } else if (saved.warning) {
+            candidates.push_back(
+                {
+                    {"source", "saved_locator"},
+                    {"complete", false},
+                    {"configuration", configuration},
+                    {"missing", manual_configuration},
+                    {"warning", *saved.warning},
                 });
         }
     } else {

@@ -145,6 +145,7 @@ void ControlPlane::initialize() { store_->initialize(); }
 
 void ControlPlane::reconcile_installed_services(
     const std::filesystem::path& manager_data_root) {
+    manager_data_root_ = std::filesystem::absolute(manager_data_root).lexically_normal();
     try {
         const json discovered =
             ServiceCatalog::installed_registrations(manager_data_root);
@@ -527,7 +528,7 @@ json ControlPlane::service_profiles() const { return ServiceCatalog::profiles();
 
 json ControlPlane::discover_service_profile(const std::string& profile_id) const {
     try {
-        return ServiceCatalog::discover(profile_id);
+        return ServiceCatalog::discover(profile_id, manager_data_root_);
     } catch (const std::exception& error) {
         throw CommandFailure("service_profile_not_found", error.what(), 404);
     }

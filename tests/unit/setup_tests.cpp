@@ -3,8 +3,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <string>
 
 namespace {
 
@@ -222,6 +224,275 @@ TEST_CASE("inventory reports actionable missing and present knowledge assets") {
     fs::remove_all(root);
 }
 
+TEST_CASE("file-set tablebases verify every file before atomic activation") {
+    const fs::path root = temporary_directory();
+    const SetupPaths paths = paths_under(root);
+    constexpr const char* manifest_digest =
+        "e23ab1788826a7bb5ef78e29553aadf1e429a9b2fccecf2087c6ca9beaa4f447";
+    constexpr const char* manifest =
+        R"({"schema":"arena_syzygy_file_set_manifest_v1","schema_version":1,"component_id":"syzygy.wdl.3-4-5","component_version":"1.0.0","total_size_bytes":11,"files":[{"path":"KQvK.rtbw","piece_count":3,"size_bytes":11,"sha256":"b905c2469583111c5d8dc8057dc426fcf74f17ec72adade00d8d7c80443b6d2f","sources":["KQvK.rtbw"]}]})";
+    std::ofstream(root / "KQvK.rtbw", std::ios::binary) << "wdl-fixture";
+    std::ofstream(root / "syzygy.file-set.json", std::ios::binary) << manifest;
+
+    const json artifact{
+        {"type", "file_set"},
+        {"source", "syzygy.file-set.json"},
+        {"sha256", manifest_digest},
+        {"size_bytes", 312},
+        {"file_count", 1},
+        {"total_size_bytes", 11},
+    };
+    const json plan{
+        {"schema", "arena_install_plan_v1"},
+        {"blockers", json::array()},
+        {"offline", true},
+        {"catalog_directory", root.string()},
+        {"actions",
+         json::array(
+             {{{"action", "install"},
+               {"component_id", "syzygy.wdl.3-4-5"},
+               {"version", "1.0.0"},
+               {"enabled", true},
+               {"artifact", artifact}}})},
+    };
+    const json applied =
+        SetupEngine::apply(json::object(), plan, paths, true, false);
+    REQUIRE(applied.at("state") == "committed");
+    REQUIRE(
+        fs::is_regular_file(
+            paths.knowledge_root / "tablebases" / "KQvK.rtbw"));
+    REQUIRE(
+        fs::file_size(
+            paths.knowledge_root / "tablebases" / "KQvK.rtbw") == 11);
+    REQUIRE(SetupEngine::verify(paths).at("ok") == true);
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("file-set catalog totals fail closed before activation") {
+    const fs::path root = temporary_directory();
+    const SetupPaths paths = paths_under(root);
+    constexpr const char* manifest =
+        R"({"schema":"arena_syzygy_file_set_manifest_v1","schema_version":1,"component_id":"syzygy.wdl.3-4-5","component_version":"1.0.0","total_size_bytes":11,"files":[{"path":"KQvK.rtbw","piece_count":3,"size_bytes":11,"sha256":"b905c2469583111c5d8dc8057dc426fcf74f17ec72adade00d8d7c80443b6d2f","sources":["KQvK.rtbw"]}]})";
+    std::ofstream(root / "KQvK.rtbw", std::ios::binary) << "wdl-fixture";
+    std::ofstream(root / "syzygy.file-set.json", std::ios::binary) << manifest;
+    const json plan{
+        {"schema", "arena_install_plan_v1"},
+        {"blockers", json::array()},
+        {"offline", true},
+        {"catalog_directory", root.string()},
+        {"actions",
+         json::array(
+             {{{"action", "install"},
+               {"component_id", "syzygy.wdl.3-4-5"},
+               {"version", "1.0.0"},
+               {"enabled", true},
+               {"artifact",
+                {{"type", "file_set"},
+                 {"source", "syzygy.file-set.json"},
+                 {"sha256",
+                  "e23ab1788826a7bb5ef78e29553aadf1e429a9b2fccecf2087c6ca9beaa4f447"},
+                 {"size_bytes", 312},
+                 {"file_count", 1},
+                 {"total_size_bytes", 12}}}}})},
+    };
+    REQUIRE_THROWS(
+        SetupEngine::apply(json::object(), plan, paths, true, false));
+    REQUIRE_FALSE(
+        fs::exists(paths.knowledge_root / "tablebases" / "KQvK.rtbw"));
+    fs::remove_all(root);
+}
+
+TEST_CASE("inventory returns bounded versioned discovery and browse contracts") {
+    const fs::path root = temporary_directory();
+    const SetupPaths paths = paths_under(root);
+    const fs::path provider_root = root / "providers";
+    const fs::path book_forge = provider_root / "book-forge";
+    fs::create_directories(book_forge);
+    std::ofstream(book_forge / "arena-component.json")
+        << json{
+               {"schema", "arena_install_component_v1"},
+               {"component_id", "book_forge.service"},
+               {"component_version", "1.0.0"},
+           }
+               .dump();
+
+    const fs::path too_deep =
+        provider_root / "nested" / "not-scanned";
+    fs::create_directories(too_deep);
+    std::ofstream(too_deep / "arena-component.json")
+        << json{
+               {"schema", "arena_install_component_v1"},
+               {"component_id", "uci_arena_evidence.service"},
+               {"component_version", "1.0.0"},
+           }
+               .dump();
+
+    const json inventory =
+        SetupEngine::inventory(paths, {provider_root});
+    const json& book =
+        inventory.at("discovery").at("book_forge");
+    REQUIRE(book.at("schema") == "arena_setup_discovery_v1");
+    REQUIRE(book.at("schema_version") == 1);
+    REQUIRE(book.at("selection").at("source") == "provider_manifest");
+    REQUIRE(
+        book.at("browse").at("selection") == "file_or_directory");
+    REQUIRE_FALSE(book.at("browse").at("hints").empty());
+    REQUIRE(
+        inventory.at("discovery")
+            .at("opening_book")
+            .at("browse")
+            .at("managed_copy_allowed") == true);
+
+    const auto& evidence_candidates =
+        inventory.at("discovery")
+            .at("evidence_service")
+            .at("candidates");
+    REQUIRE(std::none_of(
+        evidence_candidates.begin(),
+        evidence_candidates.end(),
+        [&too_deep](const json& candidate) {
+            return candidate.value("path", "") ==
+                   fs::absolute(too_deep).lexically_normal().string();
+        }));
+    fs::remove_all(root);
+}
+
+TEST_CASE("discovery precedence is receipt then locator then provider manifest") {
+    const fs::path root = temporary_directory();
+    const SetupPaths paths = paths_under(root);
+    const fs::path provider_root = root / "book-forge";
+    fs::create_directories(provider_root);
+    std::ofstream(provider_root / "arena-component.json")
+        << json{
+               {"schema", "arena_install_component_v1"},
+               {"component_id", "book_forge.service"},
+               {"component_version", "1.0.0"},
+           }
+               .dump();
+    const fs::path cli = provider_root / "book-forge.mjs";
+    std::ofstream(cli) << "fixture";
+
+    auto inventory =
+        SetupEngine::inventory(paths, {provider_root});
+    REQUIRE(
+        inventory.at("discovery")
+            .at("book_forge")
+            .at("selection")
+            .at("source") == "provider_manifest");
+
+    const json imported =
+        SetupEngine::import_path(paths, "book_forge", cli);
+    REQUIRE(imported.at("mode") == "in_place_reference");
+    inventory = SetupEngine::inventory(paths, {provider_root});
+    REQUIRE(
+        inventory.at("discovery")
+            .at("book_forge")
+            .at("selection")
+            .at("source") == "saved_locator");
+
+    const fs::path receipts = paths.data_root / "receipts";
+    fs::create_directories(receipts);
+    std::ofstream(receipts / "book_forge.service.json")
+        << json{
+               {"schema", "arena_install_receipt_v1"},
+               {"component_id", "book_forge.service"},
+               {"component_version", "1.0.0"},
+               {"state", "installed_managed"},
+               {"active_root", provider_root.string()},
+           }
+               .dump();
+    inventory = SetupEngine::inventory(paths, {provider_root});
+    REQUIRE(
+        inventory.at("discovery")
+            .at("book_forge")
+            .at("selection")
+            .at("source") == "install_receipt");
+    fs::remove_all(root);
+}
+
+TEST_CASE("local imports validate UCI and never return Lichess token contents") {
+    const fs::path root = temporary_directory();
+    const SetupPaths paths = paths_under(root);
+    const json engine = SetupEngine::import_path(
+        paths, "uci_engine", ARENA_MOCK_UCI_PATH);
+    REQUIRE(engine.at("schema") == "arena_setup_import_result_v1");
+    REQUIRE(engine.at("validation").at("engine_name") == "Arena Mock Engine");
+    REQUIRE(engine.at("validation").at("fingerprint").get<std::string>().size() == 64);
+
+    const fs::path token = root / "lichess-token.txt";
+    const std::string token_contents = "TEST_TOKEN_CONTENT_MUST_NOT_ESCAPE";
+    std::ofstream(token) << token_contents;
+    const json token_result =
+        SetupEngine::import_path(paths, "lichess_token_path", token);
+    REQUIRE(
+        token_result.at("validation").at("validation") ==
+        "path_reference_only");
+    REQUIRE(token_result.dump().find(token_contents) == std::string::npos);
+    REQUIRE_THROWS(
+        SetupEngine::import_path(paths, "restaurant", root));
+    fs::remove_all(root);
+}
+
+TEST_CASE("managed copy is restricted to small flat opening books") {
+    const fs::path root = temporary_directory();
+    const SetupPaths paths = paths_under(root);
+    const fs::path source = root / "small-book";
+    fs::create_directories(source);
+    std::ofstream(source / "book.bin") << "polyglot";
+    std::ofstream(source / "book.policy") << "policy";
+
+    const json imported =
+        SetupEngine::import_path(paths, "opening_book", source, true);
+    REQUIRE(imported.at("mode") == "managed_copy");
+    REQUIRE(imported.at("state") == "installed_managed");
+    REQUIRE(fs::is_regular_file(
+        fs::path(imported.at("path").get<std::string>()) / "book.bin"));
+    REQUIRE(
+        SetupEngine::verify(paths).at("ok") == true);
+
+    const json inventory = SetupEngine::inventory(paths);
+    REQUIRE(
+        inventory.at("discovery")
+            .at("opening_book")
+            .at("selection")
+            .at("source") == "install_receipt");
+    REQUIRE_THROWS(
+        SetupEngine::import_path(paths, "syzygy", source, true));
+
+    const fs::path nested = root / "nested-book";
+    fs::create_directories(nested / "child");
+    std::ofstream(nested / "book.bin") << "polyglot";
+    REQUIRE_THROWS(
+        SetupEngine::import_path(paths, "opening_book", nested, true));
+
+    const fs::path too_many = root / "too-many-book-files";
+    fs::create_directories(too_many);
+    for (int index = 0; index < 65; ++index) {
+        std::ofstream(
+            too_many / ("book-" + std::to_string(index) + ".bin"))
+            << "fixture";
+    }
+    REQUIRE_THROWS(
+        SetupEngine::import_path(paths, "opening_book", too_many, true));
+    fs::remove_all(root);
+}
+
+TEST_CASE("import rejects symbolic-link traversal when supported") {
+    const fs::path root = temporary_directory();
+    const SetupPaths paths = paths_under(root);
+    const fs::path target = root / "book.bin";
+    const fs::path link = root / "book-link.bin";
+    std::ofstream(target) << "polyglot";
+    std::error_code error;
+    fs::create_symlink(target, link, error);
+    if (!error) {
+        REQUIRE_THROWS(
+            SetupEngine::import_path(paths, "opening_book", link));
+    }
+    fs::remove_all(root);
+}
+
 TEST_CASE("unsigned catalogs require an explicit development override") {
     const fs::path root = temporary_directory();
     const fs::path catalog_path = root / "catalog.json";
@@ -231,5 +502,51 @@ TEST_CASE("unsigned catalogs require an explicit development override") {
     REQUIRE(
         SetupEngine::load_catalog(catalog_path, {}, true).at("suite_version") ==
         "1.0.0");
+    fs::remove_all(root);
+}
+
+TEST_CASE("verified release media is retained for later repair and downloads") {
+    const fs::path root = temporary_directory();
+    const SetupPaths paths = paths_under(root);
+    const fs::path media = root / "installer-media";
+    fs::create_directories(media / "payloads");
+    std::ofstream(media / "payloads" / "manager.tar.gz") << "payload";
+    const json catalog{
+        {"schema", "arena_install_catalog_v1"},
+        {"schema_version", 1},
+        {"suite_version", "1.0.0"},
+        {"presets", {{"manager_only", json::array({"manager.core"})}}},
+        {"components",
+         json::array(
+             {{{"id", "manager.core"},
+               {"version", "1.0.0"},
+               {"dependencies", json::array()},
+               {"installed_bytes", 7},
+               {"staging_bytes", 7},
+               {"backup_bytes", 0},
+               {"workspace_reserve_bytes", 0},
+               {"artifacts",
+                {{SetupEngine::platform_key(),
+                  {{"source", "payloads/manager.tar.gz"},
+                   {"sha256",
+                    "239f59ed55e737c77147cf55ad0c1b030b6d7ee748a7426952f9b852d5a935e5"},
+                   {"size_bytes", 7}}}}}}})},
+    };
+    std::ofstream(media / "catalog.json") << catalog.dump(2);
+    const json loaded =
+        SetupEngine::load_catalog(media / "catalog.json", {}, true);
+    const json retained = SetupEngine::persist_release_media(
+        loaded, paths, media / "catalog.json");
+    REQUIRE(
+        retained.at("schema") == "arena_retained_release_media_v1");
+    REQUIRE(fs::is_regular_file(
+        paths.data_root / "release" / "catalog.json"));
+    REQUIRE(fs::is_regular_file(
+        paths.data_root / "release" / "payloads" / "manager.tar.gz"));
+
+    fs::remove_all(media);
+    const json reloaded = SetupEngine::load_catalog(
+        paths.data_root / "release" / "catalog.json", {}, true);
+    REQUIRE(reloaded.at("suite_version") == "1.0.0");
     fs::remove_all(root);
 }

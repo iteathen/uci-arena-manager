@@ -9,6 +9,8 @@ import type {
 } from './types'
 
 const csrfKey = 'arena.csrf'
+const pickerPortKey = 'arena.picker.port'
+const pickerTokenKey = 'arena.picker.token'
 
 export class ApiError extends Error {
   constructor(
@@ -44,15 +46,87 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function exchangePairingToken(): Promise<boolean> {
-  const match = window.location.hash.match(/^#pair=([a-f0-9]{64})$/)
-  if (!match) return false
+  const parameters = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+  const pairToken = parameters.get('pair')
+  if (!pairToken?.match(/^[a-f0-9]{64}$/)) return false
   const paired = await request<{ csrf_token: string }>('/api/v1/auth/pair', {
     method: 'POST',
-    body: JSON.stringify({ token: match[1] }),
+    body: JSON.stringify({ token: pairToken }),
   })
   sessionStorage.setItem(csrfKey, paired.csrf_token)
+  const pickerPort = parameters.get('picker_port')
+  const pickerToken = parameters.get('picker_token')
+  if (
+    pickerPort?.match(/^\d{4,5}$/) &&
+    Number(pickerPort) >= 1024 &&
+    Number(pickerPort) <= 65535 &&
+    pickerToken?.match(/^[a-f0-9]{64}$/)
+  ) {
+    sessionStorage.setItem(pickerPortKey, pickerPort)
+    sessionStorage.setItem(pickerTokenKey, pickerToken)
+  } else {
+    sessionStorage.removeItem(pickerPortKey)
+    sessionStorage.removeItem(pickerTokenKey)
+  }
   history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
   return true
+}
+
+export interface LocalPathFilter {
+  name: string
+  patterns: string[]
+}
+
+export async function pickLocalPath(options: {
+  mode: 'file' | 'directory'
+  title: string
+  filters?: LocalPathFilter[]
+}): Promise<string | null> {
+  const port = sessionStorage.getItem(pickerPortKey)
+  const token = sessionStorage.getItem(pickerTokenKey)
+  if (!port || !token) {
+    throw new ApiError(
+      'Run arena ui and keep it open to use native browse dialogs, or enter the path manually.',
+      503,
+      'picker_unavailable',
+    )
+  }
+  let response: Response
+  try {
+    response = await fetch(`http://127.0.0.1:${port}/v1/pick`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        schema: 'arena_ui_picker_request_v1',
+        ...options,
+        filters: options.filters ?? [],
+      }),
+    })
+  } catch {
+    throw new ApiError(
+      'The arena ui browse helper is no longer running. Restart arena ui or enter the path manually.',
+      503,
+      'picker_unavailable',
+    )
+  }
+  const body = (await response.json()) as {
+    status?: string
+    path?: string | null
+    code?: string
+    detail?: string
+  }
+  if (!response.ok || body.status === 'error') {
+    throw new ApiError(
+      body.detail ?? 'Native browse dialog failed',
+      response.status,
+      body.code ?? 'picker_failed',
+    )
+  }
+  return body.status === 'selected' && body.path ? body.path : null
 }
 
 export const api = {

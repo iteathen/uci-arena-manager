@@ -13,13 +13,17 @@ const REQUIRED_PROVIDER_COMPONENTS = new Set([
   "book_forge.service",
   "uci_arena_evidence.service",
   "opening_book.standard",
+  "lichess.adapter",
 ]);
 const TARGETS = new Set(["windows-x86_64", "linux-x86_64"]);
+const REQUIRED_PORTABLE_PROVIDER_COMPONENTS = new Set([
+  "syzygy.wdl.3-4-5",
+  "syzygy.dtz.3-4-5",
+]);
 const REQUIRED_MANAGED_COMPONENTS = new Set([
   "node_runtime.private",
   "stockfish.engine",
 ]);
-const REQUIRED_PORTABLE_COMPONENTS = new Set(["syzygy.wdl.3-4-5"]);
 
 export function sha256File(filename) {
   return createHash("sha256").update(readFileSync(filename)).digest("hex");
@@ -41,6 +45,7 @@ export function validateReleaseLock(lock, { requireReady = true } = {}) {
   }
   const identities = new Set();
   const coverage = new Map([...TARGETS].map((target) => [target, new Set()]));
+  const portableProviderCoverage = new Set();
   for (const component of lock.components ?? []) {
     const identity = `${component.component_id}:${component.target_triple}`;
     if (identities.has(identity)) errors.push(`duplicate component target ${identity}`);
@@ -48,10 +53,35 @@ export function validateReleaseLock(lock, { requireReady = true } = {}) {
     if (!/^[A-Za-z0-9._-]+$/.test(component.component_id ?? "")) {
       errors.push(`invalid component id ${component.component_id}`);
     }
-    if (!TARGETS.has(component.target_triple)) {
-      errors.push(`unsupported target ${component.target_triple}`);
-    } else {
+    if (TARGETS.has(component.target_triple)) {
       coverage.get(component.target_triple).add(component.component_id);
+    } else if (
+      component.target_triple === "any-any" &&
+      REQUIRED_PORTABLE_PROVIDER_COMPONENTS.has(component.component_id)
+    ) {
+      portableProviderCoverage.add(component.component_id);
+    } else {
+      errors.push(`unsupported target ${component.target_triple}`);
+    }
+    const artifactType = component.artifact_type ?? "archive";
+    if (!["archive", "file_set"].includes(artifactType)) {
+      errors.push(`${identity} has invalid artifact_type`);
+    }
+    if (artifactType === "file_set") {
+      if (component.target_triple !== "any-any") {
+        errors.push(`${identity} file_set must use target any-any`);
+      }
+      if (!component.artifact_name?.endsWith(".file-set.json")) {
+        errors.push(`${identity} file_set must use a .file-set.json artifact`);
+      }
+      if (!Number.isSafeInteger(component.file_count) || component.file_count <= 0) {
+        errors.push(`${identity} has invalid file_count`);
+      }
+      if (!Number.isSafeInteger(component.installed_bytes) || component.installed_bytes <= 0) {
+        errors.push(`${identity} file_set must pin installed_bytes`);
+      }
+    } else if (!component.artifact_name?.endsWith(".tar.gz")) {
+      errors.push(`${identity} archive must use a .tar.gz artifact`);
     }
     for (const key of ["artifact_sha256", "provider_result_sha256"]) {
       if (!/^[0-9a-f]{64}$/.test(component[key] ?? "")) {
@@ -71,7 +101,6 @@ export function validateReleaseLock(lock, { requireReady = true } = {}) {
     }
   }
   const managedCoverage = new Map([...TARGETS].map((target) => [target, new Set()]));
-  const portableCoverage = new Set();
   for (const component of lock.managed_components ?? []) {
     const identity = `${component.component_id}:${component.target_triple}`;
     if (identities.has(identity)) errors.push(`duplicate component target ${identity}`);
@@ -82,7 +111,7 @@ export function validateReleaseLock(lock, { requireReady = true } = {}) {
     if (TARGETS.has(component.target_triple)) {
       managedCoverage.get(component.target_triple).add(component.component_id);
     } else if (component.target_triple === "any") {
-      portableCoverage.add(component.component_id);
+      // Portable Manager-owned archives remain permitted for future dependencies.
     } else {
       errors.push(`unsupported target ${component.target_triple}`);
     }
@@ -127,9 +156,9 @@ export function validateReleaseLock(lock, { requireReady = true } = {}) {
         }
       }
     }
-    for (const required of REQUIRED_PORTABLE_COMPONENTS) {
-      if (!portableCoverage.has(required)) {
-        errors.push(`portable managed components are missing ${required}`);
+    for (const required of REQUIRED_PORTABLE_PROVIDER_COMPONENTS) {
+      if (!portableProviderCoverage.has(required)) {
+        errors.push(`portable provider components are missing ${required}`);
       }
     }
   }
@@ -216,6 +245,50 @@ async function downloadUrl(url, destination) {
   });
 }
 
+export function validateLockedProviderResult(
+  component,
+  result,
+  artifactSize,
+) {
+  const isFileSet =
+    (component.artifact_type ?? "archive") === "file_set";
+  if (result.schema !== "arena_provider_release_result_v1"
+      || result.component_id !== component.component_id
+      || result.target_triple !== component.target_triple
+      || result.source_commit !== component.source_commit
+      || (
+        isFileSet
+          ? result.artifact_kind !== "external_file_set_manifest"
+          : result.artifact_kind !== undefined && result.artifact_kind !== "archive"
+      )
+      || result.artifact_sha256 !== component.artifact_sha256
+      || result.artifact_size_bytes !== artifactSize) {
+    throw new Error(`provider result mismatch for ${component.component_id}`);
+  }
+  if (isFileSet
+      && (
+        result.validation_evidence?.range_probe?.status !== "passed"
+        || result.validation_evidence.range_probe.files !== component.file_count
+        || result.validation_evidence.range_probe.bytes_transferred
+          !== component.file_count
+      )) {
+    throw new Error(
+      `provider range evidence mismatch for ${component.component_id}`,
+    );
+  }
+  if (isFileSet
+      && (
+        (result.external_file_count ?? result.file_set_file_count)
+          !== component.file_count
+        || (result.external_size_bytes ?? result.file_set_total_size_bytes)
+          !== component.installed_bytes
+      )) {
+    throw new Error(
+      `provider file-set totals mismatch for ${component.component_id}`,
+    );
+  }
+}
+
 export async function fetchLockedComponents(lock, outputDirectory, token) {
   const validation = validateReleaseLock(lock);
   if (!validation.ok) throw new Error(validation.errors.join("\n"));
@@ -247,14 +320,11 @@ export async function fetchLockedComponents(lock, outputDirectory, token) {
       throw new Error(`locked digest mismatch for ${component.component_id}`);
     }
     const result = JSON.parse(readFileSync(resultPath, "utf8"));
-    if (result.schema !== "arena_provider_release_result_v1"
-        || result.component_id !== component.component_id
-        || result.target_triple !== component.target_triple
-        || result.source_commit !== component.source_commit
-        || result.artifact_sha256 !== component.artifact_sha256
-        || result.artifact_size_bytes !== statSync(artifactPath).size) {
-      throw new Error(`provider result mismatch for ${component.component_id}`);
-    }
+    validateLockedProviderResult(
+      component,
+      result,
+      statSync(artifactPath).size,
+    );
     rows.push({ ...component, artifactPath, resultPath, result });
   }
   for (const component of lock.managed_components) {
@@ -291,11 +361,16 @@ const DEPENDENCIES = Object.freeze({
   "node_runtime.private": ["manager.core"],
   "stockfish.engine": ["manager.core"],
   "book_forge.service": ["node_runtime.private", "stockfish.engine"],
-  "opening_book.standard": ["book_forge.service"],
+  "opening_book.standard": [],
   "uci_arena_evidence.service": [
     "node_runtime.private",
     "uci_arena.engine",
     "stockfish.engine",
+  ],
+  "lichess.adapter": [
+    "node_runtime.private",
+    "uci_arena.engine",
+    "opening_book.standard",
   ],
   "syzygy.wdl.3-4-5": ["uci_arena.engine"],
   "syzygy.dtz.3-4-5": ["syzygy.wdl.3-4-5"],
@@ -307,27 +382,47 @@ export function assembleCatalog(lock, lockedRows, managerArtifacts) {
     const key = row.component_id;
     const version = row.component_version ?? row.result.component_version;
     if (!byIdentity.has(key)) {
+      const artifactType = row.artifact_type ?? "archive";
+      const installedBytes =
+        row.installed_bytes ??
+        row.result.external_size_bytes ??
+        row.result.file_set_total_size_bytes ??
+        row.result.artifact_size_bytes;
       byIdentity.set(key, {
         id: key,
         version,
         dependencies: row.dependencies ?? DEPENDENCIES[key] ?? [],
-        installed_bytes: row.installed_bytes ?? row.result.artifact_size_bytes,
-        staging_bytes: row.staging_bytes ?? row.result.artifact_size_bytes * 2,
-        backup_bytes: row.backup_bytes ?? row.result.artifact_size_bytes,
+        installed_bytes: installedBytes,
+        staging_bytes: row.staging_bytes ?? installedBytes,
+        backup_bytes: row.backup_bytes ?? installedBytes,
         workspace_reserve_bytes: row.workspace_reserve_bytes ?? 0,
         artifacts: {},
       });
     } else if (byIdentity.get(key).version !== version) {
       throw new Error(`component ${key} has inconsistent platform versions`);
     }
-    if (byIdentity.get(key).artifacts[row.target_triple]) {
-      throw new Error(`component ${key} duplicates ${row.target_triple}`);
+    const artifactTarget =
+      row.target_triple === "any-any" ? "any" : row.target_triple;
+    if (byIdentity.get(key).artifacts[artifactTarget]) {
+      throw new Error(`component ${key} duplicates ${artifactTarget}`);
     }
-    byIdentity.get(key).artifacts[row.target_triple] = {
+    const artifact = {
+      type: row.artifact_type ?? "archive",
       source: `payloads/${row.artifact_name}`,
       sha256: row.artifact_sha256,
       size_bytes: row.result.artifact_size_bytes,
     };
+    if (artifact.type === "file_set") {
+      artifact.file_count =
+        row.file_count ??
+        row.result.external_file_count ??
+        row.result.file_set_file_count;
+      artifact.total_size_bytes =
+        row.installed_bytes ??
+        row.result.external_size_bytes ??
+        row.result.file_set_total_size_bytes;
+    }
+    byIdentity.get(key).artifacts[artifactTarget] = artifact;
   }
   const manager = {
     id: "manager.core",
@@ -356,7 +451,9 @@ export function assembleCatalog(lock, lockedRows, managerArtifacts) {
     "book_forge.service",
     "opening_book.standard",
     "uci_arena_evidence.service",
+    "lichess.adapter",
     "syzygy.wdl.3-4-5",
+    "syzygy.dtz.3-4-5",
   ]) {
     if (!byIdentity.has(required)) {
       throw new Error(`locked composition is missing catalog component ${required}`);

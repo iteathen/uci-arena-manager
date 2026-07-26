@@ -259,7 +259,7 @@ const providerDirectory = path.resolve(args["provider-dir"]);
 const providerDependencies = {
   "uci_arena.engine": ["manager.core"],
   "book_forge.service": ["node_runtime.private", "stockfish.engine"],
-  "opening_book.standard": ["book_forge.service"],
+  "opening_book.standard": [],
   "uci_arena_evidence.service": [
     "node_runtime.private",
     "uci_arena.engine",

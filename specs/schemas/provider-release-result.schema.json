@@ -18,8 +18,15 @@
     "component_version": {"type": "string"},
     "target_triple": {"type": "string"},
     "artifact_name": {"type": "string"},
+    "artifact_type": {"enum": ["archive", "file_set"]},
+    "artifact_kind": {"enum": ["archive", "external_file_set_manifest"]},
     "artifact_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "artifact_size_bytes": {"type": "integer", "minimum": 1},
+    "file_set_file_count": {"type": "integer", "minimum": 1},
+    "file_set_total_size_bytes": {"type": "integer", "minimum": 1},
+    "external_file_count": {"type": "integer", "minimum": 1},
+    "external_size_bytes": {"type": "integer", "minimum": 1},
+    "payload_included": {"type": "boolean"},
     "component_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "source_repository": {"type": "string"},
     "source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
@@ -31,6 +38,32 @@
     "build_flags": {"type": "array", "items": {"type": "string"}},
     "sbom_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "licenses_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "tests": {"type": "array", "minItems": 1, "items": {"type": "object"}}
+    "tests": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+    "validation_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "range_probe": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "files", "bytes_transferred"],
+          "properties": {
+            "status": {"enum": ["passed", "not_requested"]},
+            "files": {"type": "integer", "minimum": 0},
+            "bytes_transferred": {"type": "integer", "minimum": 0}
+          }
+        },
+        "local_probe": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "files", "copied_bytes"],
+          "properties": {
+            "status": {"enum": ["passed", "not_requested"]},
+            "files": {"type": "integer", "minimum": 0},
+            "copied_bytes": {"const": 0}
+          }
+        }
+      }
+    }
   }
 }

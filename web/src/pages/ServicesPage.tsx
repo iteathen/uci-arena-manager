@@ -19,7 +19,6 @@ import {
   SimpleGrid,
   Stack,
   Text,
-  TextInput,
   ThemeIcon,
   Title,
 } from '@mantine/core'
@@ -29,6 +28,7 @@ import { useState } from 'react'
 import { api, makeCommand } from '../api/client'
 import type { ManagedServiceData } from '../api/types'
 import { PageHeader } from '../components/PageHeader'
+import { PathPickerInput } from '../components/PathPickerInput'
 import { StatusPill } from '../components/StatusPill'
 
 export function ServicesPage() {
@@ -321,23 +321,31 @@ export function ServicesPage() {
             </Button>
           </Group>
           {discoveryMessage && <Alert color="gray">{discoveryMessage}</Alert>}
-          <TextInput
+          <PathPickerInput
             label="Node executable"
-            placeholder="C:\Program Files\nodejs\node.exe"
+            description="Prefer the component-private Node runtime beside the installed service."
+            placeholder="C:\Program Files\UCI Arena\Node\node.exe"
             value={nodePath}
-            onChange={(event) => setNodePath(event.currentTarget.value)}
+            onChange={setNodePath}
+            mode="file"
+            filters={[{ name: 'Node executable', patterns: ['node.exe', 'node'] }]}
           />
-          <TextInput
+          <PathPickerInput
             label="Book Forge CLI entrypoint"
-            placeholder="C:\projects\engine\tools\book_forge\src\cli.mjs"
+            description="Select the packaged Book Forge CLI, not a source-checkout-relative file."
+            placeholder="C:\Program Files\UCI Arena\Book Forge\app\src\cli.mjs"
             value={cliPath}
-            onChange={(event) => setCliPath(event.currentTarget.value)}
+            onChange={setCliPath}
+            mode="file"
+            filters={[{ name: 'Node CLI modules', patterns: ['*.mjs', '*.js'] }]}
           />
-          <TextInput
+          <PathPickerInput
             label="Book Forge workspace"
+            description="Select a writable volume with at least 75 GiB free after installation."
             placeholder="E:\book-forge"
             value={workspace}
-            onChange={(event) => setWorkspace(event.currentTarget.value)}
+            onChange={setWorkspace}
+            mode="directory"
           />
           {save.error && <Text c="red">{save.error.message}</Text>}
           <Group justify="flex-end">
@@ -391,23 +399,31 @@ export function ServicesPage() {
             </Button>
           </Group>
           {discoveryMessage && <Alert color="gray">{discoveryMessage}</Alert>}
-          <TextInput
+          <PathPickerInput
             label="Node executable"
-            placeholder="C:\Program Files\nodejs\node.exe"
+            description="Prefer the component-private Node runtime beside the installed service."
+            placeholder="C:\Program Files\UCI Arena\Node\node.exe"
             value={evidenceNodePath}
-            onChange={(event) => setEvidenceNodePath(event.currentTarget.value)}
+            onChange={setEvidenceNodePath}
+            mode="file"
+            filters={[{ name: 'Node executable', patterns: ['node.exe', 'node'] }]}
           />
-          <TextInput
+          <PathPickerInput
             label="Evidence Service CLI entrypoint"
-            placeholder="C:\path\to\arena_evidence_service\src\cli.mjs"
+            description="Select the packaged Evidence Service CLI, not a repository file."
+            placeholder="C:\Program Files\UCI Arena\Evidence Service\app\src\cli.mjs"
             value={evidenceCliPath}
-            onChange={(event) => setEvidenceCliPath(event.currentTarget.value)}
+            onChange={setEvidenceCliPath}
+            mode="file"
+            filters={[{ name: 'Node CLI modules', patterns: ['*.mjs', '*.js'] }]}
           />
-          <TextInput
+          <PathPickerInput
             label="Evidence Service workspace"
+            description="Select a writable volume with at least 75 GiB free after installation."
             placeholder="E:\uci-arena-evidence"
             value={evidenceWorkspace}
-            onChange={(event) => setEvidenceWorkspace(event.currentTarget.value)}
+            onChange={setEvidenceWorkspace}
+            mode="directory"
           />
           {save.error && <Text c="red">{save.error.message}</Text>}
           <Group justify="flex-end">

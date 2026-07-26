@@ -110,8 +110,19 @@ if(WIN32)
   target_link_libraries(arena-service PRIVATE advapi32)
 endif()
 
-add_executable(arena apps/cli/main.cpp)
-target_link_libraries(arena PRIVATE arena_core CLI11::CLI11 CURL::libcurl)
+add_executable(arena apps/cli/main.cpp apps/cli/ui_picker.cpp)
+target_link_libraries(
+  arena
+  PRIVATE
+    arena_core
+    CLI11::CLI11
+    CURL::libcurl
+    Drogon::Drogon
+    unofficial-sodium::sodium
+)
+if(WIN32)
+  target_link_libraries(arena PRIVATE ole32)
+endif()
 
 add_executable(arena-broker apps/broker/main.cpp)
 target_link_libraries(arena-broker PRIVATE arena_core CLI11::CLI11)

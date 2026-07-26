@@ -101,6 +101,52 @@ TEST_CASE("optional service discovery always exposes manual locator fallback") {
             {{"profile_id", "uci_arena_evidence"}}));
 }
 
+TEST_CASE("service discovery consumes validated arena-setup locators without enabling them") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-service-locator-" + arena::domain::uuid_v7());
+    const fs::path data = root / "data";
+    const fs::path provider = root / "Book Forge";
+    fs::create_directories(data / "locators");
+    fs::create_directories(provider / "app");
+    const fs::path cli = provider / "app" / "book-forge.mjs";
+    std::ofstream(cli) << "fixture";
+    write_json(
+        provider / "arena-component.json",
+        {
+            {"schema", "arena_install_component_v1"},
+            {"component_id", "book_forge.service"},
+            {"entrypoints", {{"cli", "app/book-forge.mjs"}}},
+        });
+    write_json(
+        data / "locators" / "book_forge.json",
+        {
+            {"schema", "arena_saved_locator_v1"},
+            {"schema_version", 1},
+            {"kind", "book_forge"},
+            {"mode", "in_place_reference"},
+            {"path", provider.string()},
+            {"validation", json::object()},
+            {"saved_at", "2026-07-26T00:00:00Z"},
+        });
+
+    const auto discovered =
+        arena::application::ServiceCatalog::discover("book_forge", data);
+    REQUIRE(discovered.at("candidates").size() == 1);
+    const auto& candidate = discovered.at("candidates").at(0);
+    REQUIRE(candidate.at("source") == "saved_locator");
+    REQUIRE(
+        candidate.at("configuration").at("cli_entrypoint") ==
+        fs::absolute(cli).lexically_normal().string());
+    const auto missing =
+        candidate.at("missing").get<std::vector<std::string>>();
+    REQUIRE(
+        std::find(missing.begin(), missing.end(), "workspace") !=
+        missing.end());
+    REQUIRE(candidate.at("complete") == false);
+    fs::remove_all(root);
+}
+
 TEST_CASE("Evidence Service registration validates the built CLI process contract") {
     const auto directory =
         std::filesystem::temp_directory_path() /

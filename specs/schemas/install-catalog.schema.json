@@ -30,10 +30,19 @@
       "additionalProperties": false,
       "required": ["source", "sha256", "size_bytes"],
       "properties": {
+        "type": {"enum": ["archive", "file_set"]},
         "source": {"type": "string", "minLength": 1},
         "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "size_bytes": {"type": "integer", "minimum": 0}
-      }
+        "size_bytes": {"type": "integer", "minimum": 0},
+        "file_count": {"type": "integer", "minimum": 1},
+        "total_size_bytes": {"type": "integer", "minimum": 1}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"type": {"const": "file_set"}}, "required": ["type"]},
+          "then": {"required": ["file_count", "total_size_bytes"]}
+        }
+      ]
     },
     "component": {
       "type": "object",

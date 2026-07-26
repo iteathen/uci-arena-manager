@@ -242,9 +242,307 @@ jobs:
           & $setup @common uninstall --component manager.core --yes
           if ($LASTEXITCODE -ne 0) { throw 'Manager-only uninstall failed' }
 
+  accept-complete:
+    needs: [validate, compose-candidate]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-x86_64
+            executable: arena-setup.exe
+          - os: ubuntu-latest
+            target: linux-x86_64
+            executable: arena-setup
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: suite-candidate-${{ needs.validate.outputs.version }}
+          path: dist/candidate
+      - name: Provision sparse Windows acceptance volume
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $image = Join-Path $env:RUNNER_TEMP 'arena-suite-acceptance.vhdx'
+          $commands = @(
+            "create vdisk file=`"$image`" maximum=98304 type=expandable",
+            "select vdisk file=`"$image`"",
+            'attach vdisk',
+            'create partition primary',
+            'format fs=ntfs quick label=ArenaAcceptance',
+            'assign letter=R'
+          )
+          ($commands -join [Environment]::NewLine) | diskpart.exe
+          if (-not (Test-Path -LiteralPath 'R:\' -PathType Container)) {
+            throw 'Unable to provision the 96 GiB sparse acceptance volume'
+          }
+          "ARENA_ACCEPT_ROOT=R:\suite" >> $env:GITHUB_ENV
+          "ARENA_ACCEPT_IMAGE=$image" >> $env:GITHUB_ENV
+      - name: Provision sparse Linux acceptance volume
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="$RUNNER_TEMP/arena-suite-acceptance.img"
+          mount_point="$RUNNER_TEMP/arena-suite-acceptance-volume"
+          truncate -s 96G "$image"
+          mkfs.ext4 -q -F "$image"
+          mkdir -p "$mount_point"
+          sudo mount -o loop "$image" "$mount_point"
+          sudo chown "$(id -u):$(id -g)" "$mount_point"
+          echo "ARENA_ACCEPT_ROOT=$mount_point/suite" >> "$GITHUB_ENV"
+          echo "ARENA_ACCEPT_MOUNT=$mount_point" >> "$GITHUB_ENV"
+      - name: Exercise Complete Arena and both optional service integrations
+        shell: pwsh
+        run: |
+          $archive = Get-ChildItem dist/candidate/payloads -File `
+            -Filter "*${{ matrix.target }}.tar.gz" |
+            Where-Object { $_.Name -like 'uci-arena-manager-*' } |
+            Select-Object -First 1
+          if ($null -eq $archive) { throw 'Manager component archive is missing' }
+          New-Item -ItemType Directory -Force dist/accept/bootstrap | Out-Null
+          tar -xzf $archive.FullName -C dist/accept/bootstrap
+          $arguments = @{
+            Setup = Join-Path dist/accept/bootstrap 'bin/${{ matrix.executable }}'
+            Catalog = Join-Path $PWD 'dist/candidate/catalog.json'
+            RunRoot = $env:ARENA_ACCEPT_ROOT
+            ResultPath = Join-Path $PWD 'dist/accept/complete-result.json'
+            AllowUnsignedDevelopmentCatalog = $true
+          }
+          if ('${{ runner.os }}' -eq 'Linux') {
+            # Full per-user systemd startup is exercised on the protected VM matrix.
+            $arguments.SkipStartupRegistration = $true
+          }
+          & tests/e2e/windows-complete-suite.ps1 @arguments
+          if ($LASTEXITCODE -ne 0) { throw 'Complete Arena acceptance failed' }
+      - name: Unmount sparse Linux acceptance volume
+        if: always() && runner.os == 'Linux'
+        shell: bash
+        run: |
+          if mountpoint -q "${ARENA_ACCEPT_MOUNT:-/not-mounted}"; then
+            sudo umount "$ARENA_ACCEPT_MOUNT"
+          fi
+      - name: Detach sparse Windows acceptance volume
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if ($env:ARENA_ACCEPT_IMAGE) {
+            $commands = @(
+              "select vdisk file=`"$env:ARENA_ACCEPT_IMAGE`"",
+              'detach vdisk'
+            )
+            ($commands -join [Environment]::NewLine) | diskpart.exe
+          }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: complete-acceptance-${{ matrix.target }}
+          path: dist/accept
+          if-no-files-found: warn
+          retention-days: 30
+
+  accept-external-assets:
+    needs: [validate, compose-candidate]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-x86_64
+            executable: arena-setup.exe
+          - os: ubuntu-latest
+            target: linux-x86_64
+            executable: arena-setup
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: suite-candidate-${{ needs.validate.outputs.version }}
+          path: dist/candidate
+      - name: Exercise bounded imports without downloading tablebase collections
+        shell: pwsh
+        run: |
+          $archive = Get-ChildItem dist/candidate/payloads -File `
+            -Filter "*${{ matrix.target }}.tar.gz" |
+            Where-Object { $_.Name -like 'uci-arena-manager-*' } |
+            Select-Object -First 1
+          if ($null -eq $archive) { throw 'Manager component archive is missing' }
+          New-Item -ItemType Directory -Force `
+            dist/import/bootstrap,dist/import/assets/books,dist/import/assets/syzygy |
+            Out-Null
+          tar -xzf $archive.FullName -C dist/import/bootstrap
+          [IO.File]::WriteAllBytes(
+            (Join-Path $PWD 'dist/import/assets/books/test.bin'),
+            [byte[]](1,2,3,4)
+          )
+          [IO.File]::WriteAllBytes(
+            (Join-Path $PWD 'dist/import/assets/syzygy/KQvK.rtbw'),
+            [byte[]](0x71,0xe8,0x23,0x5d)
+          )
+          New-Item -ItemType File -Force dist/import/lichess-token-reference | Out-Null
+          $setup = Join-Path dist/import/bootstrap 'bin/${{ matrix.executable }}'
+          $common = @(
+            '--install-root', (Join-Path $PWD 'dist/import/install'),
+            '--data-root', (Join-Path $PWD 'dist/import/data'),
+            '--cache-root', (Join-Path $PWD 'dist/import/cache'),
+            '--workspace-root', (Join-Path $PWD 'dist/import/workspace'),
+            '--knowledge-root', (Join-Path $PWD 'dist/import/knowledge'),
+            '--json'
+          )
+          & $setup @common import --kind opening_book `
+            --path (Join-Path $PWD 'dist/import/assets/books')
+          if ($LASTEXITCODE -ne 0) { throw 'Opening-book import failed' }
+          & $setup @common import --kind syzygy `
+            --path (Join-Path $PWD 'dist/import/assets/syzygy')
+          if ($LASTEXITCODE -ne 0) { throw 'Syzygy in-place import failed' }
+          & $setup @common import --kind lichess_token_path `
+            --path (Join-Path $PWD 'dist/import/lichess-token-reference')
+          if ($LASTEXITCODE -ne 0) { throw 'Lichess token-path import failed' }
+          $inventory = & $setup @common inventory | ConvertFrom-Json
+          if ($inventory.discovery.opening_book.selection.source -ne 'saved_locator' -or
+              $inventory.discovery.syzygy.selection.source -ne 'saved_locator' -or
+              $inventory.discovery.lichess_token_path.selection.source -ne 'saved_locator') {
+            throw 'Saved external locators were not selected deterministically'
+          }
+          $catalog = Get-Content -Raw dist/candidate/catalog.json | ConvertFrom-Json
+          foreach ($id in @('syzygy.wdl.3-4-5','syzygy.dtz.3-4-5')) {
+            $component = $catalog.components |
+              Where-Object { $_.id -eq $id } |
+              Select-Object -First 1
+            $artifact = $component.artifacts.any
+            if ($artifact.type -ne 'file_set' -or $artifact.file_count -ne 145 -or
+                $artifact.total_size_bytes -le 0) {
+              throw "Candidate $id does not preserve exact external file-set metadata"
+            }
+          }
+
+  accept-platform-matrix:
+    if: inputs.publish
+    needs: [validate, compose-candidate, accept-complete, accept-external-assets]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: windows-11
+            runs_on: '["self-hosted","ephemeral","uci-suite","windows-11"]'
+            target: windows-x86_64
+            executable: arena-setup.exe
+          - image: windows-server
+            runs_on: '["self-hosted","ephemeral","uci-suite","windows-server"]'
+            target: windows-x86_64
+            executable: arena-setup.exe
+          - image: ubuntu
+            runs_on: '["self-hosted","ephemeral","uci-suite","ubuntu"]'
+            target: linux-x86_64
+            executable: arena-setup
+          - image: debian
+            runs_on: '["self-hosted","ephemeral","uci-suite","debian"]'
+            target: linux-x86_64
+            executable: arena-setup
+          - image: fedora
+            runs_on: '["self-hosted","ephemeral","uci-suite","fedora"]'
+            target: linux-x86_64
+            executable: arena-setup
+          - image: rhel
+            runs_on: '["self-hosted","ephemeral","uci-suite","rhel"]'
+            target: linux-x86_64
+            executable: arena-setup
+    runs-on: ${{ fromJSON(matrix.runs_on) }}
+    environment: candidate-acceptance
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: suite-candidate-${{ needs.validate.outputs.version }}
+          path: dist/candidate
+      - name: Exercise clean platform image with real per-user startup
+        shell: pwsh
+        run: |
+          $archive = Get-ChildItem dist/candidate/payloads -File `
+            -Filter "*${{ matrix.target }}.tar.gz" |
+            Where-Object { $_.Name -like 'uci-arena-manager-*' } |
+            Select-Object -First 1
+          if ($null -eq $archive) { throw 'Manager component archive is missing' }
+          New-Item -ItemType Directory -Force dist/platform/bootstrap | Out-Null
+          tar -xzf $archive.FullName -C dist/platform/bootstrap
+          & tests/e2e/windows-complete-suite.ps1 `
+            -Setup (Join-Path dist/platform/bootstrap 'bin/${{ matrix.executable }}') `
+            -Catalog (Join-Path $PWD 'dist/candidate/catalog.json') `
+            -RunRoot (Join-Path $env:RUNNER_TEMP 'arena-suite-platform') `
+            -ResultPath (Join-Path $PWD 'dist/platform/${{ matrix.image }}.json') `
+            -AllowUnsignedDevelopmentCatalog
+          if ($LASTEXITCODE -ne 0) { throw '${{ matrix.image }} acceptance failed' }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: platform-acceptance-${{ matrix.image }}
+          path: dist/platform
+          if-no-files-found: warn
+          retention-days: 30
+
+  accept-lichess-live:
+    if: inputs.publish
+    needs: [validate, compose-candidate, accept-platform-matrix]
+    runs-on: [self-hosted, ephemeral, uci-suite, lichess-staging]
+    environment: lichess-live-acceptance
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: suite-candidate-${{ needs.validate.outputs.version }}
+          path: dist/candidate
+      - name: Install the exact candidate and complete one protected staging game
+        shell: pwsh
+        run: |
+          $target = if ($IsWindows) { 'windows-x86_64' } else { 'linux-x86_64' }
+          $executable = if ($IsWindows) { 'arena-setup.exe' } else { 'arena-setup' }
+          $archive = Get-ChildItem dist/candidate/payloads -File `
+            -Filter "*$target.tar.gz" |
+            Where-Object { $_.Name -like 'uci-arena-manager-*' } |
+            Select-Object -First 1
+          if ($null -eq $archive) { throw 'Manager component archive is missing' }
+          New-Item -ItemType Directory -Force dist/lichess/bootstrap | Out-Null
+          tar -xzf $archive.FullName -C dist/lichess/bootstrap
+          & tests/e2e/lichess-candidate-acceptance.ps1 `
+            -Setup (Join-Path dist/lichess/bootstrap "bin/$executable") `
+            -Catalog (Join-Path $PWD 'dist/candidate/catalog.json') `
+            -RunRoot (Join-Path $env:RUNNER_TEMP 'arena-lichess-acceptance') `
+            -TokenFile '${{ vars.LICHESS_STAGING_TOKEN_FILE }}' `
+            -ExpectedAccount '${{ vars.LICHESS_STAGING_ACCOUNT }}' `
+            -Opponent '${{ vars.LICHESS_PUBLIC_BOT }}' `
+            -Config '${{ vars.LICHESS_STAGING_CONFIG_PATH }}' `
+            -SingleGameProfile '${{ vars.LICHESS_SINGLE_GAME_PROFILE_PATH }}' `
+            -TimeProfile '${{ vars.LICHESS_TIME_PROFILE_PATH }}' `
+            -CapacityProfile '${{ vars.LICHESS_CAPACITY_PROFILE_PATH }}' `
+            -AllowUnsignedDevelopmentCatalog
+          if ($LASTEXITCODE -ne 0) { throw 'Protected Lichess acceptance failed' }
+
   sign-windows:
     if: inputs.publish
-    needs: [validate, compose-candidate, accept-manager-only]
+    needs:
+      - validate
+      - compose-candidate
+      - accept-manager-only
+      - accept-complete
+      - accept-external-assets
+      - accept-platform-matrix
+      - accept-lichess-live
     runs-on: windows-latest
     environment: production-release
     permissions:
@@ -279,7 +577,14 @@ jobs:
 
   sign-linux-and-metadata:
     if: inputs.publish
-    needs: [validate, compose-candidate, accept-manager-only]
+    needs:
+      - validate
+      - compose-candidate
+      - accept-manager-only
+      - accept-complete
+      - accept-external-assets
+      - accept-platform-matrix
+      - accept-lichess-live
     runs-on: ubuntu-latest
     environment: production-release
     permissions:
@@ -304,9 +609,211 @@ jobs:
           path: dist/signed
           if-no-files-found: error
 
-  publish:
+  assemble-windows-installers:
     if: inputs.publish
     needs: [validate, sign-windows, sign-linux-and-metadata]
+    runs-on: windows-latest
+    environment: production-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: signed-windows-${{ needs.validate.outputs.version }}
+          path: dist/windows-base
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: signed-linux-metadata-${{ needs.validate.outputs.version }}
+          path: dist/linux-signed
+      - name: Prepare exact accepted Windows suite media
+        shell: pwsh
+        run: |
+          $version = '${{ needs.validate.outputs.version }}'
+          $archive = Get-ChildItem dist/windows-base/payloads -File `
+            -Filter '*windows-x86_64.tar.gz' |
+            Where-Object { $_.Name -like 'uci-arena-manager-*' } |
+            Select-Object -First 1
+          $msi = Get-ChildItem dist/windows-base/windows -Recurse -File `
+            -Filter '*.msi' |
+            Select-Object -First 1
+          $rootCandidates = @(
+            Get-ChildItem dist/linux-signed -Recurse -File -Filter root.json |
+            Where-Object {
+              Test-Path (Join-Path $_.Directory.FullName 'targets.json') -PathType Leaf
+            }
+          )
+          if ($null -eq $archive -or $null -eq $msi -or
+              $rootCandidates.Count -ne 1) {
+            throw 'Signed MSI, Manager archive, or unique signed TUF metadata is missing'
+          }
+          New-Item -ItemType Directory -Force `
+            dist/windows-bootstrap,dist/windows-media/bin,dist/windows-media/release/tuf,dist/windows-installers |
+            Out-Null
+          tar -xzf $archive.FullName -C dist/windows-bootstrap
+          Copy-Item dist/windows-bootstrap/bin/arena-setup.exe `
+            dist/windows-media/bin/arena-setup.exe
+          Copy-Item dist/windows-base/catalog.json dist/windows-media/release/catalog.json
+          Copy-Item dist/windows-base/payloads dist/windows-media/release/payloads -Recurse
+          Copy-Item (Join-Path $rootCandidates[0].Directory.FullName '*') `
+            dist/windows-media/release/tuf -Recurse
+          Copy-Item $msi.FullName `
+            "dist/windows-installers/UCI-Arena-Manager-$version-windows-x64.msi"
+          node tools/release/build-windows-bundle.mjs `
+            --media-root dist/windows-media `
+            --output dist/windows-installers/SuiteMediaPayloads.wxs
+      - name: Build online and offline WiX bundles
+        shell: pwsh
+        run: |
+          $version = '${{ needs.validate.outputs.version }}'
+          dotnet tool install --global wix --version 7.0.0
+          wix extension add -g WixToolset.Bal.wixext/7.0.0
+          $media = (Resolve-Path dist/windows-media).Path
+          $setup = Join-Path $media 'bin/arena-setup.exe'
+          $msi = (Resolve-Path `
+            "dist/windows-installers/UCI-Arena-Manager-$version-windows-x64.msi").Path
+          $common = '--catalog release\catalog.json --metadata-dir release\tuf'
+          wix build `
+            -ext WixToolset.Bal.wixext `
+            "-d ProductVersion=$version" `
+            '-d ProductName=UCI Arena Suite Setup (Online)' `
+            "-d SuiteSetup=$setup" `
+            "-d ManagerMsi=$msi" `
+            "-d SetupArguments=$common apply --preset complete_arena --yes" `
+            -out "dist/windows-installers/UCI-Arena-Setup-$version-windows-x64-online.exe" `
+            packaging/windows/Bundle.wxs `
+            dist/windows-installers/SuiteMediaPayloads.wxs
+          wix build `
+            -ext WixToolset.Bal.wixext `
+            "-d ProductVersion=$version" `
+            '-d ProductName=UCI Arena Suite Setup (Offline)' `
+            "-d SuiteSetup=$setup" `
+            "-d ManagerMsi=$msi" `
+            "-d SetupArguments=$common apply --preset complete_arena --offline --yes" `
+            -out "dist/windows-installers/UCI-Arena-Setup-$version-windows-x64-offline.exe" `
+            packaging/windows/Bundle.wxs `
+            dist/windows-installers/SuiteMediaPayloads.wxs
+          Remove-Item dist/windows-installers/SuiteMediaPayloads.wxs
+      - uses: azure/login@eec3c95657c1536435858eda1f3ff5437fee8474
+        with:
+          client-id: ${{ vars.AZURE_SIGNING_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_SIGNING_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SIGNING_SUBSCRIPTION_ID }}
+      - uses: azure/trusted-signing-action@fc390cf8ed0f14e248a542af1d838388a47c7a7c
+        with:
+          endpoint: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_TRUSTED_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\dist\windows-installers
+          files-folder-filter: exe,msi
+          files-folder-recurse: false
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-windows-${{ needs.validate.outputs.version }}
+          path: dist/windows-installers
+          if-no-files-found: error
+
+  assemble-linux-installers:
+    if: inputs.publish
+    needs: [validate, compose-candidate, sign-linux-and-metadata]
+    runs-on: ubuntu-latest
+    environment: production-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: suite-candidate-${{ needs.validate.outputs.version }}
+          path: dist/candidate
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: signed-linux-metadata-${{ needs.validate.outputs.version }}
+          path: dist/linux-signed
+      - name: Prepare exact accepted Linux suite media
+        shell: pwsh
+        run: |
+          $version = '${{ needs.validate.outputs.version }}'
+          $archive = Get-ChildItem dist/candidate/payloads -File `
+            -Filter '*linux-x86_64.tar.gz' |
+            Where-Object { $_.Name -like 'uci-arena-manager-*' } |
+            Select-Object -First 1
+          $rootCandidates = @(
+            Get-ChildItem dist/linux-signed -Recurse -File -Filter root.json |
+            Where-Object {
+              Test-Path (Join-Path $_.Directory.FullName 'targets.json') -PathType Leaf
+            }
+          )
+          if ($null -eq $archive -or $rootCandidates.Count -ne 1) {
+            throw 'Manager archive or unique signed TUF metadata is missing'
+          }
+          New-Item -ItemType Directory -Force `
+            dist/linux-bootstrap,dist/linux-media/bin,dist/linux-media/release/tuf,dist/linux-installers |
+            Out-Null
+          tar -xzf $archive.FullName -C dist/linux-bootstrap
+          Copy-Item dist/linux-bootstrap/bin/arena-setup `
+            dist/linux-media/bin/arena-setup
+          Copy-Item dist/candidate/catalog.json dist/linux-media/release/catalog.json
+          Copy-Item dist/candidate/payloads dist/linux-media/release/payloads -Recurse
+          Copy-Item (Join-Path $rootCandidates[0].Directory.FullName '*') `
+            dist/linux-media/release/tuf -Recurse
+          Get-ChildItem dist/linux-signed,dist/candidate/linux -Recurse -File |
+            Where-Object { $_.Extension -in @('.deb','.rpm') } |
+            ForEach-Object {
+              Copy-Item $_.FullName dist/linux-installers -Force
+            }
+      - name: Build reproducible online and offline portable installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          version='${{ needs.validate.outputs.version }}'
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          export SOURCE_DATE_EPOCH
+          chmod 0755 dist/linux-media/bin/arena-setup
+          packaging/linux/build-portable-installer.sh \
+            dist/linux-media \
+            packaging/linux/portable-installer-online-header.sh \
+            "dist/linux-installers/uci-arena-setup-${version}-linux-x86_64-online.run"
+          packaging/linux/build-portable-installer.sh \
+            dist/linux-media \
+            packaging/linux/portable-installer-header.sh \
+            "dist/linux-installers/uci-arena-setup-${version}-linux-x86_64-offline.run"
+      - name: Request detached portable and Linux package signatures
+        env:
+          RELEASE_SIGNING_ENDPOINT: ${{ vars.RELEASE_SIGNING_ENDPOINT }}
+          RELEASE_SIGNING_AUDIENCE: ${{ vars.RELEASE_SIGNING_AUDIENCE }}
+        run: >
+          node tools/release/request-remote-signatures.mjs
+          dist/linux-installers
+          dist/linux-installer-signatures
+      - name: Stage stable channel bytes and signatures
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/linux-release | Out-Null
+          Copy-Item dist/linux-installers/* dist/linux-release -Recurse
+          Copy-Item dist/linux-installer-signatures `
+            dist/linux-release/signatures -Recurse
+          Copy-Item dist/linux-media/release/catalog.json dist/linux-release/catalog.json
+          Copy-Item dist/linux-media/release/tuf dist/linux-release/tuf -Recurse
+          Copy-Item dist/linux-media/release/payloads dist/linux-release/payloads -Recurse
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-linux-${{ needs.validate.outputs.version }}
+          path: dist/linux-release
+          if-no-files-found: error
+
+  publish:
+    if: inputs.publish
+    needs: [validate, assemble-windows-installers, assemble-linux-installers]
     runs-on: ubuntu-latest
     environment: production-release
     permissions:
@@ -316,7 +823,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          pattern: signed-*
+          pattern: release-*
           path: dist/release
           merge-multiple: true
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
@@ -327,7 +834,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="suite-v${{ needs.validate.outputs.version }}"
-          gh release create "$tag" dist/release/**/* \
+          mapfile -d '' artifacts < <(find dist/release -type f -print0)
+          test "${#artifacts[@]}" -gt 0
+          gh release create "$tag" "${artifacts[@]}" \
             --repo "${{ github.repository }}" \
             --title "UCI Arena Suite ${{ needs.validate.outputs.version }}" \
             --notes "Built only from release/catalog.lock.json and protected provider attestations."

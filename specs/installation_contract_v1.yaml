@@ -34,7 +34,7 @@ interfaces:
 
 setup:
   executable: arena-setup
-  operations: [inventory, plan, apply, verify, repair, upgrade, uninstall]
+  operations: [inventory, import, plan, apply, verify, repair, upgrade, uninstall]
   presets: [complete_arena, manager_only, custom]
   machine_output: json
   linux_noninteractive: [yes, offline]
@@ -57,6 +57,28 @@ packaging:
     - uci-arena-manager-<version>-1.x86_64.rpm
     - uci-arena-setup-<version>-linux-x86_64-online.run
     - uci-arena-setup-<version>-linux-x86_64-offline.run
+  suite_media:
+    source: accepted_immutable_candidate_plus_signed_tuf_metadata
+    windows_chain: arena_setup_complete_then_manager_msi_service_registration
+    online_behavior: >
+      Carries the accepted core component digest set and permits explicit
+      network acquisition of selected external file sets.
+    offline_behavior: >
+      Carries the same accepted core component digest set and forces
+      arena-setup offline mode; credentials and external Syzygy bytes remain
+      excluded.
+    retained_channel:
+      location: manager_data_root/release
+      contents: [signed_catalog, signed_tuf_metadata, current_platform_payloads]
+      activation: verified_staging_then_atomic_rename
+      purpose: >
+        Keep repair, upgrade, and the dashboard's explicit download/import
+        guidance functional after self-extracting installer media is removed.
+      rules:
+        - Persist only current-platform or portable catalog artifacts.
+        - Verify every retained local artifact by its catalog size and SHA-256.
+        - Prefer content-cache hard links and copy only when a hard link is not possible.
+        - Never retain credentials or external Syzygy collection bytes.
 
 components:
   required:
@@ -88,6 +110,7 @@ knowledge_assets:
     endgame_tables: --download-missing-tablebases
   opening_book:
     default_component: opening_book.standard
+    runtime_dependencies: []
     required_files:
       - strong_rare_v1.bin
       - strong_rare_v1.ffstats
@@ -103,9 +126,28 @@ knowledge_assets:
     import_existing: true
     artifact_size_and_digest_source: signed_catalog_only
     whole_collection_guessing: forbidden
+    catalog_transport:
+      artifact_type: file_set
+      manifest_schema: arena_syzygy_file_set_manifest_v1
+      portable_target_triple: any-any
+      manifest_payload: exact_relative_path_url_size_and_sha256_per_file
+      activation: verified_files_then_atomic_directory_pointer
+      offline_media_inclusion: false
+      rules:
+        - The provider candidate contains only the exact signed manifest and
+          validation evidence, never the tablebase collection bytes.
+        - Planning uses total_size_bytes and file_count committed by the signed
+          suite catalog; apply rejects a manifest whose totals differ.
+        - Every file is resumably acquired into the content-addressed cache and
+          verified before staging. Partial collections never become active.
+        - The manifest and catalog may reference only HTTPS or suite-local
+          fixture sources; redirects cannot weaken transport or digest checks.
   rules:
     - The engine remains network-free and consumes local immutable assets only.
     - Missing assets are visible and actionable, never silently substituted.
+    - Downloading the signed opening-book snapshot never installs or requires
+      the Book Forge producer, its private Node runtime, or its 75 GiB
+      operational workspace.
     - A user may select download, import an existing directory, or continue in degraded mode.
     - Inventory reports an activated knowledge asset as installed_managed only
       when an installed-managed receipt owns activation files that still exist
@@ -117,8 +159,25 @@ knowledge_assets:
       an activation source.
 
 discovery:
+  interface: arena_setup_discovery_v1
+  locator_interface: arena_saved_locator_v1
+  kinds:
+    - opening_book
+    - syzygy
+    - uci_engine
+    - book_forge
+    - evidence_service
+    - lichess_token_path
+    - restaurant
+  precedence:
+    - install_receipt
+    - saved_locator
+    - provider_manifest
+    - discovered
+    - unresolved
   bounded_sources:
     - install_receipts
+    - saved_locators
     - package_databases
     - windows_registry
     - windows_services
@@ -129,8 +188,39 @@ discovery:
     - provider_manifests
     - user_selected_roots
   whole_disk_recursive_scan: forbidden
+  symbolic_link_traversal: forbidden
   registration_after_detection: explicit_only
   engine_probe: [process_launch, uciok, readyok, typed_options, legal_startpos_bestmove]
+  browse_contract:
+    returned_per_kind: [selection, filters, hints, managed_copy_allowed]
+    paths_are_non_secret: true
+
+local_import:
+  interface: arena_setup_import_result_v1
+  command: arena-setup import --kind KIND --path PATH --json
+  default_mode: in_place_reference
+  saved_location: manager_data_root/locators
+  managed_copy:
+    allowed_kinds: [opening_book]
+    maximum_bytes: 268435456
+    maximum_files: 64
+    staging: immutable_then_atomic_activation
+    receipt: arena_install_receipt_v1
+  validation:
+    opening_book: regular_file_or_flat_directory
+    syzygy: directory_with_rtbw_or_rtbz
+    uci_engine: full_uci_startup_interrogation
+    book_forge: provider_root_or_regular_cli_entrypoint
+    evidence_service: provider_root_or_regular_cli_entrypoint
+    lichess_token_path: path_reference_only_never_read
+    restaurant: detect_only_import_forbidden
+  rules:
+    - Import never scans outside the supplied path and its explicitly allowed flat entries.
+    - In-place imports save only normalized locators and never copy provider-owned data.
+    - Syzygy tablebases are always referenced in place.
+    - Managed-copy opening books reject symbolic links, nested directories, and payloads larger than the declared maximum.
+    - Lichess token contents are never opened, hashed, copied, logged, returned, or placed in argv.
+    - Restaurant remains visible as detect-only and is never registered, copied, installed, started, or controlled.
 
 capacity:
   per_volume:
@@ -190,3 +280,33 @@ acceptance:
   - Manager validates and projects Book Forge snapshot identities and Evidence Service dataset identities through their public CLIs.
   - Offline installation uses the same verified component bytes as stable online installation.
   - Interrupted apply, repair, upgrade, and uninstall preserve a recoverable transaction state.
+
+release_gate_order:
+  - provider_attestations
+  - reviewed_release_lock
+  - immutable_suite_candidate
+  - manager_only_clean_windows_and_linux
+  - complete_clean_windows_and_linux
+  - external_discovery_and_in_place_import
+  - bounded_syzygy_manifest_range_and_real_fixture
+  - protected_lichess_live_acceptance
+  - release_steward_approval
+  - remote_signing
+  - exact_digest_publication
+release_gate_rules:
+  - Complete Arena acceptance excludes Lichess credentials and Syzygy bytes;
+    those are separate opt-in gates over the same immutable candidate.
+  - Production signing jobs require every preceding applicable gate and cannot
+    turn an inconclusive optional-service result into a pass.
+  - Clean-VM coverage includes Windows 11, Windows Server, Ubuntu, Debian,
+    Fedora, and a RHEL-family image on protected ephemeral runners.
+  - The Lichess gate uses one staging BOT identity, a BOT-titled public online
+    opponent, casual standard chess, no more than three challenges in twenty
+    minutes, and exactly one required completed game.
+  - The Syzygy gate verifies signed full manifests without downloading the full
+    collection, exercises range downloads against tiny local fixtures, and
+    probes either a pinned real three-man test fixture or an explicitly supplied
+    SYZYGY_TEST_ROOT in place without copying it.
+  - Every accepted Syzygy provider result records a successful one-byte range
+    probe for every exact manifest member; the Manager rejects missing,
+    incomplete, or larger-transfer range evidence.

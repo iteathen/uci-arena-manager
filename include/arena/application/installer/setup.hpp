@@ -26,9 +26,21 @@ class SetupEngine final {
         bool allow_unsigned_development_catalog = false,
         const std::filesystem::path& rollback_state_path = {});
 
+    [[nodiscard]] static nlohmann::json persist_release_media(
+        const nlohmann::json& catalog,
+        const SetupPaths& paths,
+        const std::filesystem::path& catalog_path,
+        const std::filesystem::path& metadata_directory = {});
+
     [[nodiscard]] static nlohmann::json inventory(
         const SetupPaths& paths,
         const std::vector<std::filesystem::path>& extra_roots = {});
+
+    [[nodiscard]] static nlohmann::json import_path(
+        const SetupPaths& paths,
+        const std::string& kind,
+        const std::filesystem::path& path,
+        bool managed_copy = false);
 
     [[nodiscard]] static nlohmann::json plan(
         const nlohmann::json& catalog,

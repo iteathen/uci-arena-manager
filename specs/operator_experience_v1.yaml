@@ -55,6 +55,39 @@ managed_service_experience:
     - Explain unavailable actions without presenting them as failures.
     - Do not show an unconfigured optional service as an unhealthy manager resource.
 
+local_path_picker:
+  owner: arena_ui_session_helper
+  transport: token_scoped_loopback_http
+  lifetime: foreground_arena_ui_process
+  requirements:
+    - The Manager service never opens a desktop dialog or impersonates the interactive user.
+    - `arena ui` starts the picker only on loopback and puts an unguessable
+      per-process bearer token in browser session storage during pairing.
+    - Picker requests declare file or directory mode plus display-only hints
+      and extension filters; they never supply a command, executable, or shell string.
+    - Windows uses the native common item dialog in the logged-in session.
+    - Linux uses an installed desktop portal-compatible picker helper and
+      returns actionable manual-entry guidance when no helper is available.
+    - A selected path is returned to the dashboard but is not registered,
+      enabled, copied, hashed, or opened until the operator explicitly submits
+      the owning validation or import action.
+    - Closing `arena ui` removes picker authority without invalidating the
+      already-paired Manager dashboard session.
+
+knowledge_asset_setup:
+  location: configuration
+  requirements:
+    - Offer browse-assisted opening-book, Syzygy directory, and Lichess
+      token-file-reference selection with format-specific hints and filters.
+    - Offer copyable arena-setup commands for importing the selected existing
+      paths and for downloading the exact signed missing-book or bounded
+      tablebase components.
+    - The dashboard and Manager service never execute arena-setup or acquire
+      package-execution authority; the foreground operator reviews and invokes
+      the command explicitly.
+    - Lichess token contents are never read, previewed, copied, or placed in
+      the generated command; only the selected path is present.
+
 local_development_launcher:
   entrypoint: run-local.cmd
   requirements:

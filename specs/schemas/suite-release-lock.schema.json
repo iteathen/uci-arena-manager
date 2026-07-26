@@ -43,13 +43,15 @@
           "pattern": "^[A-Za-z0-9._-]+$"
         },
         "target_triple": {
-          "enum": ["windows-x86_64", "linux-x86_64", "any"]
+          "enum": ["windows-x86_64", "linux-x86_64", "any", "any-any"]
         },
         "artifact_name": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9._-]+\\.tar\\.gz$"
+          "pattern": "^[A-Za-z0-9._-]+(?:\\.tar\\.gz|\\.file-set\\.json)$"
         },
         "artifact_sha256": {"$ref": "#/$defs/digest"},
+        "artifact_type": {"enum": ["archive", "file_set"]},
+        "file_count": {"type": "integer", "minimum": 1},
         "installed_bytes": {"type": "integer", "minimum": 0},
         "staging_bytes": {"type": "integer", "minimum": 0},
         "backup_bytes": {"type": "integer", "minimum": 0},
@@ -87,6 +89,8 @@
             "target_triple": true,
             "artifact_name": true,
             "artifact_sha256": true,
+            "artifact_type": true,
+            "file_count": true,
             "installed_bytes": true,
             "staging_bytes": true,
             "backup_bytes": true,
@@ -134,6 +138,8 @@
             "target_triple": true,
             "artifact_name": true,
             "artifact_sha256": true,
+            "artifact_type": true,
+            "file_count": true,
             "installed_bytes": true,
             "staging_bytes": true,
             "backup_bytes": true,

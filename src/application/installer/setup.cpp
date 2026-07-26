@@ -1,5 +1,7 @@
 #include "arena/application/installer/setup.hpp"
 
+#include "arena/adapters/uci_process.hpp"
+
 #include <archive.h>
 #include <archive_entry.h>
 #include <curl/curl.h>
@@ -13,12 +15,15 @@
 #include <ctime>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <system_error>
+#include <tuple>
 
 #ifndef _WIN32
 #include <sys/stat.h>
@@ -31,6 +36,8 @@ using nlohmann::json;
 namespace fs = std::filesystem;
 
 constexpr std::uint64_t gib = 1024ULL * 1024ULL * 1024ULL;
+constexpr std::uint64_t managed_book_max_bytes = 256ULL * 1024ULL * 1024ULL;
+constexpr std::size_t managed_book_max_files = 64;
 constexpr const char* compiled_tuf_root_sha256 = ARENA_TUF_ROOT_SHA256;
 
 json read_json(const fs::path& path) {
@@ -97,6 +104,20 @@ std::string sha256_file(const fs::path& path) {
     return encoded.data();
 }
 
+std::string sha256_text(const std::string& value) {
+    if (sodium_init() < 0) {
+        throw std::runtime_error("libsodium initialization failed");
+    }
+    std::array<unsigned char, crypto_hash_sha256_BYTES> digest{};
+    crypto_hash_sha256(
+        digest.data(),
+        reinterpret_cast<const unsigned char*>(value.data()),
+        static_cast<unsigned long long>(value.size()));
+    std::array<char, crypto_hash_sha256_BYTES * 2 + 1> encoded{};
+    sodium_bin2hex(encoded.data(), encoded.size(), digest.data(), digest.size());
+    return encoded.data();
+}
+
 bool valid_identifier(const std::string& value) {
     return !value.empty() &&
            std::all_of(value.begin(), value.end(), [](const unsigned char character) {
@@ -107,6 +128,31 @@ bool valid_identifier(const std::string& value) {
 
 fs::path normalized_absolute(const fs::path& value) {
     return fs::absolute(value).lexically_normal();
+}
+
+bool contains_symbolic_link(const fs::path& value) {
+    const fs::path absolute = normalized_absolute(value);
+    fs::path current = absolute.root_path();
+    std::error_code error;
+    for (const auto& part : absolute.relative_path()) {
+        current /= part;
+        const fs::file_status status = fs::symlink_status(current, error);
+        if (error) {
+            error.clear();
+            continue;
+        }
+        if (fs::is_symlink(status)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void require_no_symbolic_link(const fs::path& value) {
+    if (contains_symbolic_link(value)) {
+        throw std::runtime_error(
+            "symbolic-link traversal is forbidden: " + value.string());
+    }
 }
 
 fs::path nearest_existing_ancestor(fs::path path) {
@@ -434,19 +480,41 @@ fs::path acquire_artifact(
         throw std::runtime_error("artifact SHA-256 is malformed");
     }
     const fs::path cached = paths.cache_root / expected_hash;
-    if (fs::is_regular_file(cached) && sha256_file(cached) == expected_hash) {
-        return cached;
+    if (fs::is_regular_file(cached)) {
+        if (sha256_file(cached) == expected_hash) {
+            return cached;
+        }
+        std::error_code remove_error;
+        fs::remove(cached, remove_error);
+        if (remove_error) {
+            throw std::runtime_error("cannot replace corrupt cached artifact");
+        }
     }
 
     const std::string source = artifact.at("source").get<std::string>();
     const fs::path temporary = cached.string() + ".partial";
     std::error_code ignored;
-    fs::remove(temporary, ignored);
     if (source.starts_with("https://")) {
         if (offline) {
             throw std::runtime_error("offline mode cannot download " + source);
         }
-        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        const std::uintmax_t partial_size =
+            fs::is_regular_file(temporary) ? fs::file_size(temporary) : 0;
+        const auto expected_size = integer_field(artifact, "size_bytes");
+        if (expected_size != 0 && partial_size > expected_size) {
+            fs::remove(temporary, ignored);
+        }
+        const std::uintmax_t resume_from =
+            fs::is_regular_file(temporary) ? fs::file_size(temporary) : 0;
+        if (expected_size != 0 && resume_from == expected_size &&
+            sha256_file(temporary) == expected_hash) {
+            fs::rename(temporary, cached);
+            return cached;
+        }
+        std::ofstream output(
+            temporary,
+            std::ios::binary |
+                (resume_from > 0 ? std::ios::app : std::ios::trunc));
         CURL* handle = curl_easy_init();
         if (handle == nullptr) {
             throw std::runtime_error("cannot initialize artifact download");
@@ -457,17 +525,23 @@ fs::path acquire_artifact(
         curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 10000L);
         curl_easy_setopt(handle, CURLOPT_TIMEOUT, 0L);
         curl_easy_setopt(handle, CURLOPT_FAILONERROR, 1L);
+        if (resume_from > 0) {
+            curl_easy_setopt(
+                handle,
+                CURLOPT_RESUME_FROM_LARGE,
+                static_cast<curl_off_t>(resume_from));
+        }
         curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, curl_write);
         curl_easy_setopt(handle, CURLOPT_WRITEDATA, &output);
         const CURLcode result = curl_easy_perform(handle);
         curl_easy_cleanup(handle);
         output.close();
         if (result != CURLE_OK) {
-            fs::remove(temporary, ignored);
             throw std::runtime_error(
                 "artifact download failed: " + std::string(curl_easy_strerror(result)));
         }
     } else {
+        fs::remove(temporary, ignored);
         fs::path source_path = fs::path(source);
         if (source_path.is_relative()) {
             source_path = catalog_directory / source_path;
@@ -488,6 +562,126 @@ fs::path acquire_artifact(
     }
     fs::rename(temporary, cached);
     return cached;
+}
+
+json stage_file_set(
+    const fs::path& manifest_path,
+    const json& catalog_artifact,
+    const fs::path& catalog_directory,
+    const SetupPaths& paths,
+    const bool offline,
+    const fs::path& stage,
+    const std::string& component_id,
+    const std::string& component_version) {
+    const json file_set = read_json(manifest_path);
+    const bool provider_syzygy =
+        file_set.value("schema", "") ==
+        "arena_syzygy_file_set_manifest_v1";
+    const bool generic_file_set =
+        file_set.value("schema", "") == "arena_install_file_set_v1";
+    if ((!provider_syzygy && !generic_file_set) ||
+        file_set.value("schema_version", 0) != 1 ||
+        file_set.value("component_id", "") != component_id ||
+        file_set.value("component_version", "") != component_version ||
+        !file_set.contains("files") || !file_set.at("files").is_array()) {
+        throw std::runtime_error("file-set manifest identity is invalid");
+    }
+    const auto expected_count = integer_field(catalog_artifact, "file_count");
+    const auto expected_total =
+        integer_field(catalog_artifact, "total_size_bytes");
+    if (expected_count == 0 || file_set.at("files").size() != expected_count) {
+        throw std::runtime_error("file-set manifest count differs from signed catalog");
+    }
+
+    std::uint64_t total = 0;
+    std::set<fs::path> paths_seen;
+    json installed_files = json::array();
+    fs::create_directories(stage);
+    for (const auto& file : file_set.at("files")) {
+        const fs::path declared =
+            fs::path(file.at("path").get<std::string>()).lexically_normal();
+        const fs::path relative =
+            provider_syzygy ? fs::path("tablebases") / declared : declared;
+        if (!safe_relative_path(relative) ||
+            !paths_seen.insert(relative).second ||
+            !within(stage, stage / relative)) {
+            throw std::runtime_error("file-set manifest contains an unsafe or duplicate path");
+        }
+        if (component_id.rfind("syzygy.", 0) == 0) {
+            const auto generic = relative.generic_string();
+            const auto extension = relative.extension().string();
+            if (!generic.starts_with("tablebases/") ||
+                (extension != ".rtbw" && extension != ".rtbz")) {
+                throw std::runtime_error(
+                    "Syzygy file-set entries must be tablebases/*.rtbw or *.rtbz");
+            }
+        }
+        const auto size = integer_field(file, "size_bytes");
+        if (size == 0 ||
+            total > (std::numeric_limits<std::uint64_t>::max)() - size) {
+            throw std::runtime_error("file-set manifest has invalid total size");
+        }
+        total += size;
+        fs::path cached;
+        if (provider_syzygy) {
+            if (!file.contains("sources") || !file.at("sources").is_array() ||
+                file.at("sources").empty()) {
+                throw std::runtime_error(
+                    "Syzygy file-set entry has no acquisition source");
+            }
+            std::string last_error;
+            for (const auto& source : file.at("sources")) {
+                try {
+                    cached = acquire_artifact(
+                        {{"source", source},
+                         {"sha256", file.at("sha256")},
+                         {"size_bytes", size}},
+                        catalog_directory,
+                        paths,
+                        offline);
+                    break;
+                } catch (const std::exception& error) {
+                    last_error = error.what();
+                }
+            }
+            if (cached.empty()) {
+                throw std::runtime_error(
+                    "all Syzygy acquisition sources failed for " +
+                    declared.generic_string() + ": " + last_error);
+            }
+        } else {
+            cached = acquire_artifact(
+                file, catalog_directory, paths, offline);
+        }
+        fs::create_directories((stage / relative).parent_path());
+        fs::copy_file(
+            cached,
+            stage / relative,
+            fs::copy_options::overwrite_existing);
+        installed_files.push_back(
+            {{"path", relative.generic_string()},
+             {"sha256", file.at("sha256")},
+             {"size_bytes", size}});
+    }
+    if (total != expected_total ||
+        file_set.value("total_size_bytes", std::uint64_t{0}) != expected_total) {
+        throw std::runtime_error("file-set manifest bytes differ from signed catalog");
+    }
+
+    const json component_manifest{
+        {"schema", "arena_install_component_v1"},
+        {"schema_version", 1},
+        {"component_id", component_id},
+        {"component_version", component_version},
+        {"target_triple", "any"},
+        {"entrypoints", json::object()},
+        {"capabilities", json::array({"syzygy"})},
+        {"startup", json::object()},
+        {"data_paths", json::array()},
+        {"files", installed_files},
+    };
+    write_json_atomic(stage / "arena-component.json", component_manifest);
+    return component_manifest;
 }
 
 void extract_archive(const fs::path& archive_path, const fs::path& destination) {
@@ -753,11 +947,12 @@ std::vector<std::string> selected_ids(
 json receipt_rows(const SetupPaths& paths) {
     json rows = json::array();
     const fs::path directory = paths.data_root / "receipts";
-    if (!fs::is_directory(directory)) {
+    if (!fs::is_directory(directory) || contains_symbolic_link(directory)) {
         return rows;
     }
     for (const auto& entry : fs::directory_iterator(directory)) {
-        if (entry.is_regular_file() && entry.path().extension() == ".json") {
+        if (entry.is_regular_file() && !entry.is_symlink() &&
+            entry.path().extension() == ".json") {
             try {
                 rows.push_back(read_json(entry.path()));
             } catch (const std::exception& error) {
@@ -770,6 +965,787 @@ json receipt_rows(const SetupPaths& paths) {
         }
     }
     return rows;
+}
+
+const std::array<std::string_view, 7> discovery_kinds{
+    "opening_book",
+    "syzygy",
+    "uci_engine",
+    "book_forge",
+    "evidence_service",
+    "lichess_token_path",
+    "restaurant",
+};
+
+bool valid_discovery_kind(const std::string_view kind) {
+    return std::find(discovery_kinds.begin(), discovery_kinds.end(), kind) !=
+           discovery_kinds.end();
+}
+
+json browse_contract(const std::string_view kind) {
+    json result{
+        {"selection", "file"},
+        {"filters", json::array()},
+        {"hints", json::array()},
+        {"managed_copy_allowed", false},
+    };
+    if (kind == "opening_book") {
+        result["selection"] = "file_or_directory";
+        result["filters"].push_back(
+            {{"label", "Opening books"}, {"patterns", {"*.bin", "*.book"}}});
+        result["hints"] = {
+            "Select a book file or a flat directory containing its sidecars.",
+            "Reference in place is the default; managed copy is limited to 256 MiB.",
+        };
+        result["managed_copy_allowed"] = true;
+    } else if (kind == "syzygy") {
+        result["selection"] = "directory";
+        result["filters"].push_back(
+            {{"label", "Syzygy tablebases"}, {"patterns", {"*.rtbw", "*.rtbz"}}});
+        result["hints"] = {
+            "Select the directory containing the tablebase files.",
+            "Tablebases are always referenced in place.",
+        };
+    } else if (kind == "uci_engine") {
+#ifdef _WIN32
+        result["filters"].push_back(
+            {{"label", "UCI engine executables"}, {"patterns", {"*.exe"}}});
+#else
+        result["filters"].push_back(
+            {{"label", "UCI engine executables"}, {"patterns", {"*"}}});
+#endif
+        result["hints"] = {
+            "Any executable is accepted only after a complete bounded UCI probe.",
+        };
+    } else if (kind == "book_forge") {
+        result["selection"] = "file_or_directory";
+        result["filters"].push_back(
+            {{"label", "Book Forge provider"}, {"patterns", {"arena-component.json", "*.mjs"}}});
+        result["hints"] = {
+            "Select a provider root containing arena-component.json or its CLI entrypoint.",
+        };
+    } else if (kind == "evidence_service") {
+        result["selection"] = "file_or_directory";
+        result["filters"].push_back(
+            {{"label", "Evidence Service provider"}, {"patterns", {"arena-component.json", "*.mjs"}}});
+        result["hints"] = {
+            "Select a provider root containing arena-component.json or its CLI entrypoint.",
+        };
+    } else if (kind == "lichess_token_path") {
+        result["filters"].push_back(
+            {{"label", "Token reference files"}, {"patterns", {"*.txt", "*.token", "*"}}});
+        result["hints"] = {
+            "Only the path is saved; token contents are never opened, copied, hashed, logged, or returned.",
+        };
+    } else if (kind == "restaurant") {
+        result["selection"] = "directory";
+        result["hints"] = {
+            "Restaurant is detect-only and cannot be imported, installed, or controlled.",
+        };
+    }
+    return result;
+}
+
+std::optional<std::string> discovery_kind_for_component(
+    const std::string& component_id) {
+    if (component_id.rfind("opening_book.", 0) == 0) {
+        return "opening_book";
+    }
+    if (component_id.rfind("syzygy.", 0) == 0) {
+        return "syzygy";
+    }
+    if (component_id == "book_forge.service") {
+        return "book_forge";
+    }
+    if (component_id == "uci_arena_evidence.service") {
+        return "evidence_service";
+    }
+    if (component_id == "restaurant.training_system") {
+        return "restaurant";
+    }
+    if (component_id == "uci_arena.engine" ||
+        component_id == "stockfish.engine" ||
+        component_id == "lc0.engine" ||
+        component_id.ends_with(".uci_engine")) {
+        return "uci_engine";
+    }
+    return std::nullopt;
+}
+
+fs::path receipt_locator(const json& receipt) {
+    if (receipt.contains("locator_path") &&
+        receipt.at("locator_path").is_string()) {
+        return receipt.at("locator_path").get<std::string>();
+    }
+    if (receipt.contains("active_root") &&
+        receipt.at("active_root").is_string()) {
+        return receipt.at("active_root").get<std::string>();
+    }
+    if (receipt.contains("activated_files") &&
+        receipt.at("activated_files").is_array() &&
+        !receipt.at("activated_files").empty() &&
+        receipt.at("activated_files").at(0).contains("path")) {
+        return fs::path(
+                   receipt.at("activated_files").at(0).at("path")
+                       .get<std::string>())
+            .parent_path();
+    }
+    return {};
+}
+
+void append_discovery_candidate(
+    json& rows,
+    std::map<std::string, std::set<std::string>>& seen,
+    const std::string& kind,
+    const std::string& source,
+    const fs::path& path,
+    const std::string& state,
+    const json& details = json::object()) {
+    if (!valid_discovery_kind(kind) || path.empty()) {
+        return;
+    }
+    const std::string normalized = normalized_absolute(path).string();
+    const std::string key = source + "\n" + normalized;
+    if (!seen[kind].insert(key).second) {
+        return;
+    }
+    json candidate{
+        {"source", source},
+        {"state", state},
+        {"path", normalized},
+    };
+    if (!details.empty()) {
+        candidate["details"] = details;
+    }
+    rows.at(kind).at("candidates").push_back(candidate);
+    if (rows.at(kind).at("selection").is_null()) {
+        rows.at(kind)["selection"] = std::move(candidate);
+    }
+}
+
+void inspect_provider_root(
+    json& rows,
+    std::map<std::string, std::set<std::string>>& seen,
+    const fs::path& root) {
+    if (!fs::is_directory(root) || contains_symbolic_link(root)) {
+        return;
+    }
+    const fs::path manifest_path = root / "arena-component.json";
+    std::error_code error;
+    if (!fs::is_regular_file(manifest_path) ||
+        fs::is_symlink(fs::symlink_status(manifest_path, error)) || error ||
+        fs::file_size(manifest_path, error) > 1024ULL * 1024ULL || error) {
+        return;
+    }
+    try {
+        const json manifest = read_json(manifest_path);
+        if (manifest.value("schema", "") != "arena_install_component_v1") {
+            return;
+        }
+        const std::string component_id = manifest.value("component_id", "");
+        const auto kind = discovery_kind_for_component(component_id);
+        if (!kind) {
+            return;
+        }
+        append_discovery_candidate(
+            rows,
+            seen,
+            *kind,
+            "provider_manifest",
+            root,
+            "detected_unmanaged",
+            {{"component_id", component_id},
+             {"component_version", manifest.value("component_version", "")}});
+    } catch (const std::exception&) {
+    }
+}
+
+void inspect_provider_roots(
+    json& rows,
+    std::map<std::string, std::set<std::string>>& seen,
+    const std::vector<fs::path>& roots) {
+    std::set<std::string> inspected;
+    for (const auto& candidate_root : roots) {
+        if (candidate_root.empty()) {
+            continue;
+        }
+        const fs::path root = normalized_absolute(candidate_root);
+        if (!inspected.insert(root.string()).second ||
+            !fs::is_directory(root) || contains_symbolic_link(root)) {
+            continue;
+        }
+        inspect_provider_root(rows, seen, root);
+        std::error_code error;
+        for (fs::directory_iterator iterator(
+                 root, fs::directory_options::skip_permission_denied, error),
+             end;
+             iterator != end && !error;
+             iterator.increment(error)) {
+            if (iterator->is_directory(error) && !error &&
+                !iterator->is_symlink(error) && !error) {
+                inspect_provider_root(rows, seen, iterator->path());
+            }
+            error.clear();
+        }
+    }
+}
+
+bool directory_has_extension(
+    const fs::path& root,
+    const std::set<std::string>& extensions) {
+    if (!fs::is_directory(root) || contains_symbolic_link(root)) {
+        return false;
+    }
+    std::error_code error;
+    for (fs::directory_iterator iterator(
+             root, fs::directory_options::skip_permission_denied, error),
+         end;
+         iterator != end && !error;
+         iterator.increment(error)) {
+        if (!iterator->is_regular_file(error) || error ||
+            iterator->is_symlink(error) || error) {
+            error.clear();
+            continue;
+        }
+        std::string extension = iterator->path().extension().string();
+        std::ranges::transform(
+            extension, extension.begin(), [](const unsigned char character) {
+                return static_cast<char>(std::tolower(character));
+            });
+        if (extensions.contains(extension)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+json discovery_rows(
+    const SetupPaths& paths,
+    const std::vector<fs::path>& extra_roots) {
+    json rows = json::object();
+    for (const auto kind : discovery_kinds) {
+        rows[std::string(kind)] = {
+            {"schema", "arena_setup_discovery_v1"},
+            {"schema_version", 1},
+            {"kind", kind},
+            {"precedence",
+             {"install_receipt",
+              "saved_locator",
+              "provider_manifest",
+              "discovered",
+              "unresolved"}},
+            {"selection", nullptr},
+            {"candidates", json::array()},
+            {"browse", browse_contract(kind)},
+        };
+    }
+    std::map<std::string, std::set<std::string>> seen;
+
+    for (const auto& receipt : receipt_rows(paths)) {
+        const auto kind =
+            discovery_kind_for_component(receipt.value("component_id", ""));
+        if (!kind ||
+            (receipt.value("state", "") != "installed_managed" &&
+             receipt.value("state", "") != "installed_disabled")) {
+            continue;
+        }
+        const fs::path locator = receipt_locator(receipt);
+        const bool healthy =
+            !locator.empty() && fs::exists(locator) &&
+            !contains_symbolic_link(locator);
+        append_discovery_candidate(
+            rows,
+            seen,
+            *kind,
+            "install_receipt",
+            locator,
+            healthy ? receipt.value("state", "installed_managed") : "broken",
+            {{"component_id", receipt.value("component_id", "")},
+             {"component_version", receipt.value("component_version", "")}});
+    }
+
+    const fs::path locator_root = paths.data_root / "locators";
+    if (fs::is_directory(locator_root) &&
+        !contains_symbolic_link(locator_root)) {
+        for (const auto kind : discovery_kinds) {
+            const fs::path locator_path =
+                locator_root / (std::string(kind) + ".json");
+            if (!fs::is_regular_file(locator_path) ||
+                contains_symbolic_link(locator_path)) {
+                continue;
+            }
+            try {
+                const json locator = read_json(locator_path);
+                if (locator.value("schema", "") != "arena_saved_locator_v1" ||
+                    locator.value("schema_version", 0) != 1 ||
+                    locator.value("kind", "") != kind ||
+                    !locator.contains("path") ||
+                    !locator.at("path").is_string()) {
+                    continue;
+                }
+                const fs::path selected =
+                    locator.at("path").get<std::string>();
+                const bool healthy =
+                    fs::exists(selected) &&
+                    !contains_symbolic_link(selected);
+                append_discovery_candidate(
+                    rows,
+                    seen,
+                    std::string(kind),
+                    "saved_locator",
+                    selected,
+                    healthy ? "saved" : "broken",
+                    {{"mode", locator.value("mode", "in_place_reference")}});
+            } catch (const std::exception&) {
+            }
+        }
+    }
+
+    std::vector<fs::path> bounded_roots{
+        paths.install_root,
+        paths.workspace_root,
+        paths.knowledge_root,
+    };
+    bounded_roots.insert(
+        bounded_roots.end(), extra_roots.begin(), extra_roots.end());
+    inspect_provider_roots(rows, seen, bounded_roots);
+
+    const fs::path book_root = paths.knowledge_root / "opening_books";
+    if (directory_has_extension(book_root, {".bin", ".book"})) {
+        append_discovery_candidate(
+            rows,
+            seen,
+            "opening_book",
+            "discovered",
+            book_root,
+            "detected_unmanaged");
+    }
+    const fs::path tablebase_root = paths.knowledge_root / "tablebases";
+    if (directory_has_extension(tablebase_root, {".rtbw", ".rtbz"})) {
+        append_discovery_candidate(
+            rows,
+            seen,
+            "syzygy",
+            "discovered",
+            tablebase_root,
+            "detected_unmanaged");
+    }
+
+    if (const char* path_environment = std::getenv("PATH")) {
+#ifdef _WIN32
+        constexpr char separator = ';';
+#else
+        constexpr char separator = ':';
+#endif
+        std::stringstream stream(path_environment);
+        for (std::string item; std::getline(stream, item, separator);) {
+            if (!item.empty()) {
+                bounded_roots.emplace_back(item);
+            }
+        }
+    }
+    const std::set<std::string> engine_names{
+#ifdef _WIN32
+        "stockfish.exe", "lc0.exe", "flashfork_uci.exe"
+#else
+        "stockfish", "lc0", "flashfork_uci"
+#endif
+    };
+    std::set<std::string> engine_roots;
+    for (const auto& root_value : bounded_roots) {
+        if (root_value.empty()) {
+            continue;
+        }
+        const fs::path root = normalized_absolute(root_value);
+        if (!engine_roots.insert(root.string()).second ||
+            !fs::is_directory(root) || contains_symbolic_link(root)) {
+            continue;
+        }
+        for (const auto& name : engine_names) {
+            const fs::path executable = root / name;
+            if (fs::is_regular_file(executable) &&
+                !contains_symbolic_link(executable)) {
+                append_discovery_candidate(
+                    rows,
+                    seen,
+                    "uci_engine",
+                    "discovered",
+                    executable,
+                    "detected_unmanaged",
+                    {{"requires_probe", true}});
+            }
+        }
+    }
+
+    const std::array<std::tuple<const char*, const char*, const char*>, 4>
+        environment_hints{{
+            {"BOOK_FORGE_CLI", "book_forge", "provider_cli"},
+            {"UCI_ARENA_EVIDENCE_CLI", "evidence_service", "provider_cli"},
+            {"LICHESS_BOT_TOKEN_PATH", "lichess_token_path", "token_path_reference"},
+            {"RESTAURANT_ROOT", "restaurant", "detect_only"},
+        }};
+    for (const auto& [name, kind, hint] : environment_hints) {
+        const char* value = std::getenv(name);
+        if (value == nullptr || *value == '\0') {
+            continue;
+        }
+        const fs::path path = value;
+        if (!fs::exists(path) || contains_symbolic_link(path)) {
+            continue;
+        }
+        append_discovery_candidate(
+            rows,
+            seen,
+            kind,
+            "discovered",
+            path,
+            "detected_unmanaged",
+            {{"hint", hint}});
+    }
+
+    for (const auto kind : discovery_kinds) {
+        if (rows.at(std::string(kind)).at("selection").is_null()) {
+            rows.at(std::string(kind))["selection"] = {
+                {"source", "unresolved"},
+                {"state", "unresolved"},
+                {"path", nullptr},
+            };
+        }
+    }
+    return rows;
+}
+
+json validate_provider_locator(
+    const fs::path& path,
+    const std::string& expected_component_id) {
+    if (fs::is_regular_file(path)) {
+        return {
+            {"validation", "entrypoint_present"},
+            {"entrypoint", path.string()},
+        };
+    }
+    if (!fs::is_directory(path)) {
+        throw std::runtime_error(
+            "provider locator must be a regular CLI entrypoint or provider root");
+    }
+    const fs::path manifest_path = path / "arena-component.json";
+    if (!fs::is_regular_file(manifest_path) ||
+        contains_symbolic_link(manifest_path)) {
+        throw std::runtime_error(
+            "provider root does not contain a safe arena-component.json");
+    }
+    std::error_code error;
+    const auto size = fs::file_size(manifest_path, error);
+    if (error || size > 1024ULL * 1024ULL) {
+        throw std::runtime_error("provider manifest exceeds the bounded size");
+    }
+    const json manifest = read_json(manifest_path);
+    if (manifest.value("schema", "") != "arena_install_component_v1" ||
+        manifest.value("component_id", "") != expected_component_id) {
+        throw std::runtime_error(
+            "provider manifest has an incompatible component identity");
+    }
+    return {
+        {"validation", "provider_manifest"},
+        {"component_id", expected_component_id},
+        {"component_version", manifest.value("component_version", "")},
+    };
+}
+
+json validate_book_locator(const fs::path& path) {
+    if (fs::is_regular_file(path)) {
+        return {
+            {"validation", "regular_file"},
+            {"file_name", path.filename().string()},
+        };
+    }
+    if (!fs::is_directory(path)) {
+        throw std::runtime_error(
+            "opening book locator must be a regular file or flat directory");
+    }
+    std::uint64_t file_count = 0;
+    bool has_book = false;
+    for (const auto& entry : fs::directory_iterator(path)) {
+        if (entry.is_symlink()) {
+            throw std::runtime_error(
+                "opening book directory contains a symbolic link");
+        }
+        if (!entry.is_regular_file()) {
+            throw std::runtime_error(
+                "opening book directory must be flat and contain only regular files");
+        }
+        ++file_count;
+        std::string extension = entry.path().extension().string();
+        std::ranges::transform(
+            extension, extension.begin(), [](const unsigned char character) {
+                return static_cast<char>(std::tolower(character));
+            });
+        has_book = has_book || extension == ".bin" || extension == ".book";
+    }
+    if (file_count == 0 || !has_book) {
+        throw std::runtime_error(
+            "opening book directory contains no supported book file");
+    }
+    return {
+        {"validation", "flat_directory"},
+        {"file_count", file_count},
+    };
+}
+
+json validate_syzygy_locator(const fs::path& path) {
+    if (!fs::is_directory(path)) {
+        throw std::runtime_error("Syzygy locator must be a directory");
+    }
+    bool found = false;
+    for (const auto& entry : fs::directory_iterator(path)) {
+        if (entry.is_symlink()) {
+            throw std::runtime_error(
+                "Syzygy directory contains a symbolic link");
+        }
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        std::string extension = entry.path().extension().string();
+        std::ranges::transform(
+            extension, extension.begin(), [](const unsigned char character) {
+                return static_cast<char>(std::tolower(character));
+            });
+        if (extension == ".rtbw" || extension == ".rtbz") {
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        throw std::runtime_error(
+            "Syzygy directory contains no .rtbw or .rtbz files");
+    }
+    return {{"validation", "syzygy_directory"}};
+}
+
+json validate_uci_locator(const fs::path& path) {
+    if (!fs::is_regular_file(path)) {
+        throw std::runtime_error("UCI engine locator must be a regular file");
+    }
+    const auto probe =
+        adapters::UciProcess::probe(path, path.parent_path(), {});
+    if (!probe.ok) {
+        throw std::runtime_error("UCI engine probe failed: " + probe.error);
+    }
+    return {
+        {"validation", "uci_startup_interrogation"},
+        {"engine_name", probe.engine_name},
+        {"engine_author", probe.engine_author},
+        {"fingerprint", probe.fingerprint},
+        {"option_count", probe.options.size()},
+        {"bestmove", probe.bestmove},
+        {"elapsed_ms", probe.elapsed_ms},
+    };
+}
+
+json validate_import_locator(
+    const std::string& kind,
+    const fs::path& path) {
+    if (!valid_discovery_kind(kind)) {
+        throw std::runtime_error("unknown import kind " + kind);
+    }
+    if (kind == "restaurant") {
+        throw std::runtime_error(
+            "Restaurant is detect-only and cannot be imported");
+    }
+    if (!fs::exists(path)) {
+        throw std::runtime_error("import path does not exist");
+    }
+    require_no_symbolic_link(path);
+    if (kind == "opening_book") {
+        return validate_book_locator(path);
+    }
+    if (kind == "syzygy") {
+        return validate_syzygy_locator(path);
+    }
+    if (kind == "uci_engine") {
+        return validate_uci_locator(path);
+    }
+    if (kind == "book_forge") {
+        return validate_provider_locator(path, "book_forge.service");
+    }
+    if (kind == "evidence_service") {
+        return validate_provider_locator(
+            path, "uci_arena_evidence.service");
+    }
+    if (kind == "lichess_token_path") {
+        if (!fs::is_regular_file(path)) {
+            throw std::runtime_error(
+                "Lichess token locator must reference a regular file");
+        }
+        return {{"validation", "path_reference_only"}};
+    }
+    throw std::runtime_error("unsupported import kind " + kind);
+}
+
+struct ManagedBookFile {
+    fs::path source;
+    fs::path relative;
+    std::uint64_t size{};
+    std::string sha256;
+};
+
+std::vector<ManagedBookFile> managed_book_files(const fs::path& source) {
+    std::vector<ManagedBookFile> files;
+    std::uint64_t total = 0;
+    if (fs::is_regular_file(source)) {
+        const auto size = static_cast<std::uint64_t>(fs::file_size(source));
+        if (size > managed_book_max_bytes) {
+            throw std::runtime_error(
+                "managed opening-book copy exceeds the 256 MiB limit");
+        }
+        files.push_back(
+            {source,
+             source.filename(),
+             size,
+             sha256_file(source)});
+        total = size;
+    } else {
+        for (const auto& entry : fs::directory_iterator(source)) {
+            if (entry.is_symlink()) {
+                throw std::runtime_error(
+                    "managed opening-book copy cannot traverse a symbolic link");
+            }
+            if (!entry.is_regular_file()) {
+                throw std::runtime_error(
+                    "managed opening-book copy requires a flat directory");
+            }
+            if (files.size() >= managed_book_max_files) {
+                throw std::runtime_error(
+                    "managed opening-book copy exceeds the 64-file limit");
+            }
+            const auto size =
+                static_cast<std::uint64_t>(entry.file_size());
+            if (size > managed_book_max_bytes - total) {
+                throw std::runtime_error(
+                    "managed opening-book copy exceeds the 256 MiB limit");
+            }
+            files.push_back(
+                {entry.path(),
+                 entry.path().filename(),
+                 size,
+                 sha256_file(entry.path())});
+            total += size;
+        }
+    }
+    std::ranges::sort(
+        files, {}, [](const ManagedBookFile& file) {
+            return file.relative.generic_string();
+        });
+    for (const auto& file : files) {
+        if (!safe_relative_path(file.relative)) {
+            throw std::runtime_error(
+                "managed opening-book copy has an unsafe file name");
+        }
+    }
+    if (files.empty()) {
+        throw std::runtime_error("managed opening-book copy has no files");
+    }
+    return files;
+}
+
+json copy_managed_book(
+    const SetupPaths& paths,
+    const fs::path& source,
+    const json& validation) {
+    const auto files = managed_book_files(source);
+    json identity_rows = json::array();
+    for (const auto& file : files) {
+        identity_rows.push_back(
+            {{"path", file.relative.generic_string()},
+             {"size_bytes", file.size},
+             {"sha256", file.sha256}});
+    }
+    const std::string fingerprint = sha256_text(identity_rows.dump());
+    const std::string component_id =
+        "opening_book.import." + fingerprint.substr(0, 16);
+    const std::string component_version = "1";
+    const fs::path import_root =
+        paths.knowledge_root / "imports" / "opening_books";
+    const fs::path active_root = import_root / fingerprint;
+    const fs::path staging_root =
+        import_root / (".staging-" + fingerprint);
+    fs::create_directories(import_root);
+    require_no_symbolic_link(import_root);
+
+    std::error_code ignored;
+    fs::remove_all(staging_root, ignored);
+    if (!fs::exists(active_root)) {
+        fs::create_directories(staging_root);
+        try {
+            for (const auto& file : files) {
+                const fs::path target = staging_root / file.relative;
+                if (!within(staging_root, target)) {
+                    throw std::runtime_error(
+                        "managed opening-book path escapes staging");
+                }
+                fs::copy_file(
+                    file.source,
+                    target,
+                    fs::copy_options::overwrite_existing);
+                if (fs::file_size(target) != file.size ||
+                    sha256_file(target) != file.sha256) {
+                    throw std::runtime_error(
+                        "managed opening-book copy verification failed");
+                }
+            }
+            const json manifest{
+                {"schema", "arena_install_component_v1"},
+                {"schema_version", 1},
+                {"component_id", component_id},
+                {"component_version", component_version},
+                {"files", identity_rows},
+            };
+            write_json_atomic(
+                staging_root / "arena-component.json", manifest);
+            fs::rename(staging_root, active_root);
+        } catch (...) {
+            fs::remove_all(staging_root, ignored);
+            throw;
+        }
+    } else {
+        require_no_symbolic_link(active_root);
+        validate_component_payload(
+            active_root, component_id, component_version);
+    }
+
+    json activated_files = json::array();
+    for (const auto& file : files) {
+        activated_files.push_back(
+            {{"path", (active_root / file.relative).string()},
+             {"size_bytes", file.size},
+             {"sha256", file.sha256}});
+    }
+    const json receipt{
+        {"schema", "arena_install_receipt_v1"},
+        {"schema_version", 1},
+        {"component_id", component_id},
+        {"component_version", component_version},
+        {"state", "installed_managed"},
+        {"active_root", active_root.string()},
+        {"locator_path", active_root.string()},
+        {"artifact_sha256", fingerprint},
+        {"import_mode", "managed_copy"},
+        {"activated_files", activated_files},
+        {"installed_at", current_utc_iso()},
+    };
+    write_json_atomic(
+        paths.data_root / "receipts" / (component_id + ".json"),
+        receipt);
+    return {
+        {"schema", "arena_setup_import_result_v1"},
+        {"schema_version", 1},
+        {"kind", "opening_book"},
+        {"mode", "managed_copy"},
+        {"state", "installed_managed"},
+        {"path", active_root.string()},
+        {"validation", validation},
+        {"receipt", receipt},
+    };
 }
 
 json managed_knowledge_components(
@@ -930,6 +1906,149 @@ json SetupEngine::load_catalog(
     return catalog;
 }
 
+json SetupEngine::persist_release_media(
+    const json& catalog,
+    const SetupPaths& paths,
+    const fs::path& catalog_path,
+    const fs::path& metadata_directory) {
+    const fs::path source_catalog = normalized_absolute(catalog_path);
+    const fs::path source_root = source_catalog.parent_path();
+    if (!fs::is_regular_file(source_catalog) ||
+        contains_symbolic_link(source_catalog)) {
+        throw std::runtime_error(
+            "verified release catalog is unavailable for retention");
+    }
+    const fs::path release_root = paths.data_root / "release";
+    const std::string transaction_id =
+        std::to_string(
+            std::chrono::system_clock::now().time_since_epoch().count());
+    const fs::path stage =
+        paths.data_root / ("release.staging-" + transaction_id);
+    const fs::path backup =
+        paths.data_root / ("release.rollback-" + transaction_id);
+    std::error_code ignored;
+    fs::create_directories(paths.data_root);
+    fs::remove_all(stage, ignored);
+    ignored.clear();
+    fs::remove_all(backup, ignored);
+    try {
+        fs::create_directories(stage);
+        fs::copy_file(
+            source_catalog,
+            stage / "catalog.json",
+            fs::copy_options::overwrite_existing);
+
+        if (!metadata_directory.empty()) {
+            const fs::path metadata_root =
+                normalized_absolute(metadata_directory);
+            for (const auto* required :
+                 {"root.json", "targets.json", "snapshot.json", "timestamp.json"}) {
+                const fs::path source = metadata_root / required;
+                if (!fs::is_regular_file(source) ||
+                    contains_symbolic_link(source)) {
+                    throw std::runtime_error(
+                        std::string("verified TUF metadata is unavailable: ") +
+                        required);
+                }
+            }
+            fs::create_directories(stage / "tuf");
+            for (const auto& entry : fs::directory_iterator(metadata_root)) {
+                if (entry.is_symlink() || !entry.is_regular_file() ||
+                    entry.path().extension() != ".json" ||
+                    entry.file_size() > 8ULL * 1024ULL * 1024ULL) {
+                    continue;
+                }
+                fs::copy_file(
+                    entry.path(),
+                    stage / "tuf" / entry.path().filename(),
+                    fs::copy_options::overwrite_existing);
+            }
+        }
+
+        json retained = json::array();
+        std::set<std::string> retained_sources;
+        for (const auto& component : catalog.at("components")) {
+            const json& artifact = platform_artifact(component);
+            const std::string source = artifact.at("source").get<std::string>();
+            if (source.starts_with("https://")) {
+                continue;
+            }
+            const fs::path relative =
+                fs::path(source).lexically_normal();
+            if (!safe_relative_path(relative) ||
+                !retained_sources.insert(relative.generic_string()).second) {
+                if (retained_sources.contains(relative.generic_string())) {
+                    continue;
+                }
+                throw std::runtime_error(
+                    "release catalog contains an unsafe retained source");
+            }
+            const fs::path source_file = source_root / relative;
+            if (!within(source_root, source_file) ||
+                !fs::is_regular_file(source_file) ||
+                contains_symbolic_link(source_file) ||
+                fs::file_size(source_file) != integer_field(artifact, "size_bytes") ||
+                sha256_file(source_file) !=
+                    artifact.at("sha256").get<std::string>()) {
+                throw std::runtime_error(
+                    "release payload cannot be retained with exact identity: " +
+                    relative.generic_string());
+            }
+            const fs::path destination = stage / relative;
+            if (!within(stage, destination)) {
+                throw std::runtime_error(
+                    "retained release payload escapes staging");
+            }
+            fs::create_directories(destination.parent_path());
+            const fs::path cached =
+                paths.cache_root /
+                artifact.at("sha256").get<std::string>();
+            const fs::path link_source =
+                fs::is_regular_file(cached) &&
+                        sha256_file(cached) ==
+                            artifact.at("sha256").get<std::string>()
+                    ? cached
+                    : source_file;
+            std::error_code link_error;
+            fs::create_hard_link(link_source, destination, link_error);
+            if (link_error) {
+                fs::copy_file(
+                    source_file,
+                    destination,
+                    fs::copy_options::overwrite_existing);
+            }
+            retained.push_back(relative.generic_string());
+        }
+
+        const bool had_existing = fs::exists(release_root);
+        if (had_existing) {
+            fs::rename(release_root, backup);
+        }
+        try {
+            fs::rename(stage, release_root);
+        } catch (...) {
+            if (had_existing && fs::exists(backup) &&
+                !fs::exists(release_root)) {
+                fs::rename(backup, release_root);
+            }
+            throw;
+        }
+        fs::remove_all(backup, ignored);
+        return {
+            {"schema", "arena_retained_release_media_v1"},
+            {"catalog", (release_root / "catalog.json").string()},
+            {"metadata",
+             metadata_directory.empty()
+                 ? json(nullptr)
+                 : json((release_root / "tuf").string())},
+            {"payloads", std::move(retained)},
+        };
+    } catch (...) {
+        fs::remove_all(stage, ignored);
+        throw;
+    }
+}
+
 json SetupEngine::inventory(
     const SetupPaths& paths,
     const std::vector<fs::path>& extra_roots) {
@@ -953,7 +2072,8 @@ json SetupEngine::inventory(
         "snapshot.manifest.json",
     };
     for (const char* name : book_files) {
-        if (!fs::is_regular_file(book_root / name)) {
+        if (!fs::is_regular_file(book_root / name) ||
+            contains_symbolic_link(book_root / name)) {
             knowledge["opening_book"]["missing_files"].push_back(name);
         }
     }
@@ -968,9 +2088,10 @@ json SetupEngine::inventory(
         }
     }
     const fs::path tablebase_root = paths.knowledge_root / "tablebases";
-    if (fs::is_directory(tablebase_root)) {
+    if (fs::is_directory(tablebase_root) &&
+        !contains_symbolic_link(tablebase_root)) {
         for (const auto& entry : fs::directory_iterator(tablebase_root)) {
-            if (!entry.is_regular_file()) {
+            if (!entry.is_regular_file() || entry.is_symlink()) {
                 continue;
             }
             if (entry.path().extension() == ".rtbw") {
@@ -1022,12 +2143,13 @@ json SetupEngine::inventory(
     };
     std::set<std::string> seen;
     for (const auto& root : bounded_roots) {
-        if (!fs::is_directory(root)) {
+        if (!fs::is_directory(root) || contains_symbolic_link(root)) {
             continue;
         }
         for (const auto& name : candidate_names) {
             const fs::path candidate = root / name;
-            if (fs::is_regular_file(candidate)) {
+            if (fs::is_regular_file(candidate) &&
+                !contains_symbolic_link(candidate)) {
                 const std::string normalized = normalized_absolute(candidate).string();
                 if (seen.insert(normalized).second) {
                     candidates.push_back(
@@ -1042,7 +2164,8 @@ json SetupEngine::inventory(
 
     json restaurant{{"state", "absent"}};
     if (const char* configured = std::getenv("RESTAURANT_ROOT");
-        configured != nullptr && fs::is_directory(configured)) {
+        configured != nullptr && fs::is_directory(configured) &&
+        !contains_symbolic_link(configured)) {
         restaurant = {
             {"state", "detected_unmanaged"},
             {"path", normalized_absolute(configured).string()},
@@ -1055,7 +2178,45 @@ json SetupEngine::inventory(
         {"managed_components", receipt_rows(paths)},
         {"knowledge", std::move(knowledge)},
         {"candidates", std::move(candidates)},
+        {"discovery", discovery_rows(paths, extra_roots)},
         {"restaurant", std::move(restaurant)},
+    };
+}
+
+json SetupEngine::import_path(
+    const SetupPaths& paths,
+    const std::string& kind,
+    const fs::path& path,
+    const bool managed_copy) {
+    const fs::path normalized = normalized_absolute(path);
+    const json validation = validate_import_locator(kind, normalized);
+    if (managed_copy) {
+        if (kind != "opening_book") {
+            throw std::runtime_error(
+                "managed copy is allowed only for opening books");
+        }
+        return copy_managed_book(paths, normalized, validation);
+    }
+
+    const json locator{
+        {"schema", "arena_saved_locator_v1"},
+        {"schema_version", 1},
+        {"kind", kind},
+        {"mode", "in_place_reference"},
+        {"path", normalized.string()},
+        {"validation", validation},
+        {"saved_at", current_utc_iso()},
+    };
+    write_json_atomic(
+        paths.data_root / "locators" / (kind + ".json"), locator);
+    return {
+        {"schema", "arena_setup_import_result_v1"},
+        {"schema_version", 1},
+        {"kind", kind},
+        {"mode", "in_place_reference"},
+        {"state", "saved"},
+        {"path", normalized.string()},
+        {"validation", validation},
     };
 }
 
@@ -1117,7 +2278,11 @@ json SetupEngine::plan(
         const auto& artifact = platform_artifact(component);
         const std::string hash = artifact.at("sha256").get<std::string>();
         if (artifact_hashes.insert(hash).second) {
-            download += integer_field(artifact, "size_bytes");
+            download +=
+                artifact.value("type", "archive") == "file_set"
+                    ? integer_field(artifact, "size_bytes") +
+                          integer_field(artifact, "total_size_bytes")
+                    : integer_field(artifact, "size_bytes");
             staging += integer_field(component, "staging_bytes");
         }
         installed += integer_field(component, "installed_bytes");
@@ -1331,8 +2496,22 @@ json SetupEngine::apply(
             const fs::path stage = staging_root / transaction_id / id;
             std::error_code ignored;
             fs::remove_all(stage, ignored);
-            extract_archive(artifact, stage);
-            const json manifest = validate_component_payload(stage, id, version);
+            json manifest;
+            if (action.at("artifact").value("type", "archive") == "file_set") {
+                manifest = stage_file_set(
+                    artifact,
+                    action.at("artifact"),
+                    catalog_directory,
+                    paths,
+                    plan.value("offline", false),
+                    stage,
+                    id,
+                    version);
+            } else {
+                extract_archive(artifact, stage);
+                manifest = validate_component_payload(stage, id, version);
+            }
+            manifest = validate_component_payload(stage, id, version);
 
             const fs::path component_root = components_root / id;
             const fs::path target = component_root / version;

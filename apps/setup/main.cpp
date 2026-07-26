@@ -68,8 +68,13 @@ int main(int argc, char** argv) {
         fs::path metadata_directory;
         bool allow_unsigned_development_catalog = false;
         bool json_output = false;
-        app.add_option("--catalog", catalog_path, "Installation catalog");
-        app.add_option("--metadata-dir", metadata_directory, "Trusted TUF metadata directory");
+        auto* catalog_option =
+            app.add_option("--catalog", catalog_path, "Installation catalog");
+        auto* metadata_option =
+            app.add_option(
+                "--metadata-dir",
+                metadata_directory,
+                "Trusted TUF metadata directory");
         app.add_flag(
             "--allow-unsigned-development-catalog",
             allow_unsigned_development_catalog,
@@ -87,6 +92,31 @@ int main(int argc, char** argv) {
             "--scan-root",
             scan_roots,
             "Additional bounded root to inspect; may be repeated");
+
+        std::string import_kind;
+        fs::path import_source;
+        bool managed_copy = false;
+        auto* import_command =
+            app.add_subcommand("import", "Validate and save a local component locator");
+        import_command
+            ->add_option(
+                "--kind",
+                import_kind,
+                "opening_book, syzygy, uci_engine, book_forge, evidence_service, or lichess_token_path")
+            ->required()
+            ->check(CLI::IsMember(
+                {"opening_book",
+                 "syzygy",
+                 "uci_engine",
+                 "book_forge",
+                 "evidence_service",
+                 "lichess_token_path",
+                 "restaurant"}));
+        import_command->add_option("--path", import_source)->required();
+        import_command->add_flag(
+            "--managed-copy",
+            managed_copy,
+            "Copy a small opening book into Manager-owned knowledge storage");
 
         std::string preset{"complete_arena"};
         std::vector<std::string> components;
@@ -153,6 +183,11 @@ int main(int argc, char** argv) {
 
         if (*inventory) {
             print(SetupEngine::inventory(paths, scan_roots), json_output);
+        } else if (*import_command) {
+            print(
+                SetupEngine::import_path(
+                    paths, import_kind, import_source, managed_copy),
+                json_output);
         } else if (*verify_command) {
             const auto result = SetupEngine::verify(paths);
             print(result, json_output);
@@ -163,6 +198,20 @@ int main(int argc, char** argv) {
                 SetupEngine::uninstall(paths, uninstall_components, yes, purge),
                 json_output);
         } else {
+            if (catalog_option->count() == 0) {
+                const fs::path retained =
+                    paths.data_root / "release" / "catalog.json";
+                if (fs::is_regular_file(retained)) {
+                    catalog_path = retained;
+                }
+            }
+            if (metadata_option->count() == 0) {
+                const fs::path retained =
+                    paths.data_root / "release" / "tuf";
+                if (fs::is_directory(retained)) {
+                    metadata_directory = retained;
+                }
+            }
             const json catalog = SetupEngine::load_catalog(
                 catalog_path,
                 metadata_directory,
@@ -182,14 +231,21 @@ int main(int argc, char** argv) {
                 curl_global_cleanup();
                 return resolved.at("blockers").empty() ? 0 : 3;
             }
-            print(
-                SetupEngine::apply(
-                    catalog,
-                    resolved,
-                    paths,
-                    yes,
-                    *repair_command || *upgrade_command),
-                json_output);
+            json result = SetupEngine::apply(
+                catalog,
+                resolved,
+                paths,
+                yes,
+                *repair_command || *upgrade_command);
+            if (result.value("state", "") == "committed") {
+                result["retained_release_media"] =
+                    SetupEngine::persist_release_media(
+                        catalog,
+                        paths,
+                        catalog_path,
+                        metadata_directory);
+            }
+            print(result, json_output);
         }
         curl_global_cleanup();
         return 0;

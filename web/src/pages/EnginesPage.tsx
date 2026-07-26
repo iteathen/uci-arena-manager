@@ -18,6 +18,7 @@ import { api, makeCommand } from '../api/client'
 import type { EngineData } from '../api/types'
 import { EmptyState } from '../components/EmptyState'
 import { PageHeader } from '../components/PageHeader'
+import { PathPickerInput } from '../components/PathPickerInput'
 import { StatusPill } from '../components/StatusPill'
 
 export function EnginesPage() {
@@ -135,17 +136,23 @@ export function EnginesPage() {
             value={name}
             onChange={(event) => setName(event.currentTarget.value)}
           />
-          <TextInput
+          <PathPickerInput
             label="Executable"
-            placeholder="C:\engines\latticeknight.exe"
+            description="Choose an engine executable. It must pass timed uci, isready, option, and legal bestmove probes."
+            placeholder="C:\engines\uci-engine.exe"
             value={executable}
-            onChange={(event) => setExecutable(event.currentTarget.value)}
+            onChange={setExecutable}
+            mode="file"
+            filters={[
+              { name: 'UCI engine executables', patterns: ['*.exe', '*'] },
+            ]}
           />
-          <TextInput
+          <PathPickerInput
             label="Working directory"
             description="Defaults to the executable directory."
             value={workingDirectory}
-            onChange={(event) => setWorkingDirectory(event.currentTarget.value)}
+            onChange={setWorkingDirectory}
+            mode="directory"
           />
           {register.error && <Text c="red">{register.error.message}</Text>}
           <Group justify="flex-end">

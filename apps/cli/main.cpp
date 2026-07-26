@@ -1,6 +1,7 @@
 #include "arena/adapters/uci_process.hpp"
 #include "arena/application/broker_policy.hpp"
 #include "arena/domain/uuid.hpp"
+#include "ui_picker.hpp"
 
 #include <CLI/CLI.hpp>
 #include <curl/curl.h>
@@ -190,7 +191,18 @@ int main(int argc, char** argv) {
         auto* doctor = app.add_subcommand("doctor", "Run safe local diagnostics");
         auto* ui = app.add_subcommand("ui", "Open the authenticated local dashboard");
         bool no_open = false;
+        bool no_picker = false;
+        std::uint16_t picker_port = 47832;
         ui->add_flag("--no-open", no_open, "Print the URL without opening a browser");
+        ui->add_flag(
+            "--no-picker",
+            no_picker,
+            "Do not host the interactive-user file and directory picker");
+        ui->add_option(
+              "--picker-port",
+              picker_port,
+              "Loopback port for the interactive-user picker")
+            ->check(CLI::Range(1024, 65535));
 
         auto* daemon = app.add_subcommand("daemon", "Control the installed arena service");
         daemon->require_subcommand(1);
@@ -420,11 +432,28 @@ int main(int argc, char** argv) {
                 output);
         } else if (*ui) {
             const auto pairing = client.post("/api/v1/auth/pair-token", json::object());
-            const std::string url =
-                endpoint + "/#pair=" + pairing.at("pairing_token").get<std::string>();
+            std::string dashboard_origin = endpoint;
+            while (!dashboard_origin.empty() && dashboard_origin.back() == '/') {
+                dashboard_origin.pop_back();
+            }
+            std::string url =
+                dashboard_origin + "/#pair=" +
+                pairing.at("pairing_token").get<std::string>();
+            std::string picker_token;
+            if (!no_picker) {
+                picker_token = arena::cli::make_ui_picker_token();
+                url += "&picker_port=" + std::to_string(picker_port) +
+                       "&picker_token=" + picker_token;
+            }
             std::cout << url << '\n';
             if (!no_open) {
                 open_browser(url);
+            }
+            if (!no_picker) {
+                std::cout << "Local browse helper active on 127.0.0.1:"
+                          << picker_port << "; press Ctrl+C to stop it.\n";
+                arena::cli::run_ui_picker(
+                    picker_port, picker_token, dashboard_origin);
             }
         } else if (*engine_list) {
             print_json(client.get("/api/v1/resources/engine"), output);

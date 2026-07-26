@@ -78,6 +78,7 @@ class ControlPlane final {
         const std::string& event_kind);
 
     std::shared_ptr<ports::Store> store_;
+    std::filesystem::path manager_data_root_;
     ProcessSupervisor process_supervisor_;
     std::string started_at_;
     nlohmann::json installed_service_reconciliation_{

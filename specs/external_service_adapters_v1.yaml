@@ -82,6 +82,7 @@ profiles:
       - optional_native_launcher
     discovery:
       sources:
+        - arena_setup_saved_locator
         - process_environment_hints
         - executable_path
       environment_hints:
@@ -89,6 +90,7 @@ profiles:
         - BOOK_FORGE_CLI
         - BOOK_FORGE_WORKSPACE
       behavior:
+        - A validated arena-setup locator is considered before environment and PATH hints and may contribute a packaged CLI while the operator supplies any remaining fields.
         - Discovery returns zero or more candidates and never registers one automatically.
         - A complete candidate requires a Node executable, CLI entrypoint, and workspace.
         - The dashboard always permits manual path entry when no complete candidate is found.
@@ -162,6 +164,7 @@ profiles:
       - optional_config_path
     discovery:
       sources:
+        - arena_setup_saved_locator
         - process_environment_hints
         - executable_path
       environment_hints:
@@ -169,6 +172,7 @@ profiles:
         - UCI_ARENA_EVIDENCE_CLI
         - UCI_ARENA_EVIDENCE_ROOT
       behavior:
+        - A validated arena-setup locator is considered before environment and PATH hints and may contribute a packaged CLI while the operator supplies any remaining fields.
         - Discovery returns candidates but never enables the optional integration automatically.
         - A complete candidate requires a Node executable, CLI entrypoint, and workspace.
         - The dashboard always permits manual path entry when no complete candidate is found.
@@ -207,6 +211,7 @@ validation:
   - The manager remains ready and local match planning works with neither optional profile configured.
   - Discovery returns an empty candidates array when no hints exist; this is not an error.
   - Manual setup remains available after discovery returns no complete candidate.
+  - Saved installer locators are read only from the Manager data root, are schema and component-identity checked, and never enable a service automatically.
   - Book Forge paths containing spaces remain separate argv values.
   - Book Forge status schema mismatches produce incompatible state.
   - Secret-looking fields in adapter output are rejected and redacted.

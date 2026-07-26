@@ -8,12 +8,16 @@ param(
     [string]$RunRoot,
     [Parameter(Mandatory = $true)]
     [string]$ResultPath,
-    [switch]$AllowUnsignedDevelopmentCatalog
+    [switch]$AllowUnsignedDevelopmentCatalog,
+    [switch]$SkipStartupRegistration
 )
 
 $ErrorActionPreference = "Stop"
 $stages = [System.Collections.Generic.List[string]]::new()
 $managerProcess = $null
+$isWindowsPlatform =
+    [System.Environment]::OSVersion.Platform -eq
+    [System.PlatformID]::Win32NT
 
 function Invoke-JsonCommand {
     param(
@@ -36,7 +40,8 @@ function Invoke-JsonCommand {
 
 function Get-Receipt {
     param([string]$ComponentId)
-    $filename = Join-Path $RunRoot "data\receipts\$ComponentId.json"
+    $filename = Join-Path (Join-Path $RunRoot "data") "receipts"
+    $filename = Join-Path $filename "$ComponentId.json"
     if (-not (Test-Path -LiteralPath $filename -PathType Leaf)) {
         throw "missing receipt for $ComponentId"
     }
@@ -122,7 +127,9 @@ function Invoke-UciAcceptance {
         }
         $fingerprint = $Matches[1]
         $provider = $Matches[2]
-        $expectedModelRoot = Join-Path (Split-Path -Parent (Split-Path -Parent $Engine)) "models\default"
+        $expectedModelRoot = Join-Path `
+            (Join-Path (Split-Path -Parent (Split-Path -Parent $Engine)) "models") `
+            "default"
         if ([IO.Path]::GetFullPath($modelRoot) -ne [IO.Path]::GetFullPath($expectedModelRoot)) {
             throw "installed ModelRoot mismatch: $modelRoot"
         }
@@ -211,7 +218,7 @@ try {
 
     $bookCli = Get-Entrypoint "book_forge.service" "cli"
     $bookReceipt = Get-Receipt "book_forge.service"
-    $bookWorkspace = Join-Path $RunRoot "workspace\book-forge"
+    $bookWorkspace = Join-Path (Join-Path $RunRoot "workspace") "book-forge"
     $bookConfig = Join-Path $bookWorkspace "manager-config.json"
     [void](Invoke-JsonCommand $node @(
         $bookCli, "init", "--workspace", $bookWorkspace, "--config", $bookConfig
@@ -250,25 +257,27 @@ try {
     if (-not $bookValidation.ok -or $bookValidation.id -ne $bookChannel.snapshot_id) {
         throw "Book Forge snapshot validation failed"
     }
-    [void](Invoke-JsonCommand $node @(
-        $bookCli, "startup", "install",
-        "--workspace", $bookWorkspace, "--config", $bookConfig
-    ))
-    $bookStartup = Invoke-JsonCommand $node @(
-        $bookCli, "startup", "status",
-        "--workspace", $bookWorkspace, "--config", $bookConfig
-    )
-    if (-not $bookStartup.startup.installed) {
-        throw "Book Forge startup registration is not installed"
+    if (-not $SkipStartupRegistration) {
+        [void](Invoke-JsonCommand $node @(
+            $bookCli, "startup", "install",
+            "--workspace", $bookWorkspace, "--config", $bookConfig
+        ))
+        $bookStartup = Invoke-JsonCommand $node @(
+            $bookCli, "startup", "status",
+            "--workspace", $bookWorkspace, "--config", $bookConfig
+        )
+        if (-not $bookStartup.startup.installed) {
+            throw "Book Forge startup registration is not installed"
+        }
+        [void](Invoke-JsonCommand $node @(
+            $bookCli, "startup", "uninstall",
+            "--workspace", $bookWorkspace, "--config", $bookConfig
+        ))
     }
-    [void](Invoke-JsonCommand $node @(
-        $bookCli, "startup", "uninstall",
-        "--workspace", $bookWorkspace, "--config", $bookConfig
-    ))
     $stages.Add("book_forge")
 
     $evidenceCli = Get-Entrypoint "uci_arena_evidence.service" "cli"
-    $evidenceWorkspace = Join-Path $RunRoot "workspace\evidence-service"
+    $evidenceWorkspace = Join-Path (Join-Path $RunRoot "workspace") "evidence-service"
     $evidenceConfig = Join-Path $evidenceWorkspace "manager-config.json"
     [void](Invoke-JsonCommand $node @(
         $evidenceCli, "init", "--workspace", $evidenceWorkspace, "--config", $evidenceConfig
@@ -299,7 +308,7 @@ try {
         "--config", $evidenceConfig
     )
     $jobConfig = @{
-        campaign = "windows_clean_e2e"
+        campaign = "suite_clean_e2e"
         evidenceMode = "curve"
         movetimeMs = 1
         maxPairs = 1
@@ -312,7 +321,7 @@ try {
     $job = Invoke-JsonCommand $node @(
         $evidenceCli, "job", "enqueue",
         "--adapter", "paired_sprt",
-        "--shard", "windows-clean-e2e",
+        "--shard", "suite-clean-e2e",
         "--target", $target.id,
         "--config-json", $jobConfig,
         "--workspace", $evidenceWorkspace,
@@ -335,36 +344,49 @@ try {
     if ($dataset.state -ne "completed" -or $dataset.observationCount -lt 1) {
         throw "Evidence Service did not persist its dataset"
     }
-    [void](Invoke-JsonCommand $node @(
-        $evidenceCli, "startup", "install",
-        "--workspace", $evidenceWorkspace, "--config", $evidenceConfig
-    ))
-    $evidenceStartup = Invoke-JsonCommand $node @(
-        $evidenceCli, "startup", "status",
-        "--workspace", $evidenceWorkspace, "--config", $evidenceConfig
-    )
-    if (-not $evidenceStartup.installed) {
-        throw "Evidence Service startup registration is not installed"
+    if (-not $SkipStartupRegistration) {
+        [void](Invoke-JsonCommand $node @(
+            $evidenceCli, "startup", "install",
+            "--workspace", $evidenceWorkspace, "--config", $evidenceConfig
+        ))
+        $evidenceStartup = Invoke-JsonCommand $node @(
+            $evidenceCli, "startup", "status",
+            "--workspace", $evidenceWorkspace, "--config", $evidenceConfig
+        )
+        if (-not $evidenceStartup.installed) {
+            throw "Evidence Service startup registration is not installed"
+        }
+        [void](Invoke-JsonCommand $node @(
+            $evidenceCli, "startup", "uninstall",
+            "--workspace", $evidenceWorkspace, "--config", $evidenceConfig
+        ))
     }
-    [void](Invoke-JsonCommand $node @(
-        $evidenceCli, "startup", "uninstall",
-        "--workspace", $evidenceWorkspace, "--config", $evidenceConfig
-    ))
     $stages.Add("evidence")
 
     $managerService = Get-Entrypoint "manager.core" "service"
     $managerCli = Get-Entrypoint "manager.core" "cli"
     $managerReceipt = Get-Receipt "manager.core"
-    $webRoot = Join-Path $managerReceipt.active_root "share\uci-arena\web"
+    $webRoot = Join-Path `
+        (Join-Path (Join-Path $managerReceipt.active_root "share") "uci-arena") `
+        "web"
     $port = 18181
     $serviceStdout = Join-Path $RunRoot "manager-service.stdout.log"
     $serviceStderr = Join-Path $RunRoot "manager-service.stderr.log"
-    $managerProcess = Start-Process -FilePath $managerService -ArgumentList @(
+    $managerProcessArguments = @{
+        FilePath = $managerService
+        ArgumentList = @(
         "--data-dir", (Join-Path $RunRoot "data"),
         "--web-root", $webRoot,
         "--port", [string]$port
-    ) -PassThru -WindowStyle Hidden -RedirectStandardOutput $serviceStdout `
-        -RedirectStandardError $serviceStderr
+        )
+        PassThru = $true
+        RedirectStandardOutput = $serviceStdout
+        RedirectStandardError = $serviceStderr
+    }
+    if ($isWindowsPlatform) {
+        $managerProcessArguments.WindowStyle = "Hidden"
+    }
+    $managerProcess = Start-Process @managerProcessArguments
     $endpoint = "http://127.0.0.1:$port"
     $ready = $false
     for ($attempt = 0; $attempt -lt 60; ++$attempt) {
@@ -425,7 +447,8 @@ try {
     $stages.Add("manager_integration")
 
     $result = @{
-        schema = "arena_windows_complete_e2e_result_v1"
+        schema = "arena_complete_e2e_result_v1"
+        platform = if ($isWindowsPlatform) { "windows" } else { "linux" }
         state = "passed"
         stages = @($stages)
         components = @($apply.components).Count
@@ -441,7 +464,8 @@ try {
     $result | ConvertTo-Json -Depth 20
 } catch {
     $failure = @{
-        schema = "arena_windows_complete_e2e_result_v1"
+        schema = "arena_complete_e2e_result_v1"
+        platform = if ($isWindowsPlatform) { "windows" } else { "linux" }
         state = "failed"
         stages = @($stages)
         error = $_.Exception.Message
