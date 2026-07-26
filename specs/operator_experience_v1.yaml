@@ -1,0 +1,66 @@
+meta:
+  spec_id: arena_operator_experience_v1
+  version: 1
+  status: active
+  owner: operator_surface
+
+navigation:
+  - overview
+  - services
+  - bots
+  - engines
+  - local_match_planner
+  - live_games
+  - tournaments
+  - game_history
+  - logs
+  - statistics_health
+  - reports
+  - configuration
+  - audit
+
+requirements:
+  - desktop_first_responsive
+  - complete_tablet_support
+  - safe_mobile_monitoring
+  - light_and_dark_themes
+  - keyboard_navigation
+  - reduced_motion
+  - visible_focus
+  - wcag_2_1_aa_contrast
+  - virtualized_logs_and_tables
+  - server_side_filtering
+  - websocket_batching
+  - stale_data_indicators
+  - service_profile_setup_for_book_forge
+  - planned_unavailable_state_for_future_services
+
+managed_service_experience:
+  catalog_cards:
+    - profile_id: book_forge
+      state: available_when_configured
+      callout: Existing external service
+    - profile_id: uci_arena_evidence
+      state: in_development
+      callout: External implementation in progress
+  setup:
+    - Show every required path or endpoint before validation.
+    - Preview capabilities and ownership boundaries.
+    - Never request external-service secrets that are not manager-owned.
+    - Explain unavailable actions without presenting them as failures.
+
+chessboard:
+  implementation: custom_svg
+  authority: backend_fen_snapshots
+  frontend_rule_authority: false
+
+reports:
+  model: immutable_report_document
+  formats: [html, pdf, csv, json, pgn]
+  common_fields:
+    - filters
+    - generation_parameters
+    - schema_version
+    - data_cutoff
+    - content_hashes
+    - provenance

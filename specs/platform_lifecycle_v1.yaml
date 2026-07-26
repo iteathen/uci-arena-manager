@@ -1,0 +1,35 @@
+meta:
+  spec_id: arena_platform_lifecycle_v1
+  version: 1
+  status: active
+  owner: platform
+
+main_service:
+  privilege: unprivileged
+  windows_account: LocalService
+  linux_account: uci-arena
+
+broker:
+  privilege: root_or_local_system
+  transport: local_authenticated_ipc
+  network_listener: false
+  request_fields: [request_id, target_id, action, expiry, authentication]
+  allowed_actions: [status, start, stop, restart]
+  forbidden_fields: [executable, argv, shell, working_directory]
+  policy: administrator_owned_allowlist
+
+child_isolation:
+  windows: job_objects
+  linux: cgroups_or_systemd_scopes
+  required:
+    - process_tree_termination
+    - cpu_limit
+    - memory_limit
+    - graceful_then_forced_stop
+
+packages:
+  windows: [msi, zip]
+  linux: [deb, rpm, tar_gz]
+  normal_uninstall: preserve_data
+  purge: explicit_preview_confirm_optional_export
+  self_update: false

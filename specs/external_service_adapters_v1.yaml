@@ -1,0 +1,146 @@
+meta:
+  spec_id: arena_external_service_adapters_v1
+  version: 1
+  status: active
+  owner: service_adapters
+
+purpose: >
+  Define how independently built services are discovered, configured, observed,
+  and controlled without importing their source, depending on their repository
+  layout, or reading their private storage.
+
+common_contract:
+  resource_kind: managed_service
+  required_fields:
+    - profile_id
+    - display_name
+    - integration_state
+    - desired_state
+    - observed_state
+    - capabilities
+    - health
+    - configuration
+  integration_states: [planned, configured, available, incompatible, unavailable]
+  transports: [process, native_service, http]
+  allowed_actions:
+    - discover
+    - validate
+    - start
+    - stop
+    - restart
+    - pause
+    - resume
+    - status
+  boundaries:
+    - Configuration contains explicit executable, endpoint, and filesystem paths.
+    - Process actions use native argv arrays and never a shell command.
+    - Native service actions cross the allowlisted broker by manager resource id.
+    - HTTP actions must be declared by a versioned capability document.
+    - No adapter imports service source, reads a service-owned database, or assumes a repository root.
+    - Secrets use SecretReference ids and are never copied into managed-service data.
+    - Missing optional capabilities produce unavailable actions, not startup failure.
+
+profiles:
+  book_forge:
+    display_name: Book Forge
+    current_state: implemented_external
+    runtime: external_node_process_or_native_startup_registration
+    minimum_contract:
+      status_schema: flashfork_book_forge_status_v2
+      cli_machine_output: json
+      heartbeat_seconds: 15
+      stale_seconds: 300
+    declared_capabilities:
+      - status
+      - start
+      - stop
+      - restart
+      - pause
+      - resume
+      - acquisition_status
+      - acquisition_run
+      - acquisition_retry_auth
+      - snapshot_build
+      - validate
+      - publish
+      - maintain
+      - startup_install
+      - startup_status
+      - startup_uninstall
+    configuration:
+      - node_executable
+      - cli_entrypoint
+      - workspace
+      - optional_config_path
+      - optional_native_launcher
+    health_projection:
+      - phase
+      - heartbeat_age_seconds
+      - resource_mode
+      - acquisition_state
+      - daily_request_budget
+      - last_cycle
+      - redacted_last_error
+    safety:
+      - Book Forge remains authority for its workspace, catalog, resource governor, and publication.
+      - The manager invokes only its public CLI and reads only its machine-readable status.
+      - Authentication tokens remain owned by Book Forge and are never accepted by this adapter.
+      - Pausing and resuming use Book Forge durable controls.
+      - The manager does not replace Book Forge single-instance enforcement or startup registration.
+
+  uci_arena_evidence:
+    display_name: UCI Arena Evidence Service
+    current_state: in_development_external
+    default_integration_state: unavailable
+    purpose: >
+      Produce immutable, versioned arena evidence, including time-control
+      performance curves, confidence intervals, match observations, and
+      provenance that the manager may use for planning and reports.
+    planned_capabilities:
+      - status
+      - start
+      - stop
+      - restart
+      - pause
+      - resume
+      - ingest_result_evidence
+      - rebuild_curves
+      - validate_snapshot
+      - publish_snapshot
+      - list_snapshots
+    planned_http_contract:
+      capability_document: /api/v1/capabilities
+      health: /api/v1/health
+      evidence: /api/v1/evidence
+      curves: /api/v1/curves
+      immutable_snapshots: /api/v1/snapshots
+      operations: /api/v1/operations
+    planned_artifact_contract:
+      required_fields:
+        - schema_version
+        - snapshot_id
+        - generated_at
+        - data_cutoff
+        - engine_fingerprints
+        - hardware_class
+        - time_control_domain
+        - sample_counts
+        - curve_points
+        - confidence_intervals
+        - content_hash
+        - provenance
+    current_behavior:
+      - The built-in profile appears in service setup as In development.
+      - It may be saved before its endpoint is available.
+      - Its observed state is unavailable and every runtime action explains which capability is missing.
+      - No placeholder process, synthetic health, or fabricated curve data is created.
+      - Adding the future service requires implementing this contract, not changing manager resource identity.
+      - Capability discovery, not product-name dispatch, determines which evidence actions become available.
+
+validation:
+  - Book Forge paths containing spaces remain separate argv values.
+  - Book Forge status schema mismatches produce incompatible state.
+  - Secret-looking fields in adapter output are rejected and redacted.
+  - An in-development UCI Arena Evidence Service resource persists and renders while unavailable.
+  - Unsupported actions are rejected before any process, broker, or HTTP call.
+  - Arbitrary executable paths cannot cross the privileged broker.

@@ -1,0 +1,52 @@
+schema_version: 1
+specs:
+  - spec_id: arena_foundation_v1
+    path: specs/00_READ_FIRST.yaml
+    owner: governance
+    applies_to:
+      - "*"
+  - spec_id: arena_product_contract_v1
+    path: specs/product_contract_v1.yaml
+    owner: domain
+    applies_to:
+      - include/arena/domain
+      - src/domain
+      - src/application
+      - tests
+  - spec_id: arena_control_api_v1
+    path: specs/openapi.yaml
+    owner: control_api
+    applies_to:
+      - apps/service
+      - apps/cli
+      - web/src/api
+      - specs/schemas
+  - spec_id: arena_persistence_security_v1
+    path: specs/persistence_security_v1.yaml
+    owner: storage_security
+    applies_to:
+      - src/adapters
+      - include/arena/adapters
+      - runtime
+  - spec_id: arena_platform_lifecycle_v1
+    path: specs/platform_lifecycle_v1.yaml
+    owner: platform
+    applies_to:
+      - apps/broker
+      - src/platform
+      - packaging
+  - spec_id: arena_operator_experience_v1
+    path: specs/operator_experience_v1.yaml
+    owner: operator_surface
+    applies_to:
+      - web
+      - src/adapters/report_renderer.cpp
+  - spec_id: arena_external_service_adapters_v1
+    path: specs/external_service_adapters_v1.yaml
+    owner: service_adapters
+    applies_to:
+      - include/arena/application/service_catalog.hpp
+      - src/application/service_catalog.cpp
+      - src/application/control_plane.cpp
+      - apps/cli
+      - web/src/pages/ServicesPage.tsx

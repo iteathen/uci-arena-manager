@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="UCI Arena Manager"
+    Manufacturer="UCI Arena Manager contributors"
+    Version="0.1.0"
+    UpgradeCode="930B856A-66FB-4A34-B998-8A61684EA345"
+    Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="A newer UCI Arena Manager is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="UCI Arena Manager">
+        <Component Id="ServiceComponent" Guid="*">
+          <File Id="ArenaService" Source="$(var.NativeOutput)\arena-service.exe" KeyPath="yes" />
+          <ServiceInstall
+            Id="ArenaServiceInstall"
+            Name="UCIArenaManager"
+            DisplayName="UCI Arena Manager"
+            Description="Local UCI engine, bot, match, and managed-service control plane"
+            Type="ownProcess"
+            Start="auto"
+            ErrorControl="normal"
+            Account="NT AUTHORITY\LocalService"
+            Arguments="--windows-service --data-dir &quot;[CommonAppDataFolder]UCI Arena Manager&quot; --web-root &quot;[INSTALLFOLDER]web&quot;" />
+          <ServiceControl
+            Id="ArenaServiceControl"
+            Name="UCIArenaManager"
+            Start="install"
+            Stop="both"
+            Remove="uninstall"
+            Wait="yes" />
+        </Component>
+        <Component Id="CliComponent" Guid="*">
+          <File Id="ArenaCli" Source="$(var.NativeOutput)\arena.exe" KeyPath="yes" />
+        </Component>
+        <Component Id="BrokerComponent" Guid="*">
+          <File Id="ArenaBroker" Source="$(var.NativeOutput)\arena-broker.exe" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Complete" Title="UCI Arena Manager" Level="1">
+      <ComponentRef Id="ServiceComponent" />
+      <ComponentRef Id="CliComponent" />
+      <ComponentRef Id="BrokerComponent" />
+    </Feature>
+  </Package>
+</Wix>
