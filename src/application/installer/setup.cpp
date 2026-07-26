@@ -2306,8 +2306,25 @@ json uninstall_provider_startup(
     const fs::path node =
         installed_entrypoint(
             receipts_root, "node_runtime.private", "node");
+    const json entrypoints =
+        manifest.at("entrypoints");
+    std::string control_entrypoint;
+    if (entrypoints.contains("startup")) {
+        control_entrypoint = "startup";
+    } else if (entrypoints.contains("cli")) {
+        control_entrypoint = "cli";
+    } else if (entrypoints.contains("adapter")) {
+        control_entrypoint = "adapter";
+    } else {
+        throw std::runtime_error(
+            "startup-capable component has no declared control entrypoint: " +
+            component_id);
+    }
     const fs::path cli =
-        installed_entrypoint(receipts_root, component_id, "cli");
+        installed_entrypoint(
+            receipts_root,
+            component_id,
+            control_entrypoint);
     const auto data_paths =
         receipt.value("data_paths", json::array());
     if (data_paths.empty() || !data_paths.at(0).is_string()) {
@@ -2326,9 +2343,15 @@ json uninstall_provider_startup(
         cli.string(),
         "startup",
         "uninstall",
-        "--workspace",
-        workspace.string(),
     };
+    if (control_entrypoint == "adapter") {
+        arguments.push_back("--runtime-dir");
+        arguments.push_back(
+            (workspace / "runtime").string());
+    } else {
+        arguments.push_back("--workspace");
+        arguments.push_back(workspace.string());
+    }
     const std::string configuration_path =
         receipt.value("configuration_path", "");
     if (!configuration_path.empty()) {

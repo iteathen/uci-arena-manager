@@ -324,7 +324,9 @@ transaction:
     ordering: startup_capable_consumers_before_runtimes_and_dependencies
     rules:
       - Provider-owned startup adapters are invoked through their verified
-        installed CLI and private Node runtime before payload removal.
+        installed startup, CLI, or adapter entrypoint and private Node runtime
+        before payload removal, using the provider's component-specific managed
+        workspace argument.
       - Uninstall fails closed if a provider startup registration cannot be
         stopped and removed.
       - Payload removal uses a bounded retry after provider shutdown so Windows
