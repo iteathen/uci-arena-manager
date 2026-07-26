@@ -102,7 +102,7 @@ int main(int argc, char** argv) {
             ->add_option(
                 "--kind",
                 import_kind,
-                "opening_book, syzygy, uci_engine, book_forge, evidence_service, or lichess_token_path")
+                "opening_book, syzygy, uci_engine, book_forge, evidence_service, timing_profile, or lichess_token_path")
             ->required()
             ->check(CLI::IsMember(
                 {"opening_book",
@@ -110,6 +110,7 @@ int main(int argc, char** argv) {
                  "uci_engine",
                  "book_forge",
                  "evidence_service",
+                 "timing_profile",
                  "lichess_token_path",
                  "restaurant"}));
         import_command->add_option("--path", import_source)->required();

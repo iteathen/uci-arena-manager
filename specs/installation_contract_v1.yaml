@@ -167,6 +167,7 @@ discovery:
     - uci_engine
     - book_forge
     - evidence_service
+    - timing_profile
     - lichess_token_path
     - restaurant
   precedence:
@@ -230,12 +231,15 @@ local_import:
     uci_engine: full_uci_startup_interrogation
     book_forge: provider_root_or_regular_cli_entrypoint
     evidence_service: provider_root_or_regular_cli_entrypoint
+    timing_profile: qualified_uci_time_profile_v3_regular_file
     lichess_token_path: path_reference_only_never_read
     restaurant: detect_only_import_forbidden
   rules:
     - Import never scans outside the supplied path and its explicitly allowed flat entries.
     - In-place imports save only normalized locators and never copy provider-owned data.
     - Syzygy tablebases are always referenced in place.
+    - Timing profiles remain identity-bound in-place references and are never copied or rewritten.
+    - Installing Evidence Service projects explicit timing-profile locators through its public profile-list command.
     - Managed-copy opening books reject symbolic links, nested directories, and payloads larger than the declared maximum.
     - Lichess token contents are never opened, hashed, copied, logged, returned, or placed in argv.
     - Restaurant remains visible as detect-only and is never registered, copied, installed, started, or controlled.
@@ -321,8 +325,38 @@ transaction:
     location: selected_service_workspace
     inputs: exact_receipt_verified_dependency_entrypoints
     book_forge: [stockfish]
-    evidence_service: [uci_arena_engine, stockfish, complete_game_referee]
+    evidence_service:
+      - uci_arena_engine
+      - installed_model_root
+      - stockfish
+      - complete_game_referee
+      - manager_owned_runtime_models_root
+      - explicit_timing_profile_imports
+    lichess_adapter:
+      - uci_arena_engine
+      - installed_model_root
+      - selected_qualified_timing_profile
+      - selected_opening_book_and_sidecars
+      - selected_syzygy_directory
+      - token_path_excluded
     rollback: restore_previous_configuration
+  installed_engine_handoff:
+    owner: arena_setup
+    rules:
+      - Saved opening-book and Syzygy locators are revalidated immediately
+        before a generated consumer configuration is activated.
+      - A flat opening-book directory selects strong_rare_v1.bin when present;
+        otherwise it must contain exactly one supported book file. Ambiguous
+        directories require the user to import the intended file explicitly.
+      - BookFile, BookStatsFile, BookPolicyFile, and SyzygyPath retain their
+        normalized in-place paths; large assets are never copied.
+      - Lichess adapter receipts expose the Manager-generated configuration
+        path used to hand the selected assets to the installed UCI engine.
+      - Verify regenerates the expected configuration from receipt-verified
+        component roots and currently valid saved locators, and fails on
+        missing, stale, or altered generated configuration.
+      - Runtime verification requires opening_book_active and syzygy_active,
+        not merely the presence of saved locators.
 
 trust:
   metadata: tuf
@@ -345,6 +379,11 @@ acceptance:
     receipts, loads the bundled model, builds and validates a Book Forge
     integration snapshot, completes a minimal Evidence dataset job, and
     requires Manager to project both outputs through the public CLI contracts.
+  - Complete and protected live acceptance uninstall the receipt-selected UCI
+    Arena component, prove its immutable version root and receipt were removed
+    without removing imported assets or saved locators, reinstall from the
+    candidate catalog, verify the new receipt, and only then run end-to-end
+    product and service checks.
   - Missing opening books and tablebases can be downloaded from exact signed catalog entries or imported explicitly.
   - Protected VM acceptance mounts existing opening books and Syzygy files,
     discovers them through a bounded selected-root scan, and imports them in

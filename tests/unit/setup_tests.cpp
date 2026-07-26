@@ -475,6 +475,63 @@ TEST_CASE("local imports validate UCI and never return Lichess token contents") 
     fs::remove_all(root);
 }
 
+TEST_CASE("timing profile imports require qualified exact runtime identity") {
+    const fs::path root = temporary_directory();
+    const SetupPaths paths = paths_under(root);
+    const json identity{
+        {"engine",
+         {{"executable_sha256", "sha256:" + std::string(64, 'a')}}},
+        {"model",
+         {{"model_fingerprint", "42"}, {"model_id", "model-1"}}},
+        {"search", {{"provider_effective", "cpu"}}},
+    };
+    json profile{
+        {"schema", "uci_time_profile_v3"},
+        {"qualified", true},
+        {"gates", {{"passed", true}}},
+        {"permissions",
+         {{"provider_safety_qualified", true},
+          {"forecast_shadow_qualified", false},
+          {"adaptive_play_qualified", false}}},
+        {"identity", identity},
+        {"identity_sha256",
+         "sha256:fe440d1087301bf982f8e930212ef84b4809864abd49992c21b960962a91d15d"},
+    };
+    const fs::path profile_path = root / "uci_time_profile_v3.json";
+    std::ofstream(profile_path) << profile.dump(2);
+
+    const json imported =
+        SetupEngine::import_path(paths, "timing_profile", profile_path);
+    REQUIRE(imported.at("mode") == "in_place_reference");
+    REQUIRE(
+        imported.at("validation").at("validation") ==
+        "qualified_uci_time_profile_v3");
+    REQUIRE(imported.at("validation").at("model_id") == "model-1");
+    REQUIRE(imported.at("validation").at("provider") == "cpu");
+    const json inventory = SetupEngine::inventory(paths);
+    REQUIRE(
+        inventory.at("discovery")
+            .at("timing_profile")
+            .at("selection")
+            .at("source") == "saved_locator");
+
+    profile["permissions"]["provider_safety_qualified"] = false;
+    const fs::path unsafe_profile_path = root / "unsafe-profile.json";
+    std::ofstream(unsafe_profile_path) << profile.dump(2);
+    REQUIRE_THROWS(
+        SetupEngine::import_path(
+            paths, "timing_profile", unsafe_profile_path));
+
+    profile["permissions"]["provider_safety_qualified"] = true;
+    profile["identity_sha256"] = "sha256:" + std::string(64, '0');
+    const fs::path drifted_profile_path = root / "drifted-profile.json";
+    std::ofstream(drifted_profile_path) << profile.dump(2);
+    REQUIRE_THROWS(
+        SetupEngine::import_path(
+            paths, "timing_profile", drifted_profile_path));
+    fs::remove_all(root);
+}
+
 TEST_CASE("managed copy is restricted to small flat opening books") {
     const fs::path root = temporary_directory();
     const SetupPaths paths = paths_under(root);

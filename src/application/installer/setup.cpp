@@ -967,12 +967,13 @@ json receipt_rows(const SetupPaths& paths) {
     return rows;
 }
 
-const std::array<std::string_view, 7> discovery_kinds{
+const std::array<std::string_view, 8> discovery_kinds{
     "opening_book",
     "syzygy",
     "uci_engine",
     "book_forge",
     "evidence_service",
+    "timing_profile",
     "lichess_token_path",
     "restaurant",
 };
@@ -1030,6 +1031,14 @@ json browse_contract(const std::string_view kind) {
             {{"label", "Evidence Service provider"}, {"patterns", {"arena-component.json", "*.mjs"}}});
         result["hints"] = {
             "Select a provider root containing arena-component.json or its CLI entrypoint.",
+        };
+    } else if (kind == "timing_profile") {
+        result["filters"].push_back(
+            {{"label", "Qualified UCI timing profile"},
+             {"patterns", {"uci_time_profile_v3.json", "*.json"}}});
+        result["hints"] = {
+            "Select the exact qualified uci_time_profile_v3.json published for this engine, model, provider, and hardware.",
+            "The profile remains an in-place reference and is rejected at runtime if its identity is stale.",
         };
     } else if (kind == "lichess_token_path") {
         result["filters"].push_back(
@@ -1617,6 +1626,81 @@ json validate_uci_locator(const fs::path& path) {
     };
 }
 
+json validate_timing_profile_locator(const fs::path& path) {
+    if (!fs::is_regular_file(path)) {
+        throw std::runtime_error(
+            "timing profile locator must reference a regular file");
+    }
+    std::error_code error;
+    const auto size = fs::file_size(path, error);
+    if (error || size == 0 || size > 16ULL * 1024ULL * 1024ULL) {
+        throw std::runtime_error(
+            "timing profile must be non-empty and no larger than 16 MiB");
+    }
+    const json profile = read_json(path);
+    if (profile.value("schema", "") != "uci_time_profile_v3" ||
+        profile.value("qualified", false) != true ||
+        profile.value("gates", json::object()).value("passed", false) != true) {
+        throw std::runtime_error(
+            "timing profile is not a qualified uci_time_profile_v3");
+    }
+    const json permissions =
+        profile.value("permissions", json::object());
+    for (const auto* field :
+         {"provider_safety_qualified",
+          "forecast_shadow_qualified",
+          "adaptive_play_qualified"}) {
+        if (!permissions.contains(field) ||
+            !permissions.at(field).is_boolean()) {
+            throw std::runtime_error(
+                "timing profile permissions are incomplete");
+        }
+    }
+    if (!permissions.at("provider_safety_qualified").get<bool>()) {
+        throw std::runtime_error(
+            "timing profile lacks provider-safety qualification");
+    }
+    const json identity = profile.value("identity", json::object());
+    const std::string identity_sha256 =
+        profile.value("identity_sha256", "");
+    const std::string expected_identity_sha256 =
+        "sha256:" + sha256_text(identity.dump());
+    if (!identity.is_object() ||
+        identity_sha256 != expected_identity_sha256) {
+        throw std::runtime_error(
+            "timing profile identity digest is missing or invalid");
+    }
+    const std::string model_id =
+        identity.value("model", json::object()).value("model_id", "");
+    const std::string model_fingerprint =
+        identity.value("model", json::object())
+            .value("model_fingerprint", "");
+    const std::string engine_sha256 =
+        identity.value("engine", json::object())
+            .value("executable_sha256", "");
+    const std::string provider =
+        identity.value("search", json::object())
+            .value("provider_effective", "");
+    if (!valid_identifier(model_id) ||
+        model_fingerprint.empty() ||
+        engine_sha256.size() != 71 ||
+        !engine_sha256.starts_with("sha256:") ||
+        provider.empty()) {
+        throw std::runtime_error(
+            "timing profile exact runtime identity is incomplete");
+    }
+    return {
+        {"validation", "qualified_uci_time_profile_v3"},
+        {"sha256", sha256_file(path)},
+        {"identity_sha256", identity_sha256},
+        {"model_id", model_id},
+        {"model_fingerprint", model_fingerprint},
+        {"engine_sha256", engine_sha256},
+        {"provider", provider},
+        {"permissions", permissions},
+    };
+}
+
 json validate_import_locator(
     const std::string& kind,
     const fs::path& path) {
@@ -1646,6 +1730,9 @@ json validate_import_locator(
     if (kind == "evidence_service") {
         return validate_provider_locator(
             path, "uci_arena_evidence.service");
+    }
+    if (kind == "timing_profile") {
+        return validate_timing_profile_locator(path);
     }
     if (kind == "lichess_token_path") {
         if (!fs::is_regular_file(path)) {
@@ -1908,9 +1995,149 @@ fs::path installed_entrypoint(
         component_id + ":" + entrypoint_name);
 }
 
-json generated_service_config(
+fs::path installed_active_root(
+    const fs::path& receipts_root,
+    const std::string& component_id) {
+    const json receipt =
+        read_json(receipts_root / (component_id + ".json"));
+    if (receipt.value("schema", "") != "arena_install_receipt_v1" ||
+        receipt.value("component_id", "") != component_id ||
+        receipt.value("state", "") != "installed_managed" ||
+        !receipt.contains("active_root") ||
+        !receipt.at("active_root").is_string()) {
+        throw std::runtime_error(
+            "required installed dependency is unavailable: " + component_id);
+    }
+    const fs::path root =
+        normalized_absolute(receipt.at("active_root").get<std::string>());
+    if (!fs::is_directory(root) || contains_symbolic_link(root)) {
+        throw std::runtime_error(
+            "required installed dependency root is unavailable: " +
+            component_id);
+    }
+    return root;
+}
+
+std::optional<fs::path> saved_locator_path(
+    const fs::path& data_root,
+    const std::string& kind) {
+    const fs::path locator_path =
+        data_root / "locators" / (kind + ".json");
+    if (!fs::is_regular_file(locator_path) ||
+        contains_symbolic_link(locator_path)) {
+        return std::nullopt;
+    }
+    const json locator = read_json(locator_path);
+    if (locator.value("schema", "") != "arena_saved_locator_v1" ||
+        locator.value("schema_version", 0) != 1 ||
+        locator.value("kind", "") != kind ||
+        locator.value("mode", "") != "in_place_reference" ||
+        !locator.contains("path") ||
+        !locator.at("path").is_string()) {
+        throw std::runtime_error(
+            "saved " + kind + " locator is invalid");
+    }
+    const fs::path path =
+        normalized_absolute(locator.at("path").get<std::string>());
+    static_cast<void>(validate_import_locator(kind, path));
+    return path;
+}
+
+json timing_profile_uci_options(const json& profile) {
+    const json search =
+        profile.at("identity").at("search");
+    json options = search.value("extra_engine_options", json::object());
+    if (!options.is_object()) {
+        throw std::runtime_error(
+            "timing profile extra engine options are invalid");
+    }
+    options["SearchCore"] = search.at("search_core");
+    options["Threads"] = search.at("threads");
+    options["RootWorkers"] = search.at("root_workers");
+    options["V2SplitDepth"] = search.at("split_depth");
+    options["BackgroundSearch"] = search.at("background_search");
+    options["NNSpeculation"] = search.at("nn_speculation");
+    options["NNBatchSize"] = search.at("batch_size_effective");
+    options["NNBatchWaitUs"] = search.at("batch_wait_us_effective");
+    options["OnnxProvider"] = search.at("provider_effective");
+    return options;
+}
+
+json installed_engine_locator_options(const fs::path& data_root) {
+    json options = json::object();
+    if (const auto syzygy =
+            saved_locator_path(data_root, "syzygy");
+        syzygy.has_value()) {
+        options["SyzygyPath"] = syzygy->string();
+    }
+    const auto opening_book =
+        saved_locator_path(data_root, "opening_book");
+    if (!opening_book.has_value()) {
+        return options;
+    }
+
+    fs::path book_file;
+    if (fs::is_regular_file(*opening_book)) {
+        book_file = *opening_book;
+    } else {
+        const fs::path canonical =
+            *opening_book / "strong_rare_v1.bin";
+        if (fs::is_regular_file(canonical) &&
+            !fs::is_symlink(canonical)) {
+            book_file = canonical;
+        } else {
+            std::vector<fs::path> candidates;
+            for (const auto& entry : fs::directory_iterator(*opening_book)) {
+                if (!entry.is_regular_file() || entry.is_symlink()) {
+                    continue;
+                }
+                std::string extension =
+                    entry.path().extension().string();
+                std::ranges::transform(
+                    extension,
+                    extension.begin(),
+                    [](const unsigned char character) {
+                        return static_cast<char>(
+                            std::tolower(character));
+                    });
+                if (extension == ".bin" || extension == ".book") {
+                    candidates.push_back(entry.path());
+                }
+            }
+            std::ranges::sort(candidates);
+            if (candidates.size() != 1) {
+                throw std::runtime_error(
+                    "opening-book directory is ambiguous; import the intended book file explicitly");
+            }
+            book_file = candidates.front();
+        }
+    }
+    options["OwnBook"] = true;
+    options["BookFile"] =
+        normalized_absolute(book_file).string();
+    const fs::path stats =
+        book_file.parent_path() /
+        (book_file.stem().string() + ".ffstats");
+    if (fs::is_regular_file(stats) && !fs::is_symlink(stats)) {
+        options["BookStatsFile"] =
+            normalized_absolute(stats).string();
+    }
+    const fs::path policy =
+        book_file.parent_path() /
+        (book_file.stem().string() + ".policy");
+    if (fs::is_regular_file(policy) && !fs::is_symlink(policy)) {
+        options["BookPolicyFile"] =
+            normalized_absolute(policy).string();
+    }
+    return options;
+}
+
+json generated_component_config(
     const std::string& component_id,
-    const fs::path& receipts_root) {
+    const fs::path& receipts_root,
+    const fs::path& workspace,
+    const fs::path& component_root) {
+    const fs::path data_root = receipts_root.parent_path();
     if (component_id == "book_forge.service") {
         return {
             {"schema", "flashfork_book_forge_config_v1"},
@@ -1920,11 +2147,26 @@ json generated_service_config(
         };
     }
     if (component_id == "uci_arena_evidence.service") {
-        return {
+        const fs::path engine = installed_entrypoint(
+            receipts_root, "uci_arena.engine", "uci");
+        const fs::path model_root =
+            installed_active_root(
+                receipts_root, "uci_arena.engine") /
+            "models" / "default";
+        if (!fs::is_directory(model_root) ||
+            contains_symbolic_link(model_root)) {
+            throw std::runtime_error(
+                "installed UCI Arena model root is unavailable");
+        }
+        json config{
             {"schema", "uci_arena_evidence_service_config_v1"},
-            {"engine",
-             installed_entrypoint(
-                 receipts_root, "uci_arena.engine", "uci").string()},
+            {"workspace", workspace.string()},
+            {"activeModelPointer",
+             (workspace / "manager-config.json").string()},
+            {"runtimeModelsRoot",
+             (workspace / "runtime-models").string()},
+            {"profileImports", json::array()},
+            {"engine", engine.string()},
             {"stockfish",
              installed_entrypoint(
                  receipts_root, "stockfish.engine", "stockfish").string()},
@@ -1932,6 +2174,64 @@ json generated_service_config(
              installed_entrypoint(
                  receipts_root, "uci_arena.engine", "referee").string()},
         };
+        if (const auto profile_path =
+                saved_locator_path(data_root, "timing_profile");
+            profile_path.has_value()) {
+            const json profile = read_json(*profile_path);
+            const json identity = profile.at("identity");
+            config["profileImports"].push_back(
+                profile_path->string());
+            config["model_id"] =
+                identity.at("model").at("model_id");
+            config["model_fingerprint"] =
+                identity.at("model").at("model_fingerprint");
+            config["model_root"] = model_root.string();
+            config["provider"] =
+                identity.at("search").at("provider_effective");
+            config["hardware_driver_fingerprint"] =
+                identity.at("provider")
+                    .value("hardware_driver_fingerprint", "");
+            config["engine_path"] = engine.string();
+            config["engine_sha256"] =
+                identity.at("engine").at("executable_sha256");
+            config["uci_options"] =
+                timing_profile_uci_options(profile);
+        }
+        return config;
+    }
+    if (component_id == "lichess.adapter") {
+        const fs::path template_path =
+            component_root /
+            "deploy" / "lichess" /
+            "config.uci_arena.template.yml";
+        json config = read_json(template_path);
+        if (config.value("schema", "") !=
+            "uci_arena_lichess_adapter_v5") {
+            throw std::runtime_error(
+                "installed Lichess adapter template is incompatible");
+        }
+        const fs::path engine = installed_entrypoint(
+            receipts_root, "uci_arena.engine", "uci");
+        const fs::path engine_root = installed_active_root(
+            receipts_root, "uci_arena.engine");
+        config["engine"]["executable"] = engine.string();
+        config["engine"]["working_directory"] =
+            engine_root.string();
+        config["engine"]["uci_options"]["ModelRoot"] =
+            (engine_root / "models" / "default").string();
+        if (const auto profile_path =
+                saved_locator_path(data_root, "timing_profile");
+            profile_path.has_value()) {
+            config["engine"]["time_profile"] =
+                profile_path->string();
+        }
+        const json locator_options =
+            installed_engine_locator_options(data_root);
+        for (const auto& [name, value] :
+             locator_options.items()) {
+            config["engine"]["uci_options"][name] = value;
+        }
+        return config;
     }
     return json();
 }
@@ -2635,11 +2935,14 @@ json SetupEngine::apply(
             json data_paths = json::array();
             std::string configuration_path;
             if (id == "book_forge.service" ||
-                id == "uci_arena_evidence.service") {
+                id == "uci_arena_evidence.service" ||
+                id == "lichess.adapter") {
                 const fs::path workspace =
                     paths.workspace_root /
                     (id == "book_forge.service" ? "book-forge" :
-                                                   "evidence-service");
+                     id == "uci_arena_evidence.service" ?
+                         "evidence-service" :
+                         "lichess-adapter");
                 if (action.value("enabled", true)) {
                     fs::create_directories(workspace);
                     const fs::path config_path =
@@ -2660,7 +2963,11 @@ json SetupEngine::apply(
                     }
                     write_json_atomic(
                         config_path,
-                        generated_service_config(id, receipts_root));
+                        generated_component_config(
+                            id,
+                            receipts_root,
+                            workspace,
+                            target));
                     configuration_path = config_path.string();
                 }
                 data_paths.push_back(workspace.string());
@@ -2820,6 +3127,27 @@ json SetupEngine::verify(const SetupPaths& paths) {
                     throw std::runtime_error(
                         "activated knowledge file verification failed: " +
                         path.string());
+                }
+            }
+            const std::string configuration_path =
+                receipt.value("configuration_path", "");
+            if (!configuration_path.empty()) {
+                const fs::path configuration =
+                    normalized_absolute(configuration_path);
+                if (!within(paths.workspace_root, configuration) ||
+                    !fs::is_regular_file(configuration) ||
+                    contains_symbolic_link(configuration)) {
+                    throw std::runtime_error(
+                        "generated component configuration is unavailable");
+                }
+                const json expected = generated_component_config(
+                    receipt.at("component_id").get<std::string>(),
+                    paths.data_root / "receipts",
+                    configuration.parent_path(),
+                    receipt.at("active_root").get<std::string>());
+                if (read_json(configuration) != expected) {
+                    throw std::runtime_error(
+                        "generated component configuration drifted from its verified installer inputs");
                 }
             }
             results.push_back(

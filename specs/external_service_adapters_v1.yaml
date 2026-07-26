@@ -146,6 +146,7 @@ profiles:
       - dataset_list
       - dataset_show
       - dataset_export
+      - profile_list
       - prune
       - startup_install
       - startup_status
@@ -189,8 +190,11 @@ profiles:
       source: public_cli_only
       contract:
         - Manager validates the status schema and obtains dataset metadata through dataset list.
+        - Manager obtains qualified timing-profile metadata through profile list and never discovers profile files by scanning service storage.
         - Every dataset must use uci_arena_evidence_dataset_v1 and retain its typed target identity, authority, observation count, and completion state.
         - Manager stores only a bounded allowlisted projection of dataset identity, campaign, state, target identity, authority, observation count, and timestamps; unknown fields are discarded and sensitive-looking nested fields are redacted.
+        - Every timing profile must use uci_arena_evidence_profile_v1 and retain its path, digest, exact runtime identity, permissions, publication source, and service-publication metadata.
+        - A timing profile is visible but remains non-consumable by an engine whose exact identity does not match; Manager never rewrites profile identity or permissions.
         - Manager never requests or stores raw observations and never reads the service SQLite catalog.
         - Waiting for a target and an empty dataset set remain healthy.
         - A dataset schema or identity mismatch marks the integration incompatible.
@@ -205,6 +209,7 @@ profiles:
       - Registration validates Node and CLI paths before saving.
       - Start, stop, restart, pause, resume, and status use native argument arrays.
       - A status schema mismatch produces incompatible state.
+      - Qualified timing profiles appear in the bounded output integration projection.
       - Waiting for a target or idle resources remains healthy service state.
 
 validation:

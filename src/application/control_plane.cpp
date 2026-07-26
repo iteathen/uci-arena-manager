@@ -825,6 +825,102 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                                 });
                         }
 
+                        auto profile_arguments = base;
+                        profile_arguments.insert(
+                            profile_arguments.end(), {"profile", "list"});
+                        add_locator_options(profile_arguments);
+                        profile_arguments.push_back("--json");
+                        const json profiles = process_supervisor_.run_json(
+                            node, cli.parent_path(), profile_arguments);
+                        if (!profiles.is_array() || profiles.size() > 64) {
+                            throw std::runtime_error(
+                                "Evidence Service timing-profile projection is invalid");
+                        }
+                        json profile_projection = json::array();
+                        json selected_profile = nullptr;
+                        for (const auto& profile : profiles) {
+                            const std::string source =
+                                required_string(profile, "source");
+                            const std::string path =
+                                required_string(profile, "path");
+                            const std::string sha256 =
+                                required_string(profile, "sha256");
+                            const std::string identity_sha256 =
+                                required_string(
+                                    profile, "identitySha256");
+                            if (profile.value("schema", "") !=
+                                    "uci_arena_evidence_profile_v1" ||
+                                (source != "service_live_cache" &&
+                                 source != "explicit_import") ||
+                                path.size() > 32 * 1024 ||
+                                sha256.size() != 64 ||
+                                !std::ranges::all_of(
+                                    sha256,
+                                    [](const unsigned char character) {
+                                        return std::isxdigit(character) != 0;
+                                    }) ||
+                                identity_sha256.size() != 71 ||
+                                !identity_sha256.starts_with("sha256:") ||
+                                profile.value("qualified", false) != true ||
+                                !profile.contains("targetIdentity") ||
+                                !profile.at("targetIdentity").is_object() ||
+                                !profile.contains("permissions") ||
+                                !profile.at("permissions").is_object()) {
+                                throw std::runtime_error(
+                                    "Evidence Service timing-profile identity contract mismatch");
+                            }
+                            const json permissions =
+                                profile.at("permissions");
+                            for (const auto* field :
+                                 {"provider_safety_qualified",
+                                  "forecast_shadow_qualified",
+                                  "adaptive_play_qualified"}) {
+                                if (!permissions.contains(field) ||
+                                    !permissions.at(field).is_boolean()) {
+                                    throw std::runtime_error(
+                                        "Evidence Service timing-profile permissions are incomplete");
+                                }
+                            }
+                            json projected{
+                                {"schema",
+                                 "uci_arena_evidence_profile_v1"},
+                                {"source", source},
+                                {"path", path},
+                                {"sha256", sha256},
+                                {"profile_schema",
+                                 profile.value("profileSchema", "")},
+                                {"qualified", true},
+                                {"published_at",
+                                 profile.value("publishedAt", "")},
+                                {"identity_sha256", identity_sha256},
+                                {"target_identity",
+                                 bounded_redacted_external_value(
+                                     profile.at("targetIdentity"),
+                                     64 * 1024,
+                                     "Evidence timing-profile target identity")},
+                                {"permissions", permissions},
+                                {"service_publication",
+                                 profile.contains("servicePublication")
+                                     ? bounded_redacted_external_value(
+                                           profile.at("servicePublication"),
+                                           64 * 1024,
+                                           "Evidence timing-profile publication")
+                                     : json(nullptr)},
+                            };
+                            profile_projection.push_back(projected);
+                            if (selected_profile.is_null() ||
+                                (source == "service_live_cache" &&
+                                 selected_profile.value("source", "") !=
+                                     "service_live_cache") ||
+                                (source ==
+                                     selected_profile.value("source", "") &&
+                                 projected.value("published_at", "") >
+                                     selected_profile.value(
+                                         "published_at", ""))) {
+                                selected_profile = std::move(projected);
+                            }
+                        }
+
                         const json control =
                             status_payload.value("control", json::object());
                         const json collection =
@@ -861,6 +957,11 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                             {"authority", "uci_arena_evidence_service"},
                             {"dataset_count", datasets.size()},
                             {"datasets", std::move(dataset_projection)},
+                            {"timing_profile_count", profiles.size()},
+                            {"timing_profiles",
+                             std::move(profile_projection)},
+                            {"selected_timing_profile",
+                             std::move(selected_profile)},
                         };
                     } else {
                         json snapshots = json::array();

@@ -12,12 +12,16 @@ param(
     [string]$ExpectedAccount,
     [Parameter(Mandatory = $true)]
     [string]$Opponent,
-    [string]$Config,
     [Parameter(Mandatory = $true)]
     [string]$SingleGameProfile,
+    [Parameter(Mandatory = $true)]
     [string]$TimeProfile,
     [Parameter(Mandatory = $true)]
     [string]$CapacityProfile,
+    [Parameter(Mandatory = $true)]
+    [string]$OpeningBookPath,
+    [Parameter(Mandatory = $true)]
+    [string]$SyzygyPath,
     [string]$WorkspaceRoot,
     [switch]$AllowUnsignedDevelopmentCatalog
 )
@@ -58,19 +62,17 @@ foreach ($path in @(
     $Catalog,
     $TokenFile,
     $SingleGameProfile,
+    $TimeProfile,
     $CapacityProfile
 )) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Protected acceptance input is unavailable: $path"
     }
 }
-if (-not [string]::IsNullOrWhiteSpace($Config) -and
-    -not (Test-Path -LiteralPath $Config -PathType Leaf)) {
-    throw "Protected acceptance config is unavailable: $Config"
-}
-if (-not [string]::IsNullOrWhiteSpace($TimeProfile) -and
-    -not (Test-Path -LiteralPath $TimeProfile -PathType Leaf)) {
-    throw "Protected acceptance time profile is unavailable: $TimeProfile"
+foreach ($path in @($OpeningBookPath, $SyzygyPath)) {
+    if (-not (Test-Path -LiteralPath $path)) {
+        throw "Protected acceptance asset path is unavailable: $path"
+    }
 }
 
 New-Item -ItemType Directory -Force $RunRoot | Out-Null
@@ -114,9 +116,31 @@ if ($inventory.discovery.lichess_token_path.selection.source -ne "saved_locator"
     throw "Manager did not select the saved existing-account token-file reference"
 }
 
+foreach ($asset in @(
+    @{ Kind = "timing_profile"; Path = $TimeProfile },
+    @{ Kind = "opening_book"; Path = $OpeningBookPath },
+    @{ Kind = "syzygy"; Path = $SyzygyPath }
+)) {
+    $importText = @(
+        & $Setup @common import `
+            --kind $asset.Kind `
+            --path (Resolve-Path -LiteralPath $asset.Path).Path 2>&1
+    ) -join [Environment]::NewLine
+    if ($LASTEXITCODE -ne 0) {
+        throw "Existing $($asset.Kind) import failed: $importText"
+    }
+    $import = $importText | ConvertFrom-Json
+    if ($import.mode -ne "in_place_reference" -or
+        $import.state -ne "saved") {
+        throw "Manager did not retain $($asset.Kind) as an in-place reference"
+    }
+}
+
 & $Setup @common apply `
     --preset custom `
     --component lichess.adapter `
+    --component book_forge.service `
+    --component uci_arena_evidence.service `
     --offline `
     --yes
 if ($LASTEXITCODE -ne 0) {
@@ -127,21 +151,132 @@ if ($LASTEXITCODE -ne 0) {
     throw "Candidate Lichess installation verification failed"
 }
 
+$initialEngineReceipt = Get-Receipt "uci_arena.engine"
+$initialEngineRoot = [string]$initialEngineReceipt.active_root
+& $Setup @common uninstall `
+    --component uci_arena.engine `
+    --yes
+if ($LASTEXITCODE -ne 0) {
+    throw "Candidate UCI Arena uninstall failed"
+}
+if (Test-Path -LiteralPath $initialEngineRoot) {
+    throw "Candidate UCI Arena immutable version root survived uninstall"
+}
+if (Test-Path -LiteralPath (Join-Path (Join-Path $RunRoot "data/receipts") "uci_arena.engine.json")) {
+    throw "Candidate UCI Arena receipt survived uninstall"
+}
+foreach ($path in @(
+    $TokenFile,
+    $TimeProfile,
+    $OpeningBookPath,
+    $SyzygyPath
+)) {
+    if (-not (Test-Path -LiteralPath $path)) {
+        throw "Normal uninstall removed an imported external asset: $path"
+    }
+}
+& $Setup @common apply `
+    --preset custom `
+    --component lichess.adapter `
+    --component book_forge.service `
+    --component uci_arena_evidence.service `
+    --offline `
+    --yes
+if ($LASTEXITCODE -ne 0) {
+    throw "Candidate UCI Arena reinstall failed"
+}
+& $Setup @common verify
+if ($LASTEXITCODE -ne 0) {
+    throw "Candidate UCI Arena reinstall verification failed"
+}
+
 $node = Get-Entrypoint "node_runtime.private" "node"
 $acceptance = Get-Entrypoint "lichess.adapter" "live_acceptance"
+$uciSmoke = Get-Entrypoint "lichess.adapter" "uci_smoke"
 $engine = Get-Entrypoint "uci_arena.engine" "uci"
+$evidenceCli = Get-Entrypoint "uci_arena_evidence.service" "cli"
 $adapterReceipt = Get-Receipt "lichess.adapter"
 $engineReceipt = Get-Receipt "uci_arena.engine"
-$installedConfig = Join-Path $adapterReceipt.active_root "deploy/lichess/config.uci_arena.template.yml"
-if ([string]::IsNullOrWhiteSpace($Config)) {
-    $Config = $installedConfig
-}
+$evidenceReceipt = Get-Receipt "uci_arena_evidence.service"
+$Config = [string]$adapterReceipt.configuration_path
 if (-not (Test-Path -LiteralPath $Config -PathType Leaf)) {
-    throw "Candidate Lichess configuration is unavailable: $Config"
+    throw "Manager-generated Lichess configuration is unavailable: $Config"
 }
+$installedConfig = Get-Content -Raw -LiteralPath $Config | ConvertFrom-Json
+$resolvedBookRoot = (Resolve-Path -LiteralPath $OpeningBookPath).Path
+$resolvedSyzygy = (Resolve-Path -LiteralPath $SyzygyPath).Path
+$resolvedTimeProfile = (Resolve-Path -LiteralPath $TimeProfile).Path
+if ([IO.Path]::GetFullPath([string]$installedConfig.engine.uci_options.SyzygyPath) -ne
+    [IO.Path]::GetFullPath($resolvedSyzygy)) {
+    throw "Installer did not hand the saved Syzygy locator to the installed engine"
+}
+$installedBookFile = [string]$installedConfig.engine.uci_options.BookFile
+if (-not (Test-Path -LiteralPath $installedBookFile -PathType Leaf) -or
+    [IO.Path]::GetFullPath((Split-Path -Parent $installedBookFile)) -ne
+        [IO.Path]::GetFullPath(
+            $(if (Test-Path -LiteralPath $resolvedBookRoot -PathType Container) {
+                $resolvedBookRoot
+            } else {
+                Split-Path -Parent $resolvedBookRoot
+            })
+        )) {
+    throw "Installer did not hand the saved opening-book locator to the installed engine"
+}
+if ([IO.Path]::GetFullPath([string]$installedConfig.engine.time_profile) -ne
+    [IO.Path]::GetFullPath($resolvedTimeProfile)) {
+    throw "Installer did not hand the saved timing profile to the installed adapter"
+}
+
+$evidenceConfigPath = [string]$evidenceReceipt.configuration_path
+if (-not (Test-Path -LiteralPath $evidenceConfigPath -PathType Leaf)) {
+    throw "Manager-generated Evidence Service configuration is unavailable"
+}
+$evidenceProfilesText = @(
+    & $node $evidenceCli `
+        --workspace ([string]$evidenceReceipt.data_paths[0]) `
+        --config $evidenceConfigPath `
+        profile list --json 2>&1
+) -join [Environment]::NewLine
+if ($LASTEXITCODE -ne 0) {
+    throw "Installed Evidence Service timing-profile projection failed: $evidenceProfilesText"
+}
+$evidenceProfiles = @($evidenceProfilesText | ConvertFrom-Json)
+$projectedProfile = @(
+    $evidenceProfiles |
+        Where-Object {
+            $_.qualified -eq $true -and
+            [IO.Path]::GetFullPath([string]$_.path) -eq
+                [IO.Path]::GetFullPath($resolvedTimeProfile)
+        }
+)
+if ($projectedProfile.Count -ne 1) {
+    throw "Installed Evidence Service did not project the imported timing profile"
+}
+$TimeProfile = [string]$projectedProfile[0].path
+
 $modelRoot = Join-Path (Join-Path $engineReceipt.active_root "models") "default"
 if (-not (Test-Path -LiteralPath $modelRoot -PathType Container)) {
     throw "Candidate model root is unavailable: $modelRoot"
+}
+
+$uciSmokeText = @(
+    & $node $uciSmoke `
+        --config $Config `
+        --repo-root $engineReceipt.active_root `
+        --depth 1 `
+        --timeout 120 2>&1
+) -join [Environment]::NewLine
+if ($LASTEXITCODE -ne 0) {
+    throw "Installed engine asset integration smoke failed: $uciSmokeText"
+}
+$uciSmokeResult = $uciSmokeText | ConvertFrom-Json
+if ($uciSmokeResult.opening_book_active -ne $true -or
+    [int64]$uciSmokeResult.opening_book_entries -lt 1) {
+    throw "Installed engine did not load the Manager-selected opening book"
+}
+if ($uciSmokeResult.syzygy_active -ne $true -or
+    [int]$uciSmokeResult.syzygy_loaded_cardinality -lt 3) {
+    throw "Installed engine did not load the Manager-selected Syzygy tables"
 }
 
 $acceptanceArguments = @(
@@ -161,12 +296,10 @@ $acceptanceArguments = @(
     "--attempts", "3",
     "--minutes", "20"
 )
-if (-not [string]::IsNullOrWhiteSpace($TimeProfile)) {
-    $acceptanceArguments += @(
-        "--time-profile",
-        (Resolve-Path -LiteralPath $TimeProfile).Path
-    )
-}
+$acceptanceArguments += @(
+    "--time-profile",
+    (Resolve-Path -LiteralPath $TimeProfile).Path
+)
 
 & $node $acceptance @acceptanceArguments
 if ($LASTEXITCODE -ne 0) {

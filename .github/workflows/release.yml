@@ -523,10 +523,10 @@ jobs:
         run: |
           foreach ($name in @(
             'ARENA_LICHESS_TOKEN_FILE',
-            'ARENA_LICHESS_CONFIG_PATH',
             'ARENA_LICHESS_SINGLE_GAME_PROFILE_PATH',
             'ARENA_LICHESS_TIME_PROFILE_PATH',
             'ARENA_LICHESS_CAPACITY_PROFILE_PATH',
+            'ARENA_VM_ASSET_ROOT',
             'ARENA_VM_WRITABLE_ROOT'
           )) {
             $value = [Environment]::GetEnvironmentVariable($name)
@@ -551,10 +551,11 @@ jobs:
             -TokenFile $env:ARENA_LICHESS_TOKEN_FILE `
             -ExpectedAccount '${{ vars.LICHESS_ACCOUNT }}' `
             -Opponent '${{ vars.LICHESS_PUBLIC_BOT }}' `
-            -Config $env:ARENA_LICHESS_CONFIG_PATH `
             -SingleGameProfile $env:ARENA_LICHESS_SINGLE_GAME_PROFILE_PATH `
             -TimeProfile $env:ARENA_LICHESS_TIME_PROFILE_PATH `
             -CapacityProfile $env:ARENA_LICHESS_CAPACITY_PROFILE_PATH `
+            -OpeningBookPath (Join-Path $env:ARENA_VM_ASSET_ROOT 'opening_books') `
+            -SyzygyPath (Join-Path $env:ARENA_VM_ASSET_ROOT 'syzygy') `
             -AllowUnsignedDevelopmentCatalog
           if ($LASTEXITCODE -ne 0) { throw 'Protected Lichess acceptance failed' }
 

@@ -98,6 +98,22 @@ TEST_CASE("Book Forge and Evidence outputs cross only validated public contracts
         REQUIRE(dataset.at("observation_count") == 12);
         REQUIRE(dataset.at("authority").at("password") == "[REDACTED]");
         REQUIRE_FALSE(dataset.contains("observations"));
+        const json& timing_profile =
+            evidence_data.at("output_integration")
+                .at("selected_timing_profile");
+        REQUIRE(
+            evidence_data.at("output_integration")
+                .at("timing_profile_count") == 1);
+        REQUIRE(timing_profile.at("source") == "service_live_cache");
+        REQUIRE(
+            timing_profile.at("target_identity").at("model_id") ==
+            "model-1");
+        REQUIRE(
+            timing_profile.at("service_publication").at("password") ==
+            "[REDACTED]");
+        REQUIRE(
+            timing_profile.at("permissions")
+                .at("provider_safety_qualified") == true);
     }
     fs::remove_all(root);
 }

@@ -21,6 +21,13 @@ int main(int argc, char** argv) {
             << '\n';
         return 0;
     }
+    if (evidence && command == "profile" && argc > 3 &&
+        std::string(argv[3]) == "list") {
+        std::cout
+            << R"([{"schema":"uci_arena_evidence_profile_v1","source":"service_live_cache","path":"C:/manager/runtime-models/model-1/cache/uci_time_profile_v3.json","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","profileSchema":"uci_time_profile_v3","qualified":true,"publishedAt":"2026-07-26T00:00:00Z","identitySha256":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","targetIdentity":{"model_id":"model-1","model_fingerprint":"42","engine_sha256":"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","provider":"directml"},"permissions":{"provider_safety_qualified":true,"forecast_shadow_qualified":true,"adaptive_play_qualified":false},"servicePublication":{"schema":"uci_arena_evidence_profile_publication_v1","dataset_id":"dataset-1","password":"must-not-project"}}])"
+            << '\n';
+        return 0;
+    }
     if (!evidence && command == "status") {
         std::cout
             << R"({"ok":true,"status":{"schema":"flashfork_book_forge_status_v2","control":{"paused":false},"channels":[{"channel":"integration","snapshot_id":"0123456789abcdefabcd","directory":"C:/signed/book-snapshot","published_at":"2026-07-25T00:00:00Z"}]}})"

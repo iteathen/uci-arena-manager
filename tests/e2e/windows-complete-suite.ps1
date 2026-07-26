@@ -213,6 +213,37 @@ try {
     }
     $stages.Add("verify")
 
+    $initialUciReceipt = Get-Receipt "uci_arena.engine"
+    $initialUciRoot = [string]$initialUciReceipt.active_root
+    $uninstall = Invoke-JsonCommand $resolvedSetup (
+        $common + @(
+            "uninstall",
+            "--component", "uci_arena.engine",
+            "--yes"
+        )
+    )
+    if (Test-Path -LiteralPath $initialUciRoot) {
+        throw "UCI Arena immutable version root survived normal uninstall"
+    }
+    $initialUciReceiptPath = Join-Path (
+        Join-Path $RunRoot "data/receipts"
+    ) "uci_arena.engine.json"
+    if (Test-Path -LiteralPath $initialUciReceiptPath) {
+        throw "UCI Arena receipt survived normal uninstall"
+    }
+    $apply = Invoke-JsonCommand $resolvedSetup (
+        $common + @("apply", "--preset", "complete_arena", "--offline", "--yes")
+    )
+    $verify = Invoke-JsonCommand $resolvedSetup ($common + @("verify"))
+    if (-not $verify.ok) {
+        throw "reinstalled UCI Arena verification failed"
+    }
+    $reinstalledUciReceipt = Get-Receipt "uci_arena.engine"
+    if (-not (Test-Path -LiteralPath $reinstalledUciReceipt.active_root -PathType Container)) {
+        throw "UCI Arena immutable version root was not restored"
+    }
+    $stages.Add("uci_uninstall_reinstall")
+
     $node = Get-Entrypoint "node_runtime.private" "node"
     $engine = Get-Entrypoint "uci_arena.engine" "uci"
     $uciReceipt = Get-Receipt "uci_arena.engine"

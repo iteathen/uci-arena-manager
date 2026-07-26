@@ -263,6 +263,7 @@ json evidence_service_profile() {
              "dataset_list",
              "dataset_show",
              "dataset_export",
+             "profile_list",
              "prune",
              "startup_install",
              "startup_status",

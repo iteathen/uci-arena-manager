@@ -23,6 +23,7 @@
         "uci_engine",
         "book_forge",
         "evidence_service",
+        "timing_profile",
         "lichess_token_path",
         "restaurant"
       ]
