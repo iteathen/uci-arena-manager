@@ -1,7 +1,7 @@
 #pragma once
 
-#include "arena\application\control_plane.hpp"
-#include "arena\application\local_auth.hpp"
+#include "arena/application/control_plane.hpp"
+#include "arena/application/local_auth.hpp"
 
 #include <drogon/WebSocketController.h>
 
