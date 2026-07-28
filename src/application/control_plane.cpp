@@ -150,100 +150,133 @@ void ControlPlane::reconcile_installed_services(
         const json discovered =
             ServiceCatalog::installed_registrations(manager_data_root);
         json changes = json::array();
+        json errors = discovered.at("errors");
+        std::vector<std::string> refresh_ids;
         for (const auto& registration : discovered.at("services")) {
-        const std::string component_id =
-            registration.at("installed_component_id").get<std::string>();
-        std::optional<ports::ResourceRecord> existing;
-        for (const auto& resource :
-             store_->list_resources("managed_service", 10'000, 0)) {
-            try {
-                const json data = json::parse(resource.data_json);
-                if (data.value("installed_component_id", "") == component_id) {
-                    existing = resource;
-                    break;
+            const std::string component_id =
+                registration.at("installed_component_id").get<std::string>();
+            std::optional<ports::ResourceRecord> existing;
+            for (const auto& resource :
+                 store_->list_resources("managed_service", 10'000, 0)) {
+                try {
+                    const json data = json::parse(resource.data_json);
+                    if (data.value("installed_component_id", "") == component_id) {
+                        existing = resource;
+                        break;
+                    }
+                } catch (const json::exception&) {
                 }
-            } catch (const json::exception&) {
             }
-        }
-        if (existing.has_value()) {
-            const json current = json::parse(existing->data_json);
-            if (current.value("installed_artifact_sha256", "") ==
-                    registration.value("installed_artifact_sha256", "") &&
-                current.value("runtime_artifact_sha256", "") ==
-                    registration.value("runtime_artifact_sha256", "")) {
-                changes.push_back(
-                    {{"component_id", component_id}, {"state", "current"}});
-                continue;
+            if (existing.has_value()) {
+                const json current = json::parse(existing->data_json);
+                if (current.value("installed_artifact_sha256", "") ==
+                        registration.value("installed_artifact_sha256", "") &&
+                    current.value("runtime_artifact_sha256", "") ==
+                        registration.value("runtime_artifact_sha256", "") &&
+                    current.value("desired_state", "") ==
+                        registration.value("desired_state", "") &&
+                    current.value("config_path", "") ==
+                        registration.value("config_path", "")) {
+                    changes.push_back(
+                        {{"component_id", component_id}, {"state", "current"}});
+                    refresh_ids.push_back(existing->id);
+                    continue;
+                }
             }
-        }
 
-        const std::string now = domain::utc_now();
-        const std::string command_id = domain::uuid_v7();
-        ports::ResourceRecord resource{
-            existing.has_value() ? existing->id : domain::uuid_v7(),
-            "managed_service",
-            "local",
-            existing.has_value() ? existing->revision + 1 : 1,
-            existing.has_value() ? existing->created_at : now,
-            now,
-            R"({"managed_by":"arena-setup"})",
-            registration.dump(),
-        };
-        const json result{
-            {"schema", "arena_installed_service_reconciliation_result_v1"},
-            {"component_id", component_id},
-            {"resource_id", resource.id},
-            {"revision", resource.revision},
-        };
-        ports::CommandRecord command{
-            command_id,
-            domain::uuid_v7(),
-            "installer-reconcile:" + command_id,
-            existing.has_value() ? "service.reconcile_update" :
-                                   "service.reconcile_create",
-            "completed",
-            result.dump(),
-            now,
-        };
-        ports::EventRecord event{
-            0,
-            domain::uuid_v7(),
-            now,
-            "state",
-            existing.has_value() ? "managed_service.reconciled" :
-                                   "managed_service.created",
-            "managed_service",
-            resource.id,
-            resource.revision,
-            command_id,
-            json{
-                {"actor", "arena-setup"},
+            const std::string now = domain::utc_now();
+            const std::string command_id = domain::uuid_v7();
+            ports::ResourceRecord resource{
+                existing.has_value() ? existing->id : domain::uuid_v7(),
+                "managed_service",
+                "local",
+                existing.has_value() ? existing->revision + 1 : 1,
+                existing.has_value() ? existing->created_at : now,
+                now,
+                R"({"managed_by":"arena-setup"})",
+                registration.dump(),
+            };
+            const json result{
+                {"schema", "arena_installed_service_reconciliation_result_v1"},
                 {"component_id", component_id},
-                {"artifact_sha256",
-                 registration.at("installed_artifact_sha256")},
-                {"runtime_artifact_sha256",
-                 registration.at("runtime_artifact_sha256")},
-            }.dump(),
-        };
-        if (existing.has_value()) {
-            store_->update_resource(
-                resource, existing->revision, command, std::move(event));
-        } else {
-            store_->create_resource(resource, command, std::move(event));
-        }
+                {"resource_id", resource.id},
+                {"revision", resource.revision},
+            };
+            ports::CommandRecord command{
+                command_id,
+                domain::uuid_v7(),
+                "installer-reconcile:" + command_id,
+                existing.has_value() ? "service.reconcile_update" :
+                                       "service.reconcile_create",
+                "completed",
+                result.dump(),
+                now,
+            };
+            ports::EventRecord event{
+                0,
+                domain::uuid_v7(),
+                now,
+                "state",
+                existing.has_value() ? "managed_service.reconciled" :
+                                       "managed_service.created",
+                "managed_service",
+                resource.id,
+                resource.revision,
+                command_id,
+                json{
+                    {"actor", "arena-setup"},
+                    {"component_id", component_id},
+                    {"artifact_sha256",
+                     registration.at("installed_artifact_sha256")},
+                    {"runtime_artifact_sha256",
+                     registration.at("runtime_artifact_sha256")},
+                }.dump(),
+            };
+            if (existing.has_value()) {
+                store_->update_resource(
+                    resource, existing->revision, command, std::move(event));
+            } else {
+                store_->create_resource(resource, command, std::move(event));
+            }
+            refresh_ids.push_back(resource.id);
             changes.push_back(
                 {{"component_id", component_id},
                  {"state", existing.has_value() ? "updated" : "created"},
                  {"resource_id", resource.id}});
         }
+        for (const auto& resource_id : refresh_ids) {
+            try {
+                const std::string command_id = domain::uuid_v7();
+                static_cast<void>(submit(
+                    {
+                        {"schema_version", 1},
+                        {"request_id", domain::uuid_v7()},
+                        {"idempotency_key",
+                         "installer-reconcile-status:" + command_id},
+                        {"target",
+                         {{"kind", "managed_service"},
+                          {"id", resource_id}}},
+                        {"action", "service.status"},
+                        {"dry_run", false},
+                        {"parameters", json::object()},
+                    },
+                    "installer-reconcile"));
+                changes.push_back(
+                    {{"resource_id", resource_id},
+                     {"state", "status_refreshed"}});
+            } catch (const std::exception& error) {
+                errors.push_back(
+                    {{"resource_id", resource_id},
+                     {"error", error.what()}});
+            }
+        }
         installed_service_reconciliation_ = {
             {"schema", "arena_installed_service_reconciliation_v1"},
             {"state",
-             discovered.at("errors").empty() ? "complete" :
-                                               "complete_with_errors"},
+             errors.empty() ? "complete" : "complete_with_errors"},
             {"observed_at", domain::utc_now()},
             {"changes", std::move(changes)},
-            {"errors", discovered.at("errors")},
+            {"errors", std::move(errors)},
         };
     } catch (const std::exception& error) {
         installed_service_reconciliation_ = {
@@ -680,6 +713,18 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
         throw CommandFailure("unsupported_service_profile", "service profile has no runtime adapter", 409);
     }
     const bool evidence_service = profile == "uci_arena_evidence";
+    const bool startup_owned =
+        data.value("startup_installed", false) ||
+        data.value("startup_control", "") == "provider_owned_per_user";
+    if (startup_owned &&
+        (action == "service.start" || action == "service.stop" ||
+         action == "service.restart")) {
+        throw CommandFailure(
+            "startup_control_unavailable",
+            "this per-user provider startup is externally owned; use pause, resume, or "
+            "the provider startup adapter from the installed user session",
+            409);
+    }
 
     const std::filesystem::path node = data.at("node_executable").get<std::string>();
     const std::filesystem::path cli = data.at("cli_entrypoint").get<std::string>();
@@ -732,7 +777,7 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
         }
         data["desired_state"] = action == "service.pause" ? "paused" : "running";
         data["observed_state"] = action == "service.pause" ? "paused" :
-            (process_supervisor_.running(id) ? "running" : "stopped");
+            (startup_owned || process_supervisor_.running(id) ? "running" : "stopped");
     } else if (action == "service.status") {
         auto arguments = base;
         arguments.push_back("status");
@@ -933,7 +978,11 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                         const std::string last_error =
                             daemon.value("lastError", "");
                         const bool daemon_active =
-                            process_supervisor_.running(id);
+                            process_supervisor_.running(id) ||
+                            (!daemon.value("stale", false) &&
+                             daemon_phase != "stopped" &&
+                             daemon_phase != "failed" &&
+                             !daemon_phase.empty());
                         const bool degraded =
                             daemon_phase == "failed" || !last_error.empty();
                         data["integration_state"] = "available";
@@ -1020,8 +1069,20 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                             status_payload.value("control", json::object())
                                     .value("paused", false)
                                 ? "paused"
-                                : process_supervisor_.running(id) ? "running" :
-                                                                   "stopped";
+                                : process_supervisor_.running(id) ||
+                                          (!status_payload
+                                                .value("daemon", json::object())
+                                                .value("stale", false) &&
+                                           status_payload
+                                                   .value("daemon", json::object())
+                                                   .value("phase", "stopped") !=
+                                               "stopped" &&
+                                           status_payload
+                                                   .value("daemon", json::object())
+                                                   .value("phase", "failed") !=
+                                               "failed")
+                                      ? "running"
+                                      : "stopped";
                         data["health"] = {
                             {"state", "healthy"},
                             {"reason",

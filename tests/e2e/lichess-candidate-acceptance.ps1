@@ -19,6 +19,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$CapacityProfile,
     [Parameter(Mandatory = $true)]
+    [string]$TransportProfile,
+    [Parameter(Mandatory = $true)]
     [string]$OpeningBookPath,
     [Parameter(Mandatory = $true)]
     [string]$SyzygyPath,
@@ -63,7 +65,8 @@ foreach ($path in @(
     $TokenFile,
     $SingleGameProfile,
     $TimeProfile,
-    $CapacityProfile
+    $CapacityProfile,
+    $TransportProfile
 )) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Protected acceptance input is unavailable: $path"
@@ -116,8 +119,12 @@ if ($inventory.discovery.lichess_token_path.selection.source -ne "saved_locator"
     throw "Manager did not select the saved existing-account token-file reference"
 }
 
+$managedSingleGameProfile = $null
 foreach ($asset in @(
     @{ Kind = "timing_profile"; Path = $TimeProfile },
+    @{ Kind = "lichess_single_game_profile"; Path = $SingleGameProfile },
+    @{ Kind = "lichess_capacity_profile"; Path = $CapacityProfile },
+    @{ Kind = "lichess_transport_profile"; Path = $TransportProfile },
     @{ Kind = "opening_book"; Path = $OpeningBookPath },
     @{ Kind = "syzygy"; Path = $SyzygyPath }
 )) {
@@ -130,7 +137,13 @@ foreach ($asset in @(
         throw "Existing $($asset.Kind) import failed: $importText"
     }
     $import = $importText | ConvertFrom-Json
-    if ($import.mode -ne "in_place_reference" -or
+    if ($asset.Kind -eq "lichess_single_game_profile") {
+        if ($import.mode -ne "managed_copy" -or
+            $import.state -ne "installed_managed") {
+            throw "Manager did not activate the single-game profile evidence closure"
+        }
+        $managedSingleGameProfile = [string]$import.path
+    } elseif ($import.mode -ne "in_place_reference" -or
         $import.state -ne "saved") {
         throw "Manager did not retain $($asset.Kind) as an in-place reference"
     }
@@ -263,7 +276,10 @@ if ($remainingProviderProcesses.Count -ne 0) {
 }
 foreach ($path in @(
     $TokenFile,
+    $SingleGameProfile,
     $TimeProfile,
+    $CapacityProfile,
+    $TransportProfile,
     $OpeningBookPath,
     $SyzygyPath
 )) {
@@ -273,6 +289,9 @@ foreach ($path in @(
 }
 foreach ($kind in @(
     "lichess_token_path",
+    "lichess_single_game_profile",
+    "lichess_capacity_profile",
+    "lichess_transport_profile",
     "timing_profile",
     "opening_book",
     "syzygy"
@@ -322,6 +341,10 @@ $installedConfig = Get-Content -Raw -LiteralPath $Config | ConvertFrom-Json
 $resolvedBookRoot = (Resolve-Path -LiteralPath $OpeningBookPath).Path
 $resolvedSyzygy = (Resolve-Path -LiteralPath $SyzygyPath).Path
 $resolvedTimeProfile = (Resolve-Path -LiteralPath $TimeProfile).Path
+$resolvedSingleGameProfile =
+    (Resolve-Path -LiteralPath $managedSingleGameProfile).Path
+$resolvedCapacityProfile = (Resolve-Path -LiteralPath $CapacityProfile).Path
+$resolvedTransportProfile = (Resolve-Path -LiteralPath $TransportProfile).Path
 if ([IO.Path]::GetFullPath([string]$installedConfig.engine.uci_options.SyzygyPath) -ne
     [IO.Path]::GetFullPath($resolvedSyzygy)) {
     throw "Installer did not hand the saved Syzygy locator to the installed engine"
@@ -341,6 +364,18 @@ if (-not (Test-Path -LiteralPath $installedBookFile -PathType Leaf) -or
 if ([IO.Path]::GetFullPath([string]$installedConfig.engine.time_profile) -ne
     [IO.Path]::GetFullPath($resolvedTimeProfile)) {
     throw "Installer did not hand the saved timing profile to the installed adapter"
+}
+if ([IO.Path]::GetFullPath([string]$installedConfig.engine.single_game_profile) -ne
+    [IO.Path]::GetFullPath($resolvedSingleGameProfile)) {
+    throw "Installer did not hand the saved single-game profile to the installed adapter"
+}
+if ([IO.Path]::GetFullPath([string]$installedConfig.capacity.capacity_profile) -ne
+    [IO.Path]::GetFullPath($resolvedCapacityProfile)) {
+    throw "Installer did not hand the saved capacity profile to the installed adapter"
+}
+if ([IO.Path]::GetFullPath([string]$installedConfig.timing.transport_profile_path) -ne
+    [IO.Path]::GetFullPath($resolvedTransportProfile)) {
+    throw "Installer did not hand the saved transport profile to the installed adapter"
 }
 
 $evidenceConfigPath = [string]$evidenceReceipt.configuration_path

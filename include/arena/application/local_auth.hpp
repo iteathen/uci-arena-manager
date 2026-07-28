@@ -40,7 +40,7 @@ class LocalAuth final {
 
     std::filesystem::path state_directory_;
     std::filesystem::path client_key_path_;
-    std::string client_key_;
+    mutable std::string client_key_;
     mutable std::mutex mutex_;
     std::unordered_map<std::string, ExpiringValue> pairing_tokens_;
     std::unordered_map<std::string, ExpiringValue> sessions_;

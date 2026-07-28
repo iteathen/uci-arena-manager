@@ -14,6 +14,10 @@ export function ConfigurationPage() {
   const [bookPath, setBookPath] = useState('')
   const [bookFolderPath, setBookFolderPath] = useState('')
   const [syzygyPath, setSyzygyPath] = useState('')
+  const [timingProfilePath, setTimingProfilePath] = useState('')
+  const [singleGameProfilePath, setSingleGameProfilePath] = useState('')
+  const [capacityProfilePath, setCapacityProfilePath] = useState('')
+  const [transportProfilePath, setTransportProfilePath] = useState('')
   const [lichessTokenPath, setLichessTokenPath] = useState('')
   const [copied, setCopied] = useState('')
   const copy = async (label: string, command: string) => {
@@ -26,7 +30,7 @@ export function ConfigurationPage() {
       ? `'${path.replaceAll("'", "''")}'`
       : `'${path.replaceAll("'", `'"'"'`)}'`
   const importCommand = (kind: string, path: string) =>
-    `arena-setup import --kind ${kind} --path ${quote(path)} --json`
+    `arena-setup --json import --kind ${kind} --path ${quote(path)}`
 
   return (
     <>
@@ -157,6 +161,110 @@ export function ConfigurationPage() {
                 {copied === 'lichess' ? 'Reference command copied' : 'Copy reference command'}
               </Button>
             </Stack>
+            <Stack>
+              <PathPickerInput
+                label="Qualified UCI timing profile"
+                description="Select the exact provider-safety-qualified v3 timing profile for this engine, model, provider, and hardware."
+                placeholder="D:\Chess\profiles\uci_time_profile_v3.json"
+                value={timingProfilePath}
+                onChange={setTimingProfilePath}
+                mode="file"
+                filters={[{ name: 'UCI timing profiles', patterns: ['uci_time_profile_v3.json', '*.json'] }]}
+              />
+              <Button
+                variant="default"
+                leftSection={<IconCopy size={16} />}
+                disabled={!timingProfilePath}
+                onClick={() =>
+                  void copy(
+                    'timing-profile',
+                    importCommand('timing_profile', timingProfilePath),
+                  )
+                }
+              >
+                {copied === 'timing-profile'
+                  ? 'Import command copied'
+                  : 'Copy import command'}
+              </Button>
+            </Stack>
+            <Stack>
+              <PathPickerInput
+                label="Lichess single-game profile"
+                description="Select the qualified single-game safety profile that matches the installed engine and model."
+                placeholder="D:\Chess\profiles\uci_arena_single_game_profile_v1.json"
+                value={singleGameProfilePath}
+                onChange={setSingleGameProfilePath}
+                mode="file"
+                filters={[{ name: 'Single-game profiles', patterns: ['uci_arena_single_game_profile_v1.json', '*.json'] }]}
+              />
+              <Button
+                variant="default"
+                leftSection={<IconCopy size={16} />}
+                disabled={!singleGameProfilePath}
+                onClick={() =>
+                  void copy(
+                    'single-game-profile',
+                    importCommand('lichess_single_game_profile', singleGameProfilePath),
+                  )
+                }
+              >
+                {copied === 'single-game-profile'
+                  ? 'Import command copied'
+                  : 'Copy import command'}
+              </Button>
+            </Stack>
+            <Stack>
+              <PathPickerInput
+                label="Lichess capacity profile"
+                description="Select the qualified concurrency profile bound to the same engine, model, and single-game profile."
+                placeholder="D:\Chess\profiles\uci_arena_lichess_capacity_profile_v1.json"
+                value={capacityProfilePath}
+                onChange={setCapacityProfilePath}
+                mode="file"
+                filters={[{ name: 'Lichess capacity profiles', patterns: ['uci_arena_lichess_capacity_profile_v1.json', '*.json'] }]}
+              />
+              <Button
+                variant="default"
+                leftSection={<IconCopy size={16} />}
+                disabled={!capacityProfilePath}
+                onClick={() =>
+                  void copy(
+                    'capacity-profile',
+                    importCommand('lichess_capacity_profile', capacityProfilePath),
+                  )
+                }
+              >
+                {copied === 'capacity-profile'
+                  ? 'Import command copied'
+                  : 'Copy import command'}
+              </Button>
+            </Stack>
+            <Stack>
+              <PathPickerInput
+                label="Lichess transport profile"
+                description="Select the qualified v2 network transport-reserve profile measured for this host."
+                placeholder="D:\Chess\profiles\transport_profile_v2.json"
+                value={transportProfilePath}
+                onChange={setTransportProfilePath}
+                mode="file"
+                filters={[{ name: 'Lichess transport profiles', patterns: ['transport_profile_v2.json', '*.json'] }]}
+              />
+              <Button
+                variant="default"
+                leftSection={<IconCopy size={16} />}
+                disabled={!transportProfilePath}
+                onClick={() =>
+                  void copy(
+                    'transport-profile',
+                    importCommand('lichess_transport_profile', transportProfilePath),
+                  )
+                }
+              >
+                {copied === 'transport-profile'
+                  ? 'Import command copied'
+                  : 'Copy import command'}
+              </Button>
+            </Stack>
           </SimpleGrid>
           <Group mt="xl">
             <Button
@@ -165,7 +273,7 @@ export function ConfigurationPage() {
               onClick={() =>
                 void copy(
                   'download-book',
-                  'arena-setup apply --preset manager_only --download-missing-books --yes --json',
+                  'arena-setup --json apply --preset manager_only --download-missing-books --yes',
                 )
               }
             >
@@ -179,7 +287,7 @@ export function ConfigurationPage() {
               onClick={() =>
                 void copy(
                   'download-tables',
-                  'arena-setup apply --preset manager_only --download-missing-tablebases --yes --json',
+                  'arena-setup --json apply --preset manager_only --download-missing-tablebases --yes',
                 )
               }
             >

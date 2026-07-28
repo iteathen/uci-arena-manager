@@ -24,10 +24,13 @@
         "book_forge",
         "evidence_service",
         "timing_profile",
+        "lichess_single_game_profile",
+        "lichess_capacity_profile",
+        "lichess_transport_profile",
         "lichess_token_path"
       ]
     },
-    "mode": {"const": "in_place_reference"},
+    "mode": {"enum": ["in_place_reference", "managed_copy"]},
     "path": {"type": "string", "minLength": 1},
     "validation": {"type": "object"},
     "saved_at": {"type": "string"}

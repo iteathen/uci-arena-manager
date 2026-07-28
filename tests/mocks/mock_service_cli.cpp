@@ -10,7 +10,7 @@ int main(int argc, char** argv) {
     const bool evidence = cli.find("evidence") != std::string::npos;
     if (evidence && command == "status") {
         std::cout
-            << R"({"schema":"uci_arena_evidence_status_v1","control":{"paused":false},"collection":{"state":"available","reason":"ready"},"daemon":{"phase":"stopped","lastError":""},"datasets":1})"
+            << R"({"schema":"uci_arena_evidence_status_v1","control":{"paused":false},"collection":{"state":"available","reason":"ready"},"daemon":{"phase":"sleep","stale":false,"lastError":""},"datasets":1})"
             << '\n';
         return 0;
     }
@@ -30,13 +30,20 @@ int main(int argc, char** argv) {
     }
     if (!evidence && command == "status") {
         std::cout
-            << R"({"ok":true,"status":{"schema":"flashfork_book_forge_status_v2","control":{"paused":false},"channels":[{"channel":"integration","snapshot_id":"0123456789abcdefabcd","directory":"C:/signed/book-snapshot","published_at":"2026-07-25T00:00:00Z"}]}})"
+            << R"({"ok":true,"status":{"schema":"flashfork_book_forge_status_v2","control":{"paused":false},"daemon":{"phase":"sleep","stale":false},"channels":[{"channel":"integration","snapshot_id":"0123456789abcdefabcd","directory":"C:/signed/book-snapshot","published_at":"2026-07-25T00:00:00Z"}]}})"
             << '\n';
         return 0;
     }
     if (!evidence && command == "validate") {
         std::cout
             << R"({"ok":true,"id":"0123456789abcdefabcd","channel":"integration","manifestSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","recordCount":2048,"qualified":false,"includesFixture":false})"
+            << '\n';
+        return 0;
+    }
+    if (!evidence && command == "acquisition" && argc > 3 &&
+        std::string(argv[3]) == "retry-auth") {
+        std::cout
+            << R"({"ok":true,"retried":1,"acquisition":{"credentialConfigured":true,"authState":"ready"}})"
             << '\n';
         return 0;
     }

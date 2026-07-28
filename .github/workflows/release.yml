@@ -83,7 +83,9 @@ jobs:
           ctest --preset '${{ matrix.preset }}'
       - name: Install pinned WiX toolset
         if: runner.os == 'Windows'
-        run: dotnet tool install --global wix --version 7.0.0
+        run: |
+          dotnet tool install --global wix --version 7.0.0
+          wix extension add -g WixToolset.UI.wixext/7.0.0
       - name: Install Linux package validators
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y lintian rpm rpmlint
@@ -526,6 +528,7 @@ jobs:
             'ARENA_LICHESS_SINGLE_GAME_PROFILE_PATH',
             'ARENA_LICHESS_TIME_PROFILE_PATH',
             'ARENA_LICHESS_CAPACITY_PROFILE_PATH',
+            'ARENA_LICHESS_TRANSPORT_PROFILE_PATH',
             'ARENA_VM_ASSET_ROOT',
             'ARENA_VM_WRITABLE_ROOT'
           )) {
@@ -554,6 +557,7 @@ jobs:
             -SingleGameProfile $env:ARENA_LICHESS_SINGLE_GAME_PROFILE_PATH `
             -TimeProfile $env:ARENA_LICHESS_TIME_PROFILE_PATH `
             -CapacityProfile $env:ARENA_LICHESS_CAPACITY_PROFILE_PATH `
+            -TransportProfile $env:ARENA_LICHESS_TRANSPORT_PROFILE_PATH `
             -OpeningBookPath (Join-Path $env:ARENA_VM_ASSET_ROOT 'opening_books') `
             -SyzygyPath (Join-Path $env:ARENA_VM_ASSET_ROOT 'syzygy') `
             -AllowUnsignedDevelopmentCatalog
@@ -680,8 +684,8 @@ jobs:
             dist/windows-bootstrap,dist/windows-media/bin,dist/windows-media/release/tuf,dist/windows-installers |
             Out-Null
           tar -xzf $archive.FullName -C dist/windows-bootstrap
-          Copy-Item dist/windows-bootstrap/bin/arena-setup.exe `
-            dist/windows-media/bin/arena-setup.exe
+          Copy-Item dist/windows-bootstrap/bin/* `
+            dist/windows-media/bin -Recurse
           Copy-Item dist/windows-base/catalog.json dist/windows-media/release/catalog.json
           Copy-Item dist/windows-base/payloads dist/windows-media/release/payloads -Recurse
           Copy-Item (Join-Path $rootCandidates[0].Directory.FullName '*') `
@@ -695,30 +699,31 @@ jobs:
         shell: pwsh
         run: |
           $version = '${{ needs.validate.outputs.version }}'
-          dotnet tool install --global wix --version 7.0.0
-          wix extension add -g WixToolset.Bal.wixext/7.0.0
+          dotnet tool install --global wix --version 6.0.2
+          wix extension add -g WixToolset.Bal.wixext/6.0.2
           $media = (Resolve-Path dist/windows-media).Path
           $setup = Join-Path $media 'bin/arena-setup.exe'
           $msi = (Resolve-Path `
             "dist/windows-installers/UCI-Arena-Manager-$version-windows-x64.msi").Path
-          $common = '--catalog release\catalog.json --metadata-dir release\tuf'
           wix build `
             -ext WixToolset.Bal.wixext `
-            "-d ProductVersion=$version" `
-            '-d ProductName=UCI Arena Suite Setup (Online)' `
-            "-d SuiteSetup=$setup" `
-            "-d ManagerMsi=$msi" `
-            "-d SetupArguments=$common apply --preset complete_arena --yes" `
+            -d "ProductVersion=$version" `
+            -d "SuiteSetup=$setup" `
+            -d "ManagerMsi=$msi" `
+            -d 'SetupArguments=apply --preset complete_arena --yes' `
+            -d 'SetupRepairArguments=repair --preset complete_arena --yes' `
+            -d 'SetupUninstallArguments=uninstall --all --yes' `
             -out "dist/windows-installers/UCI-Arena-Setup-$version-windows-x64-online.exe" `
             packaging/windows/Bundle.wxs `
             dist/windows-installers/SuiteMediaPayloads.wxs
           wix build `
             -ext WixToolset.Bal.wixext `
-            "-d ProductVersion=$version" `
-            '-d ProductName=UCI Arena Suite Setup (Offline)' `
-            "-d SuiteSetup=$setup" `
-            "-d ManagerMsi=$msi" `
-            "-d SetupArguments=$common apply --preset complete_arena --offline --yes" `
+            -d "ProductVersion=$version" `
+            -d "SuiteSetup=$setup" `
+            -d "ManagerMsi=$msi" `
+            -d 'SetupArguments=apply --preset complete_arena --offline --yes' `
+            -d 'SetupRepairArguments=repair --preset complete_arena --offline --yes' `
+            -d 'SetupUninstallArguments=uninstall --all --yes' `
             -out "dist/windows-installers/UCI-Arena-Setup-$version-windows-x64-offline.exe" `
             packaging/windows/Bundle.wxs `
             dist/windows-installers/SuiteMediaPayloads.wxs

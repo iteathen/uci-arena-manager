@@ -571,10 +571,22 @@ json ServiceCatalog::normalize_registration(const json& parameters) {
         data["workspace"] = std::filesystem::absolute(workspace).string();
         data["display_name"] = parameters.value("display_name", "Book Forge");
         data["integration_state"] = "configured";
-        data["desired_state"] = "stopped";
+        data["desired_state"] =
+            parameters.value("startup_installed", false) ? "running" : "stopped";
         data["observed_state"] = "stopped";
         data["transport"] = "process";
         data["capabilities"] = book_forge_profile().at("capabilities");
+        if (parameters.value("startup_installed", false)) {
+            data["startup_control"] = "provider_owned_per_user";
+            for (const auto* capability : {"start", "stop", "restart"}) {
+                const auto iterator =
+                    std::find(data["capabilities"].begin(),
+                              data["capabilities"].end(), capability);
+                if (iterator != data["capabilities"].end()) {
+                    data["capabilities"].erase(iterator);
+                }
+            }
+        }
         data["health"] = {
             {"state", "unknown"},
             {"reason", "status has not been probed"},
@@ -601,10 +613,22 @@ json ServiceCatalog::normalize_registration(const json& parameters) {
         data["cli_entrypoint"] = std::filesystem::absolute(entrypoint).string();
         data["workspace"] = std::filesystem::absolute(workspace).string();
         data["integration_state"] = "configured";
-        data["desired_state"] = "stopped";
+        data["desired_state"] =
+            parameters.value("startup_installed", false) ? "running" : "stopped";
         data["observed_state"] = "stopped";
         data["transport"] = "process";
         data["capabilities"] = evidence_service_profile().at("capabilities");
+        if (parameters.value("startup_installed", false)) {
+            data["startup_control"] = "provider_owned_per_user";
+            for (const auto* capability : {"start", "stop", "restart"}) {
+                const auto iterator =
+                    std::find(data["capabilities"].begin(),
+                              data["capabilities"].end(), capability);
+                if (iterator != data["capabilities"].end()) {
+                    data["capabilities"].erase(iterator);
+                }
+            }
+        }
         data["health"] = {
             {"state", "unknown"},
             {"reason", "status has not been probed"},
@@ -683,6 +707,9 @@ json ServiceCatalog::installed_registrations(
                 {"runtime_component_id", "node_runtime.private"},
                 {"runtime_artifact_sha256",
                  node_runtime->receipt.at("artifact_sha256")},
+                {"startup_installed",
+                 service.receipt.value("startup", json::object())
+                     .value("installed", false)},
             };
             const std::string configuration_path =
                 service.receipt.value("configuration_path", "");

@@ -159,4 +159,6 @@ export interface ManagedServiceData extends Record<string, unknown> {
   node_executable?: string
   cli_entrypoint?: string
   workspace?: string
+  startup_installed?: boolean
+  startup_control?: string
 }

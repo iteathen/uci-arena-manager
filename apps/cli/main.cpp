@@ -1,18 +1,19 @@
+#include <curl/curl.h>
+
+#include <CLI/CLI.hpp>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <nlohmann/json.hpp>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
 #include "arena/adapters/uci_process.hpp"
 #include "arena/application/broker_policy.hpp"
 #include "arena/domain/uuid.hpp"
 #include "ui_picker.hpp"
-
-#include <CLI/CLI.hpp>
-#include <curl/curl.h>
-#include <nlohmann/json.hpp>
-
-#include <filesystem>
-#include <fstream>
-#include <iostream>
-#include <stdexcept>
-#include <string>
-#include <vector>
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -26,6 +27,18 @@
 namespace {
 
 using nlohmann::json;
+
+std::filesystem::path default_manager_data_directory() {
+#ifdef _WIN32
+    if (const char* program_data = std::getenv("ProgramData");
+        program_data != nullptr && *program_data != '\0') {
+        return std::filesystem::path(program_data) / "UCI Arena Manager";
+    }
+    return "C:\\ProgramData\\UCI Arena Manager";
+#else
+    return "/var/lib/uci-arena";
+#endif
+}
 
 struct HttpResult {
     long status{};
@@ -61,10 +74,8 @@ class HttpClient final {
     }
 
   private:
-    [[nodiscard]] json request(
-        const std::string& method,
-        const std::string& path,
-        const std::optional<std::string>& body) const {
+    [[nodiscard]] json request(const std::string& method, const std::string& path,
+                               const std::optional<std::string>& body) const {
         CURL* handle = curl_easy_init();
         if (handle == nullptr) {
             throw std::runtime_error("cannot initialize HTTP client");
@@ -95,8 +106,8 @@ class HttpClient final {
         curl_slist_free_all(headers);
         curl_easy_cleanup(handle);
         if (performed != CURLE_OK) {
-            throw std::runtime_error(
-                std::string("service request failed: ") + curl_easy_strerror(performed));
+            throw std::runtime_error(std::string("service request failed: ") +
+                                     curl_easy_strerror(performed));
         }
         json parsed;
         try {
@@ -105,7 +116,8 @@ class HttpClient final {
             throw std::runtime_error("service returned a non-JSON response");
         }
         if (result.status < 200 || result.status >= 300) {
-            throw std::runtime_error(parsed.value("detail", parsed.value("code", "request failed")));
+            throw std::runtime_error(
+                parsed.value("detail", parsed.value("code", "request failed")));
         }
         return parsed;
     }
@@ -114,12 +126,8 @@ class HttpClient final {
     std::string key_;
 };
 
-json command(
-    const std::string& action,
-    const std::string& kind,
-    json parameters,
-    const bool dry_run = false,
-    const std::optional<std::string>& id = std::nullopt) {
+json command(const std::string& action, const std::string& kind, json parameters,
+             const bool dry_run = false, const std::optional<std::string>& id = std::nullopt) {
     const std::string request_id = arena::domain::uuid_v7();
     return {
         {"schema_version", 1},
@@ -145,16 +153,11 @@ void print_json(const json& value, const std::string& output) {
 
 void open_browser(const std::string& url) {
 #ifdef _WIN32
-    const int size = MultiByteToWideChar(
-        CP_UTF8, MB_ERR_INVALID_CHARS, url.data(), static_cast<int>(url.size()), nullptr, 0);
+    const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, url.data(),
+                                         static_cast<int>(url.size()), nullptr, 0);
     std::wstring wide(static_cast<std::size_t>(size), L'\0');
-    MultiByteToWideChar(
-        CP_UTF8,
-        MB_ERR_INVALID_CHARS,
-        url.data(),
-        static_cast<int>(url.size()),
-        wide.data(),
-        size);
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, url.data(), static_cast<int>(url.size()),
+                        wide.data(), size);
     if (reinterpret_cast<std::intptr_t>(
             ShellExecuteW(nullptr, L"open", wide.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) <= 32) {
         throw std::runtime_error("cannot open the default browser");
@@ -171,7 +174,7 @@ void open_browser(const std::string& url) {
 #endif
 }
 
-}  // namespace
+} // namespace
 
 int main(int argc, char** argv) {
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -179,7 +182,7 @@ int main(int argc, char** argv) {
         CLI::App app{"Native CLI for the UCI Arena Manager control plane"};
         app.require_subcommand(1);
         std::string endpoint{"http://127.0.0.1:47831"};
-        std::filesystem::path data_directory{"data"};
+        std::filesystem::path data_directory{default_manager_data_directory()};
         std::string output{"human"};
         app.add_option("--endpoint", endpoint, "Service endpoint");
         app.add_option("--data-dir", data_directory, "Service data directory");
@@ -194,14 +197,10 @@ int main(int argc, char** argv) {
         bool no_picker = false;
         std::uint16_t picker_port = 47832;
         ui->add_flag("--no-open", no_open, "Print the URL without opening a browser");
-        ui->add_flag(
-            "--no-picker",
-            no_picker,
-            "Do not host the interactive-user file and directory picker");
-        ui->add_option(
-              "--picker-port",
-              picker_port,
-              "Loopback port for the interactive-user picker")
+        ui->add_flag("--no-picker", no_picker,
+                     "Do not host the interactive-user file and directory picker");
+        ui->add_option("--picker-port", picker_port,
+                       "Loopback port for the interactive-user picker")
             ->check(CLI::Range(1024, 65535));
 
         auto* daemon = app.add_subcommand("daemon", "Control the installed arena service");
@@ -295,14 +294,11 @@ int main(int argc, char** argv) {
         auto* service_discover =
             service->add_subcommand("discover", "Detect local configuration hints");
         std::string service_discovery_profile;
-        service_discover->add_option(
-            "profile",
-            service_discovery_profile,
-            "book_forge or uci_arena_evidence")
+        service_discover
+            ->add_option("profile", service_discovery_profile, "book_forge or uci_arena_evidence")
             ->required()
             ->check(CLI::IsMember({"book_forge", "uci_arena_evidence"}));
-        auto* service_list =
-            service->add_subcommand("list", "List configured managed services");
+        auto* service_list = service->add_subcommand("list", "List configured managed services");
         auto* service_book_forge =
             service->add_subcommand("add-book-forge", "Configure the Book Forge adapter");
         std::filesystem::path book_node;
@@ -312,8 +308,7 @@ int main(int argc, char** argv) {
         service_book_forge->add_option("--cli", book_cli, "Book Forge CLI entrypoint")->required();
         service_book_forge->add_option("--workspace", book_workspace)->required();
         auto* service_configure_book_forge = service->add_subcommand(
-            "configure-book-forge",
-            "Change the locator for a configured Book Forge service");
+            "configure-book-forge", "Change the locator for a configured Book Forge service");
         std::string configure_book_id;
         std::filesystem::path configure_book_node;
         std::filesystem::path configure_book_cli;
@@ -325,24 +320,17 @@ int main(int argc, char** argv) {
         service_configure_book_forge
             ->add_option("--cli", configure_book_cli, "Book Forge CLI entrypoint")
             ->required();
-        service_configure_book_forge
-            ->add_option("--workspace", configure_book_workspace)
+        service_configure_book_forge->add_option("--workspace", configure_book_workspace)
             ->required();
         auto* service_evidence = service->add_subcommand(
-            "add-evidence-service",
-            "Configure the UCI Arena Evidence Service adapter");
+            "add-evidence-service", "Configure the UCI Arena Evidence Service adapter");
         std::filesystem::path evidence_node;
         std::filesystem::path evidence_cli;
         std::filesystem::path evidence_workspace;
-        service_evidence
-            ->add_option("--node", evidence_node, "Node.js executable")
+        service_evidence->add_option("--node", evidence_node, "Node.js executable")->required();
+        service_evidence->add_option("--cli", evidence_cli, "Evidence Service CLI entrypoint")
             ->required();
-        service_evidence
-            ->add_option("--cli", evidence_cli, "Evidence Service CLI entrypoint")
-            ->required();
-        service_evidence
-            ->add_option("--workspace", evidence_workspace)
-            ->required();
+        service_evidence->add_option("--workspace", evidence_workspace)->required();
         auto* service_configure_evidence = service->add_subcommand(
             "configure-evidence-service",
             "Change the locator for a configured UCI Arena Evidence Service");
@@ -357,8 +345,7 @@ int main(int argc, char** argv) {
         service_configure_evidence
             ->add_option("--cli", configure_evidence_cli, "Evidence Service CLI entrypoint")
             ->required();
-        service_configure_evidence
-            ->add_option("--workspace", configure_evidence_workspace)
+        service_configure_evidence->add_option("--workspace", configure_evidence_workspace)
             ->required();
         std::string service_control_id;
         std::string service_control_action;
@@ -394,17 +381,16 @@ int main(int argc, char** argv) {
         }
 
         if (*daemon_status || *daemon_start || *daemon_stop || *daemon_restart) {
-            const std::string action =
-                *daemon_start ? "start" :
-                *daemon_stop ? "stop" :
-                *daemon_restart ? "restart" : "status";
+            const std::string action = *daemon_start     ? "start"
+                                       : *daemon_stop    ? "stop"
+                                       : *daemon_restart ? "restart"
+                                                         : "status";
 #ifdef _WIN32
             const std::string platform_name = "UCIArenaManager";
 #else
             const std::string platform_name = "uci-arena-manager.service";
 #endif
-            const int result =
-                arena::application::perform_service_action(platform_name, action);
+            const int result = arena::application::perform_service_action(platform_name, action);
             print_json(
                 {
                     {"ok", result == 0 || action == "status"},
@@ -437,23 +423,21 @@ int main(int argc, char** argv) {
                 dashboard_origin.pop_back();
             }
             std::string url =
-                dashboard_origin + "/#pair=" +
-                pairing.at("pairing_token").get<std::string>();
+                dashboard_origin + "/#pair=" + pairing.at("pairing_token").get<std::string>();
             std::string picker_token;
             if (!no_picker) {
                 picker_token = arena::cli::make_ui_picker_token();
-                url += "&picker_port=" + std::to_string(picker_port) +
-                       "&picker_token=" + picker_token;
+                url +=
+                    "&picker_port=" + std::to_string(picker_port) + "&picker_token=" + picker_token;
             }
             std::cout << url << '\n';
             if (!no_open) {
                 open_browser(url);
             }
             if (!no_picker) {
-                std::cout << "Local browse helper active on 127.0.0.1:"
-                          << picker_port << "; press Ctrl+C to stop it.\n";
-                arena::cli::run_ui_picker(
-                    picker_port, picker_token, dashboard_origin);
+                std::cout << "Local browse helper active on 127.0.0.1:" << picker_port
+                          << "; press Ctrl+C to stop it.\n";
+                arena::cli::run_ui_picker(picker_port, picker_token, dashboard_origin);
             }
         } else if (*engine_list) {
             print_json(client.get("/api/v1/resources/engine"), output);
@@ -462,56 +446,46 @@ int main(int argc, char** argv) {
                 engine_working_directory = engine_executable.parent_path();
             }
             print_json(
-                client.post(
-                    "/api/v1/commands",
-                    command(
-                        "engine.register",
-                        "engine",
-                        {
-                            {"display_name", engine_name},
-                            {"executable", engine_executable.string()},
-                            {"working_directory", engine_working_directory.string()},
-                            {"arguments", engine_arguments},
-                        },
-                        engine_dry_run)),
+                client.post("/api/v1/commands",
+                            command("engine.register", "engine",
+                                    {
+                                        {"display_name", engine_name},
+                                        {"executable", engine_executable.string()},
+                                        {"working_directory", engine_working_directory.string()},
+                                        {"arguments", engine_arguments},
+                                    },
+                                    engine_dry_run)),
                 output);
         } else if (*match_plan) {
             print_json(
-                client.post(
-                    "/api/v1/commands",
-                    command(
-                        "match.plan",
-                        "match_plan",
-                        {
-                            {"display_name", match_name},
-                            {"engine_ids", match_engines},
-                            {"format", match_format},
-                            {"variant", match_variant},
-                            {"games_per_pair", games_per_pair},
-                            {"rounds", rounds},
-                            {"concurrency", concurrency},
-                            {"seed", seed},
-                            {"time_control",
-                             {{"initial_ms", initial_ms}, {"increment_ms", increment_ms}}},
-                        },
-                        match_dry_run)),
+                client.post("/api/v1/commands", command("match.plan", "match_plan",
+                                                        {
+                                                            {"display_name", match_name},
+                                                            {"engine_ids", match_engines},
+                                                            {"format", match_format},
+                                                            {"variant", match_variant},
+                                                            {"games_per_pair", games_per_pair},
+                                                            {"rounds", rounds},
+                                                            {"concurrency", concurrency},
+                                                            {"seed", seed},
+                                                            {"time_control",
+                                                             {{"initial_ms", initial_ms},
+                                                              {"increment_ms", increment_ms}}},
+                                                        },
+                                                        match_dry_run)),
                 output);
         } else if (*tournament_create) {
             print_json(
-                client.post(
-                    "/api/v1/commands",
-                    command(
-                        "tournament.plan",
-                        "tournament",
-                        {
-                            {"display_name", tournament_name},
-                            {"engine_ids", tournament_engines},
-                            {"format", tournament_format},
-                            {"games_per_pair", tournament_games},
-                            {"rounds", tournament_rounds},
-                            {"concurrency", tournament_concurrency},
-                            {"seed", tournament_seed},
-                        })),
+                client.post("/api/v1/commands", command("tournament.plan", "tournament",
+                                                        {
+                                                            {"display_name", tournament_name},
+                                                            {"engine_ids", tournament_engines},
+                                                            {"format", tournament_format},
+                                                            {"games_per_pair", tournament_games},
+                                                            {"rounds", tournament_rounds},
+                                                            {"concurrency", tournament_concurrency},
+                                                            {"seed", tournament_seed},
+                                                        })),
                 output);
         } else if (*resource_list) {
             print_json(client.get("/api/v1/resources/" + resource_kind), output);
@@ -519,72 +493,57 @@ int main(int argc, char** argv) {
             print_json(client.get("/api/v1/service-profiles"), output);
         } else if (*service_discover) {
             print_json(
-                client.get(
-                    "/api/v1/service-profiles/" + service_discovery_profile + "/discovery"),
+                client.get("/api/v1/service-profiles/" + service_discovery_profile + "/discovery"),
                 output);
         } else if (*service_list) {
             print_json(client.get("/api/v1/resources/managed_service"), output);
         } else if (*service_book_forge) {
             print_json(
-                client.post(
-                    "/api/v1/commands",
-                    command(
-                        "service.register",
-                        "managed_service",
-                        {
-                            {"profile_id", "book_forge"},
-                            {"display_name", "Book Forge"},
-                            {"node_executable", book_node.string()},
-                            {"cli_entrypoint", book_cli.string()},
-                            {"workspace", book_workspace.string()},
-                        })),
+                client.post("/api/v1/commands", command("service.register", "managed_service",
+                                                        {
+                                                            {"profile_id", "book_forge"},
+                                                            {"display_name", "Book Forge"},
+                                                            {"node_executable", book_node.string()},
+                                                            {"cli_entrypoint", book_cli.string()},
+                                                            {"workspace", book_workspace.string()},
+                                                        })),
                 output);
         } else if (*service_configure_book_forge) {
-            auto envelope = command(
-                "service.configure",
-                "managed_service",
-                {
-                    {"profile_id", "book_forge"},
-                    {"display_name", "Book Forge"},
-                    {"node_executable", configure_book_node.string()},
-                    {"cli_entrypoint", configure_book_cli.string()},
-                    {"workspace", configure_book_workspace.string()},
-                });
+            auto envelope = command("service.configure", "managed_service",
+                                    {
+                                        {"profile_id", "book_forge"},
+                                        {"display_name", "Book Forge"},
+                                        {"node_executable", configure_book_node.string()},
+                                        {"cli_entrypoint", configure_book_cli.string()},
+                                        {"workspace", configure_book_workspace.string()},
+                                    });
             envelope["target"]["id"] = configure_book_id;
             print_json(client.post("/api/v1/commands", envelope), output);
         } else if (*service_evidence) {
-            print_json(
-                client.post(
-                    "/api/v1/commands",
-                    command(
-                        "service.register",
-                        "managed_service",
-                        {
-                            {"profile_id", "uci_arena_evidence"},
-                            {"display_name", "UCI Arena Evidence Service"},
-                            {"node_executable", evidence_node.string()},
-                            {"cli_entrypoint", evidence_cli.string()},
-                            {"workspace", evidence_workspace.string()},
-                        })),
-                output);
+            print_json(client.post("/api/v1/commands",
+                                   command("service.register", "managed_service",
+                                           {
+                                               {"profile_id", "uci_arena_evidence"},
+                                               {"display_name", "UCI Arena Evidence Service"},
+                                               {"node_executable", evidence_node.string()},
+                                               {"cli_entrypoint", evidence_cli.string()},
+                                               {"workspace", evidence_workspace.string()},
+                                           })),
+                       output);
         } else if (*service_configure_evidence) {
-            auto envelope = command(
-                "service.configure",
-                "managed_service",
-                {
-                    {"profile_id", "uci_arena_evidence"},
-                    {"display_name", "UCI Arena Evidence Service"},
-                    {"node_executable", configure_evidence_node.string()},
-                    {"cli_entrypoint", configure_evidence_cli.string()},
-                    {"workspace", configure_evidence_workspace.string()},
-                });
+            auto envelope = command("service.configure", "managed_service",
+                                    {
+                                        {"profile_id", "uci_arena_evidence"},
+                                        {"display_name", "UCI Arena Evidence Service"},
+                                        {"node_executable", configure_evidence_node.string()},
+                                        {"cli_entrypoint", configure_evidence_cli.string()},
+                                        {"workspace", configure_evidence_workspace.string()},
+                                    });
             envelope["target"]["id"] = configure_evidence_id;
             print_json(client.post("/api/v1/commands", envelope), output);
         } else if (*service_control) {
-            auto envelope = command(
-                "service." + service_control_action,
-                "managed_service",
-                json::object());
+            auto envelope =
+                command("service." + service_control_action, "managed_service", json::object());
             envelope["target"]["id"] = service_control_id;
             print_json(client.post("/api/v1/commands", envelope), output);
         }

@@ -163,7 +163,7 @@ export function ServicesPage() {
               </ThemeIcon>
             }
           >
-            <List.Item>Status, health, pause, resume, and restart</List.Item>
+            <List.Item>Status, health, pause, and resume</List.Item>
             <List.Item>Acquisition, validation, maintenance, and publication</List.Item>
             <List.Item>External workspace and token ownership preserved</List.Item>
             <List.Item>Not required for local matches or manager health</List.Item>
@@ -202,7 +202,7 @@ export function ServicesPage() {
               </ThemeIcon>
             }
           >
-            <List.Item>Status, health, pause, resume, and restart</List.Item>
+            <List.Item>Status, health, pause, and resume</List.Item>
             <List.Item>Hardware and engine fingerprints in every artifact</List.Item>
             <List.Item>Jobs, targets, datasets, exports, and audited pruning</List.Item>
             <List.Item>Not required for arena scheduling or reports</List.Item>
@@ -256,7 +256,25 @@ export function ServicesPage() {
                     >
                       Probe
                     </Button>
-                    {service.data.observed_state === 'running' ? (
+                    {service.data.startup_control === 'provider_owned_per_user' ? (
+                      service.data.observed_state === 'paused' ? (
+                        <Button
+                          size="xs"
+                          variant="light"
+                          onClick={() => control.mutate({ id: service.id, action: 'resume' })}
+                        >
+                          Resume
+                        </Button>
+                      ) : (
+                        <Button
+                          size="xs"
+                          variant="light"
+                          onClick={() => control.mutate({ id: service.id, action: 'pause' })}
+                        >
+                          Pause
+                        </Button>
+                      )
+                    ) : service.data.observed_state === 'running' ? (
                       <>
                         <Button
                           size="xs"

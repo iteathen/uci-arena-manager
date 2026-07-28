@@ -50,6 +50,15 @@ function files(root, relative = "") {
   return rows;
 }
 
+function payloadName(relative) {
+  const normalized = path.normalize(relative);
+  const segments = normalized.split(path.sep);
+  if (segments.length === 2 && segments[0].toLowerCase() === "bin") {
+    return segments[1];
+  }
+  return normalized;
+}
+
 export function buildPayloadFragment(mediaRoot) {
   const root = path.resolve(mediaRoot);
   const setup = path.normalize(path.join("bin", "arena-setup.exe"));
@@ -74,7 +83,7 @@ export function buildPayloadFragment(mediaRoot) {
   ];
   payloads.forEach((relative, index) => {
     const source = path.join(root, relative);
-    const name = relative.replaceAll("/", "\\");
+    const name = payloadName(relative).replaceAll("/", "\\");
     lines.push(
       `      <Payload Id="SuiteMedia${String(index + 1).padStart(4, "0")}" ` +
       `SourceFile="${xml(source)}" Name="${xml(name)}" />`,
