@@ -127,6 +127,15 @@ the standard opening-book and bounded Syzygy WDL components. Normal uninstall
 preserves these assets; explicit purge removes only receipt-declared files that
 still match their installed digest.
 
+On Windows, normal uninstall also preserves the Manager data root at
+`C:\ProgramData\UCI Arena Manager`. This intentionally retains the database,
+local client key, knowledge assets, saved locators, verified repair media,
+rollback-protection state, content cache, and transaction evidence. Managed
+component roots, startup registrations, receipt documents, the Windows
+service, and MSI-owned program files are removed. The exact retention contract
+and the reversible clean-install test procedure are documented in
+`specs/installation_contract_v1.yaml` and `release/README.md`.
+
 ## License
 
 AGPL-3.0-or-later.

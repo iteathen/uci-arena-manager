@@ -909,6 +909,20 @@ TEST_CASE("suite uninstall removes every receipt while preserving workspaces") {
     const fs::path preserved = paths.workspace_root / "provider" / "state.json";
     fs::create_directories(preserved.parent_path());
     std::ofstream(preserved) << "{}";
+    const std::array<fs::path, 8> retained_manager_state{
+        paths.data_root / "arena.db",
+        paths.data_root / "client.key",
+        paths.data_root / "locators" / "opening_book.json",
+        paths.data_root / "release" / "catalog.json",
+        paths.data_root / "trust" / "tuf-versions.json",
+        paths.data_root / "cache" / std::string(64, 'a'),
+        paths.data_root / "transactions" / "completed.json",
+        paths.knowledge_root / "opening_books" / "operator-book.bin",
+    };
+    for (const auto& path : retained_manager_state) {
+        fs::create_directories(path.parent_path());
+        std::ofstream(path) << "retained";
+    }
 
     REQUIRE_THROWS(SetupEngine::uninstall(paths, {"node_runtime.private"}, true, false));
     const json result = SetupEngine::uninstall(paths, {}, true, false, true);
@@ -921,6 +935,9 @@ TEST_CASE("suite uninstall removes every receipt while preserving workspaces") {
     REQUIRE_FALSE(fs::exists(paths.install_root / "components" / "node_runtime.private"));
     REQUIRE_FALSE(fs::exists(paths.install_root / "components" / "optional.provider"));
     REQUIRE(fs::is_regular_file(preserved));
+    for (const auto& path : retained_manager_state) {
+        REQUIRE(fs::is_regular_file(path));
+    }
     REQUIRE(std::ranges::none_of(
         fs::directory_iterator(receipts),
         [](const fs::directory_entry& entry) { return entry.path().extension() == ".json"; }));

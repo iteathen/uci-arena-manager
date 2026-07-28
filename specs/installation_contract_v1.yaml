@@ -403,6 +403,50 @@ transaction:
   backup: before_replacement_or_migration
   failure: restore_previous_activation_and_service_state
   normal_uninstall: preserve_user_data
+  manager_data_root_retention:
+    windows_default: "C:\\ProgramData\\UCI Arena Manager"
+    purpose: >
+      Normal uninstall removes executable authority and managed component
+      receipts while preserving operator state required for reinstall,
+      recovery, audit, and large-asset reuse. Retention is deliberate and must
+      not be inferred from an implementation-wide decision to leave a
+      directory behind.
+    preserved_on_normal_uninstall:
+      - path: arena.db
+        reason: canonical Manager resources, operations, audit records, and history
+      - path: client.key
+        reason: local CLI and browser-pairing continuity after reinstall
+        security: preserve file ACLs and never print or export the key
+      - path: knowledge/
+        reason: imported or downloaded opening books and tablebases may be large or user-owned
+      - path: locators/
+        reason: validated path-only references and qualified profile selections
+      - path: release/
+        reason: verified current-platform catalog, TUF metadata, and payloads used by repair
+      - path: trust/
+        reason: highest verified TUF versions required for rollback protection
+      - path: cache/
+        reason: content-addressed verified downloads that avoid unnecessary reacquisition
+        authority: non_authoritative_until_digest_reverified
+      - path: transactions/
+        reason: recovery and audit evidence for completed or interrupted installer operations
+      - path: workspaces_outside_data_root
+        reason: provider-owned operational data is not installer payload
+    removed_on_normal_uninstall:
+      - every receipt-selected immutable component root
+      - every provider startup registration owned by an installed receipt
+      - every component receipt JSON document
+      - the Manager Windows service and MSI-owned program files
+    rules:
+      - The receipts directory may remain empty; no installed component
+        authority survives merely because the directory exists.
+      - Interrupted staging or rollback paths remain recovery evidence until a
+        later verified operation resolves them; they are never silently
+        activated.
+      - Normal uninstall does not promise secure erasure. Purge is a separate,
+        explicit, previewed operation and may remove only declared paths.
+      - Reinstall revalidates retained locators, release media, cache entries,
+        trust state, and qualified profiles before consuming them.
   suite_uninstall:
     command: arena-setup uninstall --all --yes
     ordering: startup_capable_consumers_before_runtimes_and_dependencies
