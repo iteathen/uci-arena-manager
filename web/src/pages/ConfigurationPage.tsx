@@ -24,7 +24,7 @@ export function ConfigurationPage() {
   const quote = (path: string) =>
     windowsShell
       ? `'${path.replaceAll("'", "''")}'`
-      : `'${path.replaceAll("'", `'\"'\"'`)}'`
+      : `'${path.replaceAll("'", `'"'"'`)}'`
   const importCommand = (kind: string, path: string) =>
     `arena-setup import --kind ${kind} --path ${quote(path)} --json`
 

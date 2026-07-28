@@ -20,14 +20,25 @@ export default defineConfig({
     chunkSizeWarningLimit: 500,
     rollupOptions: {
       output: {
-        manualChunks: {
-          mantine: ['@mantine/core', '@mantine/hooks'],
-          icons: ['@tabler/icons-react'],
-          tanstack: [
-            '@tanstack/react-query',
-            '@tanstack/react-table',
-            '@tanstack/react-virtual',
-          ],
+        manualChunks(id) {
+          const moduleId = id.replaceAll('\\', '/')
+          if (
+            moduleId.includes('/node_modules/@mantine/core/')
+            || moduleId.includes('/node_modules/@mantine/hooks/')
+          ) {
+            return 'mantine'
+          }
+          if (moduleId.includes('/node_modules/@tabler/icons-react/')) {
+            return 'icons'
+          }
+          if (
+            moduleId.includes('/node_modules/@tanstack/react-query/')
+            || moduleId.includes('/node_modules/@tanstack/react-table/')
+            || moduleId.includes('/node_modules/@tanstack/react-virtual/')
+          ) {
+            return 'tanstack'
+          }
+          return undefined
         },
       },
     },
