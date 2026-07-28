@@ -66,6 +66,41 @@ export interface EngineData extends Record<string, unknown> {
   discovered_options: Array<{ name: string; type: string; default: string }>
 }
 
+export interface EngineCandidate {
+  schema: 'arena_engine_candidate_v1'
+  schema_version: 1
+  candidate_id: string
+  source: 'install_receipt' | 'saved_locator' | 'provider_manifest' | 'discovered'
+  state: 'ready_to_probe' | 'unavailable'
+  display_name: string
+  executable: string
+  working_directory: string
+  arguments: string[]
+  uci_options: Record<string, unknown>
+  component_id?: string
+  component_version?: string
+  fingerprint?: string
+  issues: Array<{ code: string; detail: string }>
+}
+
+export interface EngineCandidates {
+  schema: 'arena_engine_candidates_v1'
+  schema_version: 1
+  precedence: string[]
+  candidates: EngineCandidate[]
+}
+
+export interface EngineProbeResult {
+  schema: 'arena_engine_probe_result_v1'
+  schema_version: 1
+  probe_id: string
+  candidate_id: string
+  state: 'passed' | 'failed'
+  registration_parameters: Record<string, unknown>
+  preview?: Record<string, unknown>
+  diagnostic?: Record<string, unknown>
+}
+
 export interface MatchPlanData extends Record<string, unknown> {
   display_name: string
   format: string
