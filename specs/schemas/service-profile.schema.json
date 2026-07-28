@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uci-arena-manager.local/schemas/service-profile-v1.json",
+  "title": "Managed service profile",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "profile_id",
+    "display_name",
+    "implementation_state",
+    "optional",
+    "capabilities",
+    "required_configuration",
+    "discovery"
+  ],
+  "properties": {
+    "profile_id": {
+      "enum": ["book_forge", "uci_arena_evidence"]
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "implementation_state": {
+      "enum": ["implemented_external", "in_development_external", "planned_external"]
+    },
+    "optional": {
+      "const": true
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "required_configuration": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "discovery": {
+      "type": "object",
+      "required": ["supported", "manual_fallback"],
+      "properties": {
+        "supported": {
+          "type": "boolean"
+        },
+        "manual_fallback": {
+          "const": true
+        }
+      }
+    }
+  }
+}

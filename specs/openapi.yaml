@@ -1,0 +1,372 @@
+openapi: 3.1.0
+info:
+  title: UCI Arena Manager Control API
+  version: 1.0.0
+  license:
+    name: AGPL-3.0-or-later
+    identifier: AGPL-3.0-or-later
+servers:
+  - url: http://127.0.0.1:47831/api/v1
+paths:
+  /auth/pair-token:
+    post:
+      operationId: issuePairingToken
+      responses:
+        "200":
+          description: One-time local browser pairing token
+  /auth/pair:
+    post:
+      operationId: exchangePairingToken
+      responses:
+        "200":
+          description: HttpOnly local session and CSRF token
+  /system/status:
+    get:
+      operationId: getSystemStatus
+      responses:
+        "200":
+          description: Current service state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemStatus"
+  /engines:
+    get:
+      operationId: listEngines
+      responses:
+        "200":
+          description: Registered UCI engines
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Resource"
+  /match-plans:
+    get:
+      operationId: listMatchPlans
+      responses:
+        "200":
+          description: Local match plans
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Resource"
+  /tournaments:
+    get:
+      operationId: listTournaments
+      responses:
+        "200":
+          description: Tournament resources
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Resource"
+  /resources/{kind}:
+    get:
+      operationId: listResources
+      parameters:
+        - name: kind
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Resources of the requested kind
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Resource"
+  /service-profiles:
+    get:
+      operationId: listServiceProfiles
+      responses:
+        "200":
+          description: Built-in service adapter capability manifests
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ServiceProfile"
+  /service-profiles/{profileId}/discovery:
+    get:
+      operationId: discoverServiceProfile
+      description: >
+        Resolve non-secret local hints for an optional service profile. An
+        empty candidates array is a successful result.
+      parameters:
+        - name: profileId
+          in: path
+          required: true
+          schema:
+            enum: [book_forge, uci_arena_evidence]
+      responses:
+        "200":
+          description: Service locator candidates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceDiscovery"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /commands:
+    post:
+      operationId: submitCommand
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommandRequest"
+      responses:
+        "200":
+          description: Synchronously completed command
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandResult"
+        "202":
+          description: Accepted long-running operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandResult"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /events:
+    get:
+      operationId: eventStream
+      description: >
+        WebSocket upgrade endpoint. Clients may supply `after` with the last
+        durable cursor. An expired cursor produces a resync-required event.
+      parameters:
+        - name: after
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "101":
+          description: WebSocket protocol switch
+  /events/snapshot:
+    get:
+      operationId: getEventSnapshot
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "200":
+          description: Durable events after the cursor
+components:
+  responses:
+    Problem:
+      description: RFC Problem Details
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    SystemStatus:
+      type: object
+      required:
+        - schema_version
+        - service
+        - version
+        - host_id
+        - started_at
+        - database
+        - counts
+      properties:
+        schema_version:
+          const: 1
+        service:
+          const: uci-arena-manager
+        version:
+          type: string
+        host_id:
+          const: local
+        started_at:
+          type: string
+          format: date-time
+        database:
+          enum: [ready, degraded]
+        counts:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+    Resource:
+      type: object
+      required:
+        - id
+        - host_id
+        - kind
+        - revision
+        - created_at
+        - updated_at
+        - labels
+        - data
+      properties:
+        id:
+          type: string
+          format: uuid
+        host_id:
+          const: local
+        kind:
+          type: string
+        revision:
+          type: integer
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        data:
+          type: object
+    ServiceProfile:
+      type: object
+      required:
+        - profile_id
+        - display_name
+        - implementation_state
+        - optional
+        - capabilities
+        - required_configuration
+        - discovery
+      properties:
+        profile_id:
+          enum: [book_forge, uci_arena_evidence]
+        display_name:
+          type: string
+        implementation_state:
+          enum: [implemented_external, in_development_external, planned_external]
+        optional:
+          const: true
+        capabilities:
+          type: array
+          items:
+            type: string
+        required_configuration:
+          type: array
+          items:
+            type: string
+        discovery:
+          type: object
+    ServiceDiscovery:
+      type: object
+      required: [schema_version, profile_id, candidates, manual_configuration]
+      properties:
+        schema_version:
+          const: 1
+        profile_id:
+          enum: [book_forge, uci_arena_evidence]
+        candidates:
+          type: array
+          items:
+            type: object
+        manual_configuration:
+          type: array
+          items:
+            type: string
+    CommandRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - schema_version
+        - request_id
+        - idempotency_key
+        - target
+        - action
+        - dry_run
+        - parameters
+      properties:
+        schema_version:
+          const: 1
+        request_id:
+          type: string
+          format: uuid
+        idempotency_key:
+          type: string
+          minLength: 1
+          maxLength: 128
+        target:
+          type: object
+          required: [kind]
+          properties:
+            kind:
+              type: string
+            id:
+              type: [string, "null"]
+              format: uuid
+        action:
+          type: string
+        expected_revision:
+          type: [integer, "null"]
+          minimum: 0
+        dry_run:
+          type: boolean
+        parameters:
+          type: object
+    CommandResult:
+      type: object
+      required:
+        - schema_version
+        - request_id
+        - command_id
+        - status
+      properties:
+        schema_version:
+          const: 1
+        request_id:
+          type: string
+          format: uuid
+        command_id:
+          type: string
+          format: uuid
+        status:
+          enum: [completed, accepted, rejected]
+        resource:
+          oneOf:
+            - $ref: "#/components/schemas/Resource"
+            - type: "null"
+        operation_id:
+          type: [string, "null"]
+          format: uuid
+        error:
+          oneOf:
+            - $ref: "#/components/schemas/Problem"
+            - type: "null"
+    Problem:
+      type: object
+      required: [type, title, status, code, detail]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        code:
+          type: string
+        detail:
+          type: string

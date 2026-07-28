@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uci-arena.example/schemas/install-plan.schema.json",
+  "title": "arena_install_plan_v1",
+  "type": "object",
+  "required": ["schema", "schema_version", "suite_version", "platform", "paths", "space", "actions", "blockers"],
+  "properties": {
+    "schema": {"const": "arena_install_plan_v1"},
+    "schema_version": {"const": 1},
+    "suite_version": {"type": "string"},
+    "platform": {"type": "string"},
+    "paths": {"type": "object"},
+    "space": {"type": "object"},
+    "actions": {"type": "array"},
+    "blockers": {"type": "array"}
+  }
+}

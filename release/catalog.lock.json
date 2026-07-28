@@ -1,0 +1,8 @@
+{
+  "schema": "arena_suite_release_lock_v1",
+  "suite_version": "0.1.0",
+  "release_ready": false,
+  "provider_repository": "iteathen/UCI_Arena",
+  "components": [],
+  "managed_components": []
+}

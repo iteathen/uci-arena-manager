@@ -1,0 +1,131 @@
+meta:
+  spec_id: arena_product_contract_v1
+  version: 1
+  status: active
+  owner: domain
+
+resource_contract:
+  required_fields:
+    - id
+    - host_id
+    - revision
+    - created_at
+    - updated_at
+    - labels
+  host_id_v1: local
+  ids: uuid_v7
+
+resources:
+  - host
+  - engine
+  - bot
+  - managed_service
+  - health_probe
+  - match
+  - tournament
+  - game
+  - operation
+  - report
+  - artifact
+  - secret_reference
+  - log_source
+  - health_snapshot
+
+engine_contract:
+  universal_fields:
+    - display_name
+    - executable
+    - working_directory
+    - argv
+    - environment_references
+    - uci_options
+    - fingerprint
+    - resource_limits
+  startup_interrogation:
+    - process_launch
+    - uciok
+    - readyok
+    - typed_option_discovery
+    - legal_startpos_bestmove
+  rule: >
+    LC0, Stockfish, LatticeKnight, and every other UCI engine use this same
+    resource and interrogation path. Engine names never dispatch code.
+
+local_match_planner:
+  supported:
+    - head_to_head
+    - round_robin
+    - gauntlet
+    - swiss
+    - sprt
+  inputs:
+    - engine_ids
+    - engine_option_overrides
+    - game_count_or_rounds
+    - color_policy
+    - opening_suite
+    - time_control
+    - concurrency
+    - adjudication
+    - seed
+  invariants:
+    - At least two distinct registered engines are required.
+    - Engine-specific overrides do not mutate catalog defaults.
+    - Plans are deterministic for the same normalized inputs and seed.
+    - Every scheduled game records both engine fingerprints and options.
+    - Color-paired formats schedule reversed colors together.
+
+canonical_game:
+  variants: [standard, chess960]
+  authority: manager_chess_rules
+  persisted:
+    - starting_fen
+    - variant
+    - uci_moves
+    - san_moves
+    - per_ply_fen
+    - clocks
+    - result
+    - termination
+    - engine_identity
+    - engine_options
+    - evaluations
+    - principal_variations
+  invariants:
+    - Engine output is advisory until parsed and legally applied.
+    - A completed ply is committed before the next move request.
+    - Restart reconstruction must match the last committed FEN.
+    - Illegal moves and protocol failures have explicit termination values.
+
+tournament_contract:
+  formats: [match, round_robin, gauntlet, swiss, sprt]
+  lifecycle: [planned, queued, running, paused, completed, cancelled, failed]
+  swiss: deterministic_score_groups_repeat_avoidance_color_balance_seeded_ties
+  sprt: color_paired_elo_bounds_alpha_beta_immutable_verdict
+
+managed_service_contract:
+  identity: >
+    A managed service is identified by a manager-owned UUID and a stable
+    profile id. Repository names, paths, and implementation language are never
+    identities.
+  lifecycle:
+    - not_installed
+    - stopped
+    - starting
+    - running
+    - paused
+    - degraded
+    - unavailable
+    - stopping
+    - failed
+  discovery:
+    - executable_and_required_paths
+    - declared_version_probe
+    - capability_manifest
+    - health_contract
+  invariants:
+    - Service commands use native argument arrays or a declared HTTP adapter.
+    - The manager never imports service source or opens a service-owned database.
+    - Unknown future capabilities remain visible and are never assumed.
+    - A not-yet-implemented service can be planned as unavailable without a fake executable.
+    - Installation ownership remains with the service package unless an explicit installer capability is declared.

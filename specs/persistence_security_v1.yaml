@@ -1,0 +1,54 @@
+meta:
+  spec_id: arena_persistence_security_v1
+  version: 1
+  status: active
+  owner: storage_security
+
+persistence:
+  database: sqlite
+  mode: wal
+  rules:
+    - One serialized write owner publishes durable state.
+    - Foreign keys are enabled.
+    - Schema migrations are ordered, transactional, and recorded.
+    - An upgrade creates and verifies a backup before migration.
+    - Commands, state changes, events, and audit records commit atomically.
+    - Low disk space blocks new scheduling before writes become unsafe.
+  logs:
+    raw: rotated_zstd_segments
+    structured: sqlite
+    rule: protocol_critical_messages_have_an_independent_bounded_channel
+  retention:
+    behavior: bounded_incremental_deletion
+    active_game_protection: true
+
+secrets:
+  storage: libsodium_encrypted_files
+  windows_master_key: dpapi_machine_scope_plus_service_acl
+  linux_master_key: service_owned_mode_0600
+  api_behavior: write_only
+  forbidden:
+    - database_plaintext
+    - argv
+    - child_environment
+    - logs
+    - events
+    - reports
+    - exports
+
+local_security:
+  bind: loopback_only
+  browser_session: one_time_pairing_to_http_only_same_site_strict_cookie
+  required:
+    - origin_validation
+    - csrf_protection
+    - content_security_policy
+    - bounded_request_body
+    - rate_limits
+    - schema_validation
+
+recovery:
+  - Reconstruct games from starting position and committed moves.
+  - Relaunch local engines without charging service downtime.
+  - Mark operations interrupted when their side effect cannot be proven.
+  - Broker unavailability degrades only external OS service mutation.

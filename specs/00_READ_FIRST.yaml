@@ -1,0 +1,57 @@
+meta:
+  spec_id: arena_foundation_v1
+  version: 1
+  status: active
+  owner: governance
+
+north_star: >
+  Deliver a standalone, local-first, cross-platform UCI arena control plane
+  whose C++ service is the sole runtime authority and whose dashboard, CLI,
+  scripts, and future clients share one stable command contract.
+
+priority:
+  - correct_public_behavior
+  - canonical_chess_truth
+  - reliable_lifecycle_and_recovery
+  - clear_ownership_and_small_interfaces
+  - cross_platform_parity
+  - responsive_operator_experience
+  - measured_performance
+
+principles:
+  universality:
+    - Engines, bots, services, and health checks are capability-described resources.
+    - Product and model names never select implementation paths.
+    - Platform differences remain behind ports.
+  modularity:
+    - Domain code owns invariants and depends on no adapter.
+    - Application code owns commands and state transitions.
+    - Adapters own I/O, third-party protocols, persistence, and platforms.
+  reusability:
+    - Every mutating surface uses the command catalog.
+    - Every read surface consumes the same projections.
+  minimalism:
+    - One unprivileged service, one CLI, one broker, SQLite, and embedded web assets.
+    - No distributed database, dynamic plug-ins, production Node runtime, or containers in v1.
+  reliability:
+    - Persist completed state before advancing authority.
+    - Bound queues, retries, logs, memory, and stop time.
+    - Fail fast on invalid dependencies or configuration.
+  maintainability:
+    - One owner per behavior and format.
+    - No source or database dependency on managed systems.
+    - Stable external contracts; replaceable internals.
+  spec_driven:
+    - Update the governing spec before changing public behavior.
+    - Tests protect contracts rather than private helper structure.
+
+hard_rules:
+  - Bind only to loopback in v1.
+  - The web-facing service never runs as root or LocalSystem.
+  - The broker never accepts arbitrary commands, executable paths, or shell strings.
+  - Canonical chess state validates every engine move.
+  - Raw engine output cannot block UCI control messages.
+  - Secret values are write-only and never logged or returned.
+  - Manager Core never requires Node.js; optional provider components may use a
+    private, pinned runtime that is installed and lifecycle-managed as a
+    separate component.
