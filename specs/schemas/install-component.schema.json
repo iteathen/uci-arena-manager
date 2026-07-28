@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uci-arena.example/schemas/install-component.schema.json",
+  "title": "arena_install_component_v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "component_id", "component_version", "files"],
+  "properties": {
+    "schema": {"const": "arena_install_component_v1"},
+    "schema_version": {"const": 1},
+    "component_id": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+    "component_version": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+    "target_triple": {"type": "string"},
+    "entrypoints": {"type": "object"},
+    "capabilities": {"type": "array", "items": {"type": "string"}},
+    "startup": {"type": "object"},
+    "data_paths": {"type": "array", "items": {"type": "string"}},
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256", "size_bytes"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "size_bytes": {"type": "integer", "minimum": 0}
+        }
+      }
+    }
+  }
+}

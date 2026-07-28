@@ -1,0 +1,114 @@
+meta:
+  spec_id: arena_operator_experience_v1
+  version: 1
+  status: active
+  owner: operator_surface
+
+navigation:
+  - overview
+  - services
+  - bots
+  - engines
+  - local_match_planner
+  - live_games
+  - tournaments
+  - game_history
+  - logs
+  - statistics_health
+  - reports
+  - configuration
+  - audit
+
+requirements:
+  - desktop_first_responsive
+  - complete_tablet_support
+  - safe_mobile_monitoring
+  - light_and_dark_themes
+  - keyboard_navigation
+  - reduced_motion
+  - visible_focus
+  - wcag_2_1_aa_contrast
+  - virtualized_logs_and_tables
+  - server_side_filtering
+  - websocket_batching
+  - stale_data_indicators
+  - service_profile_setup_for_book_forge
+  - optional_external_service_integrations
+  - auto_discovery_with_manual_locator_fallback
+
+managed_service_experience:
+  catalog_cards:
+    - profile_id: book_forge
+      state: available_when_configured
+      callout: Existing external service
+    - profile_id: uci_arena_evidence
+      state: available_when_configured
+      callout: Existing optional external service
+  setup:
+    - Label Book Forge and UCI Arena Evidence Service as optional.
+    - Offer Auto-detect without registering or enabling a discovered candidate.
+    - When discovery is incomplete or empty, keep manual paths and endpoint fields visible and editable.
+    - Permit the operator to reconfigure a previously saved locator.
+    - Show every required path or endpoint before validation.
+    - Preview capabilities and ownership boundaries.
+    - Never request external-service secrets that are not manager-owned.
+    - Explain unavailable actions without presenting them as failures.
+    - Do not show an unconfigured optional service as an unhealthy manager resource.
+
+local_path_picker:
+  owner: arena_ui_session_helper
+  transport: token_scoped_loopback_http
+  lifetime: foreground_arena_ui_process
+  requirements:
+    - The Manager service never opens a desktop dialog or impersonates the interactive user.
+    - `arena ui` starts the picker only on loopback and puts an unguessable
+      per-process bearer token in browser session storage during pairing.
+    - Picker requests declare file or directory mode plus display-only hints
+      and extension filters; they never supply a command, executable, or shell string.
+    - Windows uses the native common item dialog in the logged-in session.
+    - Linux uses an installed desktop portal-compatible picker helper and
+      returns actionable manual-entry guidance when no helper is available.
+    - A selected path is returned to the dashboard but is not registered,
+      enabled, copied, hashed, or opened until the operator explicitly submits
+      the owning validation or import action.
+    - Closing `arena ui` removes picker authority without invalidating the
+      already-paired Manager dashboard session.
+
+knowledge_asset_setup:
+  location: configuration
+  requirements:
+    - Offer browse-assisted opening-book, Syzygy directory, and Lichess
+      token-file-reference selection with format-specific hints and filters.
+    - Offer copyable arena-setup commands for importing the selected existing
+      paths and for downloading the exact signed missing-book or bounded
+      tablebase components.
+    - The dashboard and Manager service never execute arena-setup or acquire
+      package-execution authority; the foreground operator reviews and invokes
+      the command explicitly.
+    - Lichess token contents are never read, previewed, copied, or placed in
+      the generated command; only the selected path is present.
+
+local_development_launcher:
+  entrypoint: run-local.cmd
+  requirements:
+    - Resolve binaries, web assets, data, logs, and helper scripts from the repository root rather than the caller working directory.
+    - Reuse a healthy service already running on the selected port.
+    - Start the service hidden, wait for authenticated readiness, and then invoke the normal arena ui pairing flow.
+    - Fail with actionable build instructions when required artifacts are absent.
+    - Record and validate the launched process identity before stopping it.
+
+chessboard:
+  implementation: custom_svg
+  authority: backend_fen_snapshots
+  frontend_rule_authority: false
+
+reports:
+  model: immutable_report_document
+  formats: [html, pdf, csv, json, pgn]
+  common_fields:
+    - filters
+    - generation_parameters
+    - schema_version
+    - data_cutoff
+    - content_hashes
+    - provenance

@@ -1,0 +1,162 @@
+export type ResourceKind =
+  | 'engine'
+  | 'bot'
+  | 'managed_service'
+  | 'health_probe'
+  | 'match_plan'
+  | 'tournament'
+  | 'game'
+  | 'operation'
+  | 'report'
+  | 'artifact'
+  | 'health_snapshot'
+  | 'audit'
+
+export interface Resource<T extends Record<string, unknown> = Record<string, unknown>> {
+  id: string
+  host_id: 'local'
+  kind: ResourceKind
+  revision: number
+  created_at: string
+  updated_at: string
+  labels: Record<string, string>
+  data: T
+}
+
+export interface SystemStatus {
+  schema_version: number
+  service: string
+  version: string
+  host_id: 'local'
+  started_at: string
+  database: string
+  counts: Partial<Record<ResourceKind, number>>
+}
+
+export interface ArenaEvent {
+  schema_version: number
+  cursor: number
+  event_id: string
+  timestamp: string
+  stream: string
+  kind: string
+  resource: { kind: ResourceKind; id: string; revision: number } | null
+  correlation_id: string | null
+  payload: Record<string, unknown>
+}
+
+export interface CommandEnvelope {
+  schema_version: 1
+  request_id: string
+  idempotency_key: string
+  target: { kind: string; id: string | null }
+  action: string
+  expected_revision: number | null
+  dry_run: boolean
+  parameters: Record<string, unknown>
+}
+
+export interface EngineData extends Record<string, unknown> {
+  display_name: string
+  executable: string
+  engine_name: string
+  engine_author: string
+  fingerprint: string
+  observed_state: string
+  discovered_options: Array<{ name: string; type: string; default: string }>
+}
+
+export interface EngineCandidate {
+  schema: 'arena_engine_candidate_v1'
+  schema_version: 1
+  candidate_id: string
+  source: 'install_receipt' | 'saved_locator' | 'provider_manifest' | 'discovered'
+  state: 'ready_to_probe' | 'unavailable'
+  display_name: string
+  executable: string
+  working_directory: string
+  arguments: string[]
+  uci_options: Record<string, unknown>
+  component_id?: string
+  component_version?: string
+  fingerprint?: string
+  issues: Array<{ code: string; detail: string }>
+}
+
+export interface EngineCandidates {
+  schema: 'arena_engine_candidates_v1'
+  schema_version: 1
+  precedence: string[]
+  candidates: EngineCandidate[]
+}
+
+export interface EngineProbeResult {
+  schema: 'arena_engine_probe_result_v1'
+  schema_version: 1
+  probe_id: string
+  candidate_id: string
+  state: 'passed' | 'failed'
+  registration_parameters: Record<string, unknown>
+  preview?: Record<string, unknown>
+  diagnostic?: Record<string, unknown>
+}
+
+export interface MatchPlanData extends Record<string, unknown> {
+  display_name: string
+  format: string
+  variant: string
+  engine_ids: string[]
+  games_per_pair: number
+  concurrency: number
+  lifecycle: string
+  pairings: Array<{
+    sequence: number
+    white_engine_id: string
+    black_engine_id: string
+    round: number
+  }>
+}
+
+export interface ServiceProfile {
+  profile_id: 'book_forge' | 'uci_arena_evidence'
+  display_name: string
+  implementation_state:
+    | 'implemented_external'
+    | 'in_development_external'
+    | 'planned_external'
+  description: string
+  optional: true
+  capabilities: string[]
+  required_configuration: string[]
+  discovery: {
+    supported: boolean
+    manual_fallback: true
+    sources: string[]
+  }
+}
+
+export interface ServiceDiscovery {
+  schema_version: 1
+  profile_id: 'book_forge' | 'uci_arena_evidence'
+  optional: true
+  candidates: Array<{
+    source: string
+    complete: boolean
+    configuration: Record<string, string>
+    missing: string[]
+  }>
+  manual_configuration: string[]
+}
+
+export interface ManagedServiceData extends Record<string, unknown> {
+  profile_id: string
+  display_name: string
+  integration_state: string
+  desired_state: string
+  observed_state: string
+  capabilities: string[]
+  health: { state: string; reason?: string }
+  node_executable?: string
+  cli_entrypoint?: string
+  workspace?: string
+}

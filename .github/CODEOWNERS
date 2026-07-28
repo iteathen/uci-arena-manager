@@ -1,0 +1,11 @@
+* @iteathen
+/specs/ @iteathen
+/apps/broker/ @iteathen
+/apps/setup/ @iteathen
+/include/arena/application/installer/ @iteathen
+/src/application/installer/ @iteathen
+/release/ @iteathen
+/packaging/ @iteathen
+/tools/release/ @iteathen
+/.github/workflows/release.yml @iteathen
+/src/platform/ @iteathen

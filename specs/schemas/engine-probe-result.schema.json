@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uci-arena.example/schemas/engine-probe-result.schema.json",
+  "title": "arena_engine_probe_result_v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "probe_id",
+    "candidate_id",
+    "state",
+    "registration_parameters"
+  ],
+  "properties": {
+    "schema": {"const": "arena_engine_probe_result_v1"},
+    "schema_version": {"const": 1},
+    "probe_id": {"type": "string", "format": "uuid"},
+    "candidate_id": {"type": "string"},
+    "state": {"enum": ["passed", "failed"]},
+    "registration_parameters": {"type": "object"},
+    "preview": {"type": "object"},
+    "diagnostic": {"type": "object"}
+  }
+}

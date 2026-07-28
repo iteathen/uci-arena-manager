@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uci-arena.example/schemas/install-transaction.schema.json",
+  "title": "arena_install_transaction_v1",
+  "type": "object",
+  "required": ["schema", "transaction_id", "state", "actions"],
+  "properties": {
+    "schema": {"const": "arena_install_transaction_v1"},
+    "transaction_id": {"type": "string"},
+    "state": {"enum": ["running", "committed", "failed", "rolled_back"]},
+    "actions": {"type": "array"},
+    "error": {"type": "string"}
+  }
+}

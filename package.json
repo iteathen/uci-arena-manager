@@ -1,0 +1,12 @@
+{
+  "name": "uci-arena-manager-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "spec:check": "node tools/spec-check.mjs",
+    "check": "npm run spec:check && npm test --prefix web && npm run build --prefix web"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uci-arena-manager.local/schemas/command-envelope-v1.json",
+  "title": "Arena command envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "idempotency_key",
+    "target",
+    "action",
+    "dry_run",
+    "parameters"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "request_id": { "type": "string", "format": "uuid" },
+    "idempotency_key": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "id": { "type": ["string", "null"], "format": "uuid" }
+      }
+    },
+    "action": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]+$" },
+    "expected_revision": { "type": ["integer", "null"], "minimum": 0 },
+    "dry_run": { "type": "boolean" },
+    "parameters": { "type": "object" }
+  }
+}
