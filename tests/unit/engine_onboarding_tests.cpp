@@ -69,7 +69,8 @@ TEST_CASE("installed engine receipts resolve provider-declared UCI entrypoints")
                .dump(2);
 
     const json discovered =
-        arena::application::EngineOnboarding::discover(data_root);
+        arena::application::EngineOnboarding::discover(
+            data_root, {}, false);
     REQUIRE(discovered.at("candidates").size() == 1);
     const json& candidate = discovered.at("candidates").at(0);
     REQUIRE(candidate.at("source") == "install_receipt");
@@ -96,7 +97,7 @@ TEST_CASE("explicit bounded roots discover renamed engine executables") {
 
     const json discovered =
         arena::application::EngineOnboarding::discover(
-            data_root, {root / "selected"});
+            data_root, {root / "selected"}, false);
     REQUIRE(discovered.at("candidates").size() == 1);
     const json& candidate = discovered.at("candidates").at(0);
     REQUIRE(candidate.at("source") == "discovered");

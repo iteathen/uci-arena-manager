@@ -339,7 +339,8 @@ void append_path_candidates(
 
 json EngineOnboarding::discover(
     const fs::path& manager_data_root,
-    const std::vector<fs::path>& explicit_roots) {
+    const std::vector<fs::path>& explicit_roots,
+    const bool include_path_candidates) {
     json candidates = json::array();
     std::set<std::string> seen;
     append_receipt_candidates(manager_data_root, candidates, seen);
@@ -347,7 +348,9 @@ json EngineOnboarding::discover(
     for (const auto& root : explicit_roots) {
         append_explicit_root(root, candidates, seen);
     }
-    append_path_candidates(candidates, seen);
+    if (include_path_candidates) {
+        append_path_candidates(candidates, seen);
+    }
     return {
         {"schema", "arena_engine_candidates_v1"},
         {"schema_version", 1},
