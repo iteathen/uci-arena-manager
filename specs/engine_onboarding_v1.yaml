@@ -1,0 +1,61 @@
+schema: arena_engine_onboarding_v1
+schema_version: 1
+status: authoritative
+
+purpose: >
+  Define the installation-to-first-launch contract for discovering, probing,
+  and explicitly registering UCI engines in UCI Arena Manager.
+
+sources:
+  precedence:
+    - install_receipt
+    - saved_locator
+    - provider_manifest
+    - discovered
+  rules:
+    - Managed engines are resolved from their verified install receipt and
+      arena-component.json UCI entrypoint; their filenames are not guessed.
+    - Saved uci_engine locators are projected as candidates without copying or
+      silently registering the engine.
+    - Additional discovery is restricted to an explicitly selected file or
+      bounded root, plus exact well-known names on PATH.
+    - Whole-disk recursive discovery is forbidden.
+    - Symbolic links, missing files, unsafe relative entrypoints, malformed
+      receipts, and malformed manifests are never returned as ready candidates.
+
+probe:
+  authority: manager_service
+  behavior:
+    - Dashboard and CLI probes use the same Manager service identity and the
+      same engine.register dry-run path used immediately before persistence.
+    - A passing probe performs process launch, uciok, readyok, typed option
+      discovery, and a legal start-position bestmove.
+    - Probe failure is returned with its stable failure code and remediation
+      detail and never creates a resource.
+
+registration:
+  confirmation: explicit_only
+  behavior:
+    - Candidate discovery never creates or updates an engine resource.
+    - The dashboard requires a successful probe before enabling registration.
+    - Registration probes again to close the probe-to-register race and then
+      persists through the existing transactional command path.
+    - Existing raw launch-spec registration remains compatible for automation.
+
+installation:
+  complete_arena:
+    - The signed suite bootstrapper installs Manager Core before applying the
+      complete_arena provider catalog.
+    - Installed UCI Arena and Stockfish receipts must resolve to readable,
+      executable UCI entrypoints for the Manager service account.
+    - First dashboard launch presents those installed engines without requiring
+      the operator to type an executable or working-directory path.
+
+acceptance:
+  - A clean Complete Arena installation yields UCI Arena and Stockfish engine
+    candidates from receipts.
+  - Both candidates can be probed, explicitly registered, and recovered after
+    a Manager service restart.
+  - A renamed UCI executable under an explicitly selected root is discoverable.
+  - A path usable by the interactive user but unavailable to the service fails
+    during probe with no persisted engine resource.

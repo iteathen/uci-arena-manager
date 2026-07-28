@@ -54,6 +54,7 @@ add_library(arena_core
   src/domain/uuid.cpp
   src/domain/match_planner.cpp
   src/application/control_plane.cpp
+  src/application/engine_onboarding.cpp
   src/application/local_auth.cpp
   src/application/broker_policy.cpp
   src/application/service_catalog.cpp
@@ -184,6 +185,7 @@ if(ARENA_BUILD_TESTS)
   add_executable(arena_mock_service tests/mocks/mock_service_cli.cpp)
   add_executable(arena_tests
     tests/unit/domain_tests.cpp
+    tests/unit/engine_onboarding_tests.cpp
     tests/unit/match_planner_tests.cpp
     tests/unit/security_report_tests.cpp
     tests/unit/setup_tests.cpp

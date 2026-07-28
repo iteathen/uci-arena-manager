@@ -66,6 +66,81 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Resource"
+  /engine-candidates:
+    get:
+      operationId: listEngineCandidates
+      description: >
+        Return installed, imported, and bounded-discovery UCI engine candidates.
+        Discovery never registers an engine.
+      parameters:
+        - in: query
+          name: root
+          required: false
+          schema:
+            type: string
+          description: Explicit local file or bounded directory to inspect.
+      responses:
+        "200":
+          description: Candidate collection in source precedence order
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [schema, schema_version, precedence, candidates]
+                properties:
+                  schema:
+                    const: arena_engine_candidates_v1
+                  schema_version:
+                    const: 1
+                  precedence:
+                    type: array
+                    items:
+                      type: string
+                  candidates:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/EngineCandidate"
+  /engine-probes:
+    post:
+      operationId: probeEngine
+      description: >
+        Run the engine.register dry-run path under the Manager service identity.
+        A successful probe does not persist an engine.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [display_name, executable, working_directory]
+              properties:
+                candidate_id:
+                  type: string
+                display_name:
+                  type: string
+                executable:
+                  type: string
+                working_directory:
+                  type: string
+                arguments:
+                  type: array
+                  items:
+                    type: string
+                uci_options:
+                  type: object
+      responses:
+        "200":
+          description: Engine passed the complete registration probe
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EngineProbeResult"
+        "422":
+          description: Engine failed one or more probe stages
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EngineProbeResult"
   /resources/{kind}:
     get:
       operationId: listResources
@@ -179,6 +254,10 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    EngineCandidate:
+      $ref: "schemas/engine-candidate.schema.json"
+    EngineProbeResult:
+      $ref: "schemas/engine-probe-result.schema.json"
     SystemStatus:
       type: object
       required:

@@ -2,7 +2,9 @@
 
 #include "arena/adapters/sqlite_store.hpp"
 #include "arena/application/control_plane.hpp"
+#include "arena/application/engine_onboarding.hpp"
 #include "arena/application/local_auth.hpp"
+#include "arena/domain/uuid.hpp"
 
 #include <drogon/drogon.h>
 #include <nlohmann/json.hpp>
@@ -213,6 +215,97 @@ int run_control_plane(const Options& options) {
         register_resource_alias("/api/v1/engines", "engine");
         register_resource_alias("/api/v1/match-plans", "match_plan");
         register_resource_alias("/api/v1/tournaments", "tournament");
+
+        app.registerHandler(
+            "/api/v1/engine-candidates",
+            [auth, data_directory = options.data_directory](
+                const HttpRequestPtr& request,
+                std::function<void(const HttpResponsePtr&)>&& callback) {
+                if (!authorized(request, auth)) {
+                    callback(response(
+                        {{"code", "authentication_required"}},
+                        drogon::k401Unauthorized));
+                    return;
+                }
+                try {
+                    std::vector<std::filesystem::path> roots;
+                    const std::string root = request->getParameter("root");
+                    if (!root.empty()) {
+                        roots.emplace_back(root);
+                    }
+                    callback(response(
+                        arena::application::EngineOnboarding::discover(
+                            data_directory, roots)));
+                } catch (const std::exception& error) {
+                    callback(response(
+                        {{"code", "engine_discovery_failed"},
+                         {"detail", error.what()}},
+                        drogon::k422UnprocessableEntity));
+                }
+            },
+            {drogon::Get});
+
+        app.registerHandler(
+            "/api/v1/engine-probes",
+            [control_plane, auth](
+                const HttpRequestPtr& request,
+                std::function<void(const HttpResponsePtr&)>&& callback) {
+                if (!mutation_authorized(request, auth)) {
+                    callback(response(
+                        {{"code", "authentication_required"}},
+                        drogon::k401Unauthorized));
+                    return;
+                }
+                const std::string probe_id = arena::domain::uuid_v7();
+                try {
+                    const json body = parse_body(request);
+                    json parameters = json::object();
+                    for (const auto* field :
+                         {"display_name", "executable", "working_directory",
+                          "arguments", "uci_options",
+                          "environment_references"}) {
+                        if (body.contains(field)) {
+                            parameters[field] = body.at(field);
+                        }
+                    }
+                    const json command{
+                        {"schema_version", 1},
+                        {"request_id", arena::domain::uuid_v7()},
+                        {"idempotency_key",
+                         "engine-probe-" + arena::domain::uuid_v7()},
+                        {"target", {{"kind", "engine"}, {"id", nullptr}}},
+                        {"action", "engine.register"},
+                        {"expected_revision", nullptr},
+                        {"dry_run", true},
+                        {"parameters", parameters},
+                    };
+                    const json preview =
+                        control_plane->submit(command, "local-admin");
+                    callback(response({
+                        {"schema", "arena_engine_probe_result_v1"},
+                        {"schema_version", 1},
+                        {"probe_id", probe_id},
+                        {"candidate_id", body.value("candidate_id", "")},
+                        {"state", "passed"},
+                        {"registration_parameters", parameters},
+                        {"preview", preview},
+                    }));
+                } catch (const arena::application::CommandFailure& failure) {
+                    callback(response(
+                        {
+                            {"schema", "arena_engine_probe_result_v1"},
+                            {"schema_version", 1},
+                            {"probe_id", probe_id},
+                            {"candidate_id", ""},
+                            {"state", "failed"},
+                            {"registration_parameters", json::object()},
+                            {"diagnostic",
+                             arena::application::problem_json(failure)},
+                        },
+                        status_code(failure.http_status())));
+                }
+            },
+            {drogon::Post});
 
         app.registerHandler(
             "/api/v1/resources/{1}",

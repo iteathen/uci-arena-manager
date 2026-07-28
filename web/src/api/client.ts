@@ -1,6 +1,8 @@
 import type {
   ArenaEvent,
   CommandEnvelope,
+  EngineCandidates,
+  EngineProbeResult,
   Resource,
   ResourceKind,
   ServiceDiscovery,
@@ -138,6 +140,15 @@ export const api = {
   serviceProfiles: () => request<ServiceProfile[]>('/api/v1/service-profiles'),
   discoverService: (profileId: ServiceProfile['profile_id']) =>
     request<ServiceDiscovery>(`/api/v1/service-profiles/${profileId}/discovery`),
+  engineCandidates: (root = '') =>
+    request<EngineCandidates>(
+      `/api/v1/engine-candidates${root ? `?root=${encodeURIComponent(root)}` : ''}`,
+    ),
+  probeEngine: (parameters: Record<string, unknown>) =>
+    request<EngineProbeResult>('/api/v1/engine-probes', {
+      method: 'POST',
+      body: JSON.stringify(parameters),
+    }),
   command: <T = Resource>(envelope: CommandEnvelope) =>
     request<{ status: string; command_id: string; resource: T }>('/api/v1/commands', {
       method: 'POST',
