@@ -287,11 +287,25 @@ void append_explicit_root(
             error.clear();
             continue;
         }
-        if (iterator.depth() >= 1 && iterator->is_directory(error)) {
+        const bool is_dir = iterator->is_directory(error);
+        if (error) {
+            error.clear();
+            continue;
+        }
+        if (iterator.depth() >= 1 && is_dir) {
             iterator.disable_recursion_pending();
         }
-        if (iterator.depth() > 1 || iterator->is_symlink(error) ||
-            !iterator->is_regular_file(error)) {
+        const bool is_sym = iterator->is_symlink(error);
+        if (error) {
+            error.clear();
+            continue;
+        }
+        const bool is_reg = iterator->is_regular_file(error);
+        if (error) {
+            error.clear();
+            continue;
+        }
+        if (iterator.depth() > 1 || is_sym || !is_reg) {
             continue;
         }
         ++inspected;
