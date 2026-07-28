@@ -134,7 +134,7 @@ jobs:
             dist/*.tar.gz
             dist/windows/*
             dist/linux/*
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: manager-${{ matrix.target }}
           path: |
@@ -183,7 +183,7 @@ jobs:
             --manager-linux "$linux"
           cp -R dist/manager/windows dist/candidate/
           cp -R dist/manager/linux dist/candidate/
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: suite-candidate-${{ needs.validate.outputs.version }}
           path: dist/candidate
@@ -339,7 +339,7 @@ jobs:
             )
             ($commands -join [Environment]::NewLine) | diskpart.exe
           }
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: complete-acceptance-${{ matrix.target }}
@@ -495,7 +495,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw '${{ matrix.image }} mounted-asset acceptance failed'
           }
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: platform-acceptance-${{ matrix.image }}
@@ -595,7 +595,7 @@ jobs:
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: signed-windows-${{ needs.validate.outputs.version }}
           path: dist/candidate
@@ -629,7 +629,7 @@ jobs:
           RELEASE_SIGNING_ENDPOINT: ${{ vars.RELEASE_SIGNING_ENDPOINT }}
           RELEASE_SIGNING_AUDIENCE: ${{ vars.RELEASE_SIGNING_AUDIENCE }}
         run: node tools/release/request-remote-signatures.mjs dist/candidate dist/signed
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: signed-linux-metadata-${{ needs.validate.outputs.version }}
           path: dist/signed
@@ -739,7 +739,7 @@ jobs:
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-windows-${{ needs.validate.outputs.version }}
           path: dist/windows-installers
@@ -831,7 +831,7 @@ jobs:
           Copy-Item dist/linux-media/release/catalog.json dist/linux-release/catalog.json
           Copy-Item dist/linux-media/release/tuf dist/linux-release/tuf -Recurse
           Copy-Item dist/linux-media/release/payloads dist/linux-release/payloads -Recurse
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-linux-${{ needs.validate.outputs.version }}
           path: dist/linux-release
