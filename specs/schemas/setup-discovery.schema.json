@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uci-arena.example/schemas/setup-discovery.schema.json",
+  "title": "arena_setup_discovery_v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "kind",
+    "precedence",
+    "selection",
+    "candidates",
+    "browse"
+  ],
+  "properties": {
+    "schema": {"const": "arena_setup_discovery_v1"},
+    "schema_version": {"const": 1},
+    "kind": {
+      "enum": [
+        "opening_book",
+        "syzygy",
+        "uci_engine",
+        "book_forge",
+        "evidence_service",
+        "timing_profile",
+        "lichess_token_path",
+        "restaurant"
+      ]
+    },
+    "precedence": {
+      "const": [
+        "install_receipt",
+        "saved_locator",
+        "provider_manifest",
+        "discovered",
+        "unresolved"
+      ]
+    },
+    "selection": {"$ref": "#/$defs/candidate"},
+    "candidates": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/candidate"}
+    },
+    "browse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "selection",
+        "filters",
+        "hints",
+        "managed_copy_allowed"
+      ],
+      "properties": {
+        "selection": {
+          "enum": ["file", "directory", "file_or_directory"]
+        },
+        "filters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["label", "patterns"],
+            "properties": {
+              "label": {"type": "string"},
+              "patterns": {
+                "type": "array",
+                "items": {"type": "string"}
+              }
+            }
+          }
+        },
+        "hints": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "managed_copy_allowed": {"type": "boolean"}
+      }
+    }
+  },
+  "$defs": {
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "state", "path"],
+      "properties": {
+        "source": {
+          "enum": [
+            "install_receipt",
+            "saved_locator",
+            "provider_manifest",
+            "discovered",
+            "unresolved"
+          ]
+        },
+        "state": {"type": "string"},
+        "path": {"type": ["string", "null"]},
+        "details": {"type": "object"}
+      }
+    }
+  }
+}

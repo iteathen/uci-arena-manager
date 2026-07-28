@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uci-arena-manager.local/schemas/event-envelope-v1.json",
+  "title": "Arena event envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "cursor",
+    "event_id",
+    "timestamp",
+    "stream",
+    "kind",
+    "payload"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "cursor": { "type": "integer", "minimum": 1 },
+    "event_id": { "type": "string", "format": "uuid" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "stream": {
+      "enum": ["state", "operation", "health", "telemetry", "log", "audit"]
+    },
+    "kind": { "type": "string", "minLength": 1 },
+    "resource": {
+      "type": ["object", "null"],
+      "required": ["kind", "id", "host_id", "revision"],
+      "properties": {
+        "kind": { "type": "string" },
+        "id": { "type": "string", "format": "uuid" },
+        "host_id": { "const": "local" },
+        "revision": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "correlation_id": { "type": ["string", "null"], "format": "uuid" },
+    "payload": { "type": "object" }
+  }
+}

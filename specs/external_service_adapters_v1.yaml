@@ -1,0 +1,227 @@
+meta:
+  spec_id: arena_external_service_adapters_v1
+  version: 1
+  status: active
+  owner: service_adapters
+
+purpose: >
+  Define how independently built services are discovered, configured, observed,
+  and controlled without importing their source, depending on their repository
+  layout, or reading their private storage.
+
+common_contract:
+  resource_kind: managed_service
+  optional_profiles: true
+  manager_readiness_without_profiles: fully_operational
+  required_fields:
+    - profile_id
+    - display_name
+    - integration_state
+    - desired_state
+    - observed_state
+    - capabilities
+    - health
+    - configuration
+  integration_states: [planned, configured, available, incompatible, unavailable]
+  transports: [process, native_service, http]
+  allowed_actions:
+    - discover
+    - validate
+    - start
+    - stop
+    - restart
+    - pause
+    - resume
+    - status
+  boundaries:
+    - Neither Book Forge nor UCI Arena Evidence Service is required for manager startup, local matches, tournaments, CLI use, or dashboard use.
+    - An unconfigured optional service creates no resource, warning, degraded state, or background process.
+    - Configuration contains explicit executable, endpoint, and filesystem paths.
+    - Process actions use native argv arrays and never a shell command.
+    - Native service actions cross the allowlisted broker by manager resource id.
+    - HTTP actions must be declared by a versioned capability document.
+    - No adapter imports service source, reads a service-owned database, or assumes a repository root.
+    - Secrets use SecretReference ids and are never copied into managed-service data.
+    - Missing optional capabilities produce unavailable actions, not startup failure.
+    - Installed services are reconciled only from enabled arena_install_receipt_v1 receipts.
+    - Reconciliation verifies the complete immutable private runtime and provider component file sets by exact size and SHA-256, rejects symbolic links and unlisted files, and never launches an unverifiable component.
+    - Installer-generated provider configuration may reference only exact dependency entrypoints from verified receipts and must remain inside the declared provider workspace.
+
+profiles:
+  book_forge:
+    display_name: Book Forge
+    current_state: implemented_external
+    runtime: external_node_process_or_native_startup_registration
+    minimum_contract:
+      status_schema: flashfork_book_forge_status_v2
+      cli_machine_output: json
+      heartbeat_seconds: 15
+      stale_seconds: 300
+    declared_capabilities:
+      - status
+      - start
+      - stop
+      - restart
+      - pause
+      - resume
+      - acquisition_status
+      - acquisition_run
+      - acquisition_retry_auth
+      - snapshot_build
+      - validate
+      - publish
+      - maintain
+      - startup_install
+      - startup_status
+      - startup_uninstall
+    configuration:
+      - node_executable
+      - cli_entrypoint
+      - workspace
+      - optional_config_path
+      - optional_native_launcher
+    discovery:
+      sources:
+        - arena_setup_saved_locator
+        - process_environment_hints
+        - executable_path
+      environment_hints:
+        - BOOK_FORGE_NODE
+        - BOOK_FORGE_CLI
+        - BOOK_FORGE_WORKSPACE
+      behavior:
+        - A validated arena-setup locator is considered before environment and PATH hints and may contribute a packaged CLI while the operator supplies any remaining fields.
+        - Discovery returns zero or more candidates and never registers one automatically.
+        - A complete candidate requires a Node executable, CLI entrypoint, and workspace.
+        - The dashboard always permits manual path entry when no complete candidate is found.
+    health_projection:
+      - phase
+      - heartbeat_age_seconds
+      - resource_mode
+      - acquisition_state
+      - daily_request_budget
+      - last_cycle
+      - redacted_last_error
+    output_integration:
+      authority: book_forge
+      source: public_cli_only
+      contract:
+        - Status channel rows identify the current integration and qualified snapshots.
+        - Manager invokes Book Forge validate for every advertised current snapshot.
+        - Snapshot id, channel, manifest digest, qualification state, and record count are projected without rewriting the snapshot.
+        - A digest, identity, channel, or schema mismatch marks the integration incompatible.
+    safety:
+      - Book Forge remains authority for its workspace, catalog, resource governor, and publication.
+      - The manager invokes only its public CLI and reads only its machine-readable status.
+      - Authentication tokens remain owned by Book Forge and are never accepted by this adapter.
+      - Pausing and resuming use Book Forge durable controls.
+      - The manager does not replace Book Forge single-instance enforcement or startup registration.
+
+  uci_arena_evidence:
+    display_name: UCI Arena Evidence Service
+    current_state: implemented_external
+    runtime: external_node_process_or_per_user_startup_registration
+    status_schema: uci_arena_evidence_status_v1
+    minimum_node: 24.15.0
+    default_integration_state: configured
+    purpose: >
+      Produce immutable, versioned arena evidence, including time-control
+      performance curves, confidence intervals, match observations, and
+      provenance that the manager may use for planning and reports.
+    declared_capabilities:
+      - status
+      - start
+      - stop
+      - restart
+      - pause
+      - resume
+      - init
+      - target_add
+      - target_list
+      - target_remove
+      - job_enqueue
+      - job_list
+      - job_cancel
+      - job_retry
+      - dataset_list
+      - dataset_show
+      - dataset_export
+      - profile_list
+      - prune
+      - startup_install
+      - startup_status
+      - startup_uninstall
+    cli_contract:
+      machine_output: json
+      status: [status, --json]
+      daemon: [daemon]
+      pause: [pause, --reason, uci-arena-manager]
+      resume: [resume]
+      global_workspace: [--workspace, PATH]
+    configuration:
+      - node_executable
+      - cli_entrypoint
+      - workspace
+      - optional_config_path
+    discovery:
+      sources:
+        - arena_setup_saved_locator
+        - process_environment_hints
+        - executable_path
+      environment_hints:
+        - UCI_ARENA_EVIDENCE_NODE
+        - UCI_ARENA_EVIDENCE_CLI
+        - UCI_ARENA_EVIDENCE_ROOT
+      behavior:
+        - A validated arena-setup locator is considered before environment and PATH hints and may contribute a packaged CLI while the operator supplies any remaining fields.
+        - Discovery returns candidates but never enables the optional integration automatically.
+        - A complete candidate requires a Node executable, CLI entrypoint, and workspace.
+        - The dashboard always permits manual path entry when no complete candidate is found.
+    status_projection:
+      - control
+      - collection
+      - daemon
+      - jobs
+      - targets
+      - datasets
+      - sampledAt
+    output_integration:
+      authority: uci_arena_evidence_service
+      source: public_cli_only
+      contract:
+        - Manager validates the status schema and obtains dataset metadata through dataset list.
+        - Manager obtains qualified timing-profile metadata through profile list and never discovers profile files by scanning service storage.
+        - Every dataset must use uci_arena_evidence_dataset_v1 and retain its typed target identity, authority, observation count, and completion state.
+        - Manager stores only a bounded allowlisted projection of dataset identity, campaign, state, target identity, authority, observation count, and timestamps; unknown fields are discarded and sensitive-looking nested fields are redacted.
+        - Every timing profile must use uci_arena_evidence_profile_v1 and retain its path, digest, exact runtime identity, permissions, publication source, and service-publication metadata.
+        - A timing profile is visible but remains non-consumable by an engine whose exact identity does not match; Manager never rewrites profile identity or permissions.
+        - Manager never requests or stores raw observations and never reads the service SQLite catalog.
+        - Waiting for a target and an empty dataset set remain healthy.
+        - A dataset schema or identity mismatch marks the integration incompatible.
+    ownership:
+      - The Evidence Service remains authority for scheduling, resource admission, evidence normalization, datasets, and qualified timing-profile publication.
+      - The manager invokes only its public CLI and reads only its machine-readable status.
+      - The manager never opens the Evidence Service SQLite catalog or reads raw artifact storage.
+      - Engine and model target identities remain Evidence Service-owned typed configuration.
+    current_behavior:
+      - The built-in profile appears as an available optional external service.
+      - It may be omitted entirely without affecting manager readiness.
+      - Registration validates Node and CLI paths before saving.
+      - Start, stop, restart, pause, resume, and status use native argument arrays.
+      - A status schema mismatch produces incompatible state.
+      - Qualified timing profiles appear in the bounded output integration projection.
+      - Waiting for a target or idle resources remains healthy service state.
+
+validation:
+  - The manager remains ready and local match planning works with neither optional profile configured.
+  - Discovery returns an empty candidates array when no hints exist; this is not an error.
+  - Manual setup remains available after discovery returns no complete candidate.
+  - Saved installer locators are read only from the Manager data root, are schema and component-identity checked, and never enable a service automatically.
+  - Book Forge paths containing spaces remain separate argv values.
+  - Book Forge status schema mismatches produce incompatible state.
+  - Secret-looking fields in adapter output are rejected and redacted.
+  - UCI Arena Evidence Service status schema mismatches produce incompatible state.
+  - UCI Arena Evidence Service waiting_for_target status remains healthy.
+  - Evidence Service paths containing spaces remain separate argv values.
+  - Unsupported actions are rejected before any process, broker, or HTTP call.
+  - Arbitrary executable paths cannot cross the privileged broker.

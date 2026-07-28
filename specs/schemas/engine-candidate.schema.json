@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uci-arena.example/schemas/engine-candidate.schema.json",
+  "title": "arena_engine_candidate_v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "candidate_id",
+    "source",
+    "state",
+    "display_name",
+    "executable",
+    "working_directory",
+    "arguments",
+    "uci_options",
+    "issues"
+  ],
+  "properties": {
+    "schema": {"const": "arena_engine_candidate_v1"},
+    "schema_version": {"const": 1},
+    "candidate_id": {"type": "string", "pattern": "^engcand-[0-9a-f]{16}$"},
+    "source": {
+      "enum": ["install_receipt", "saved_locator", "provider_manifest", "discovered"]
+    },
+    "state": {"enum": ["ready_to_probe", "unavailable"]},
+    "display_name": {"type": "string", "minLength": 1},
+    "executable": {"type": "string", "minLength": 1},
+    "working_directory": {"type": "string", "minLength": 1},
+    "arguments": {"type": "array", "items": {"type": "string"}},
+    "uci_options": {"type": "object"},
+    "component_id": {"type": "string"},
+    "component_version": {"type": "string"},
+    "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "detail"],
+        "properties": {
+          "code": {"type": "string"},
+          "detail": {"type": "string"}
+        }
+      }
+    }
+  }
+}
