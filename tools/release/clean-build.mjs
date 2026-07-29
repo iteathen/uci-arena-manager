@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
   copyFileSync,
+  existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
@@ -56,9 +57,21 @@ function sha256(filename) {
 }
 
 function run(command, args, options = {}) {
-  const executable =
-    process.platform === "win32" && command === "npm" ? "npm.cmd" : command;
-  const result = spawnSync(executable, args, {
+  let executable = command;
+  let commandArguments = args;
+  if (process.platform === "win32" && command === "npm") {
+    const npmCli = path.join(
+      path.dirname(process.execPath),
+      "node_modules",
+      "npm",
+      "bin",
+      "npm-cli.js",
+    );
+    if (!existsSync(npmCli)) fail(`npm CLI not found beside Node.js: ${npmCli}`);
+    executable = process.execPath;
+    commandArguments = [npmCli, ...args];
+  }
+  const result = spawnSync(executable, commandArguments, {
     cwd: options.cwd ?? repositoryRoot,
     env: process.env,
     stdio: options.capture ? "pipe" : "inherit",
