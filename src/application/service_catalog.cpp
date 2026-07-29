@@ -3,12 +3,14 @@
 #include <sodium.h>
 
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <optional>
 #include <set>
 #include <stdexcept>
+#include <tuple>
 #include <vector>
 
 namespace arena::application {
@@ -23,6 +25,78 @@ json read_json_file(const fs::path& path) {
         throw std::runtime_error("cannot read installed component metadata");
     }
     return json::parse(input);
+}
+
+std::optional<fs::path> saved_locator_reference(
+    const fs::path& manager_data_root,
+    const std::string& kind,
+    const bool allow_directory = false) {
+    const fs::path metadata =
+        manager_data_root / "locators" / (kind + ".json");
+    if (!fs::is_regular_file(metadata) || fs::is_symlink(metadata) ||
+        fs::file_size(metadata) > 1024ULL * 1024ULL) {
+        return std::nullopt;
+    }
+    const json locator = read_json_file(metadata);
+    if (locator.value("schema", "") != "arena_saved_locator_v1" ||
+        locator.value("schema_version", 0) != 1 ||
+        locator.value("kind", "") != kind ||
+        !locator.contains("path") || !locator.at("path").is_string()) {
+        return std::nullopt;
+    }
+    const fs::path target =
+        fs::absolute(locator.at("path").get<std::string>())
+            .lexically_normal();
+    if ((!fs::is_regular_file(target) &&
+         !(allow_directory && fs::is_directory(target))) ||
+        fs::is_symlink(target)) {
+        return std::nullopt;
+    }
+    return target;
+}
+
+void project_bot_prerequisite(
+    json& readiness,
+    json& issues,
+    const std::string& dimension,
+    const bool ready,
+    const std::string& issue_code,
+    const std::string& detail) {
+    readiness[dimension] = ready ? "ready" : "missing";
+    if (!ready) {
+        issues.push_back({
+            {"code", issue_code},
+            {"detail", detail},
+        });
+    }
+}
+
+std::set<std::string> retained_catalog_components(
+    const fs::path& manager_data_root) {
+    std::set<std::string> result;
+    const fs::path catalog_path =
+        manager_data_root / "release" / "catalog.json";
+    if (!fs::is_regular_file(catalog_path) ||
+        fs::is_symlink(catalog_path) ||
+        fs::file_size(catalog_path) > 16ULL * 1024ULL * 1024ULL) {
+        return result;
+    }
+    try {
+        const json catalog = read_json_file(catalog_path);
+        if (catalog.value("schema", "") != "arena_install_catalog_v1" ||
+            !catalog.contains("components") ||
+            !catalog.at("components").is_array()) {
+            return result;
+        }
+        for (const auto& component : catalog.at("components")) {
+            const std::string id = component.value("component_id", "");
+            if (!id.empty()) {
+                result.insert(id);
+            }
+        }
+    } catch (const std::exception&) {
+    }
+    return result;
 }
 
 bool safe_relative_path(const fs::path& path) {
@@ -140,14 +214,20 @@ void verify_component_files(
 
 InstalledComponent installed_component(
     const fs::path& receipts_root,
-    const std::string& component_id) {
+    const std::string& component_id,
+    const bool allow_disabled = false) {
     const json receipt =
         read_json_file(receipts_root / (component_id + ".json"));
+    const std::string state = receipt.value("state", "");
     if (receipt.value("schema", "") != "arena_install_receipt_v1" ||
         receipt.value("component_id", "") != component_id ||
-        receipt.value("state", "") != "installed_managed") {
+        (state != "installed_managed" &&
+         !(allow_disabled && state == "installed_disabled"))) {
         throw std::runtime_error(
-            component_id + " does not have an enabled managed receipt");
+            component_id +
+            (allow_disabled
+                 ? " does not have a managed installation receipt"
+                 : " does not have an enabled managed receipt"));
     }
     const fs::path active_root =
         receipt.at("active_root").get<std::string>();
@@ -734,6 +814,373 @@ json ServiceCatalog::installed_registrations(
         {"schema", "arena_installed_service_registrations_v1"},
         {"services", std::move(services)},
         {"errors", std::move(errors)},
+    };
+}
+
+json ServiceCatalog::component_inventory(
+    const fs::path& manager_data_root) {
+    const fs::path receipts_root = manager_data_root / "receipts";
+    const std::set<std::string> downloadable =
+        retained_catalog_components(manager_data_root);
+    json components = json::array();
+    for (const auto& [component_id, display_name, optional] :
+         std::array{
+             std::tuple{"uci_arena.engine", "UCI Arena Engine", false},
+             std::tuple{"stockfish.engine", "Stockfish", false},
+             std::tuple{"node_runtime.private", "Private Node runtime", false},
+             std::tuple{"book_forge.service", "Book Forge", false},
+             std::tuple{"opening_book.standard", "Opening book", false},
+             std::tuple{"uci_arena_evidence.service",
+                        "UCI Arena Evidence Service", false},
+             std::tuple{"lichess.adapter", "Lichess Bot adapter", true}}) {
+        json row{
+            {"component_id", component_id},
+            {"display_name", display_name},
+            {"optional", optional},
+            {"package_state", "missing"},
+            {"downloadable", downloadable.contains(component_id)},
+        };
+        const fs::path receipt_path =
+            receipts_root / (std::string(component_id) + ".json");
+        if (fs::is_regular_file(receipt_path)) {
+            try {
+                const InstalledComponent component =
+                    installed_component(receipts_root, component_id, true);
+                row["package_state"] = "installed";
+                row["installation_state"] =
+                    component.receipt.value("state", "");
+                row["component_version"] =
+                    component.receipt.value("component_version", "");
+                row["startup_installed"] =
+                    component.receipt.value("startup", json::object())
+                        .value("installed", false);
+                if (component.manifest.contains("default_model") &&
+                    component.manifest.at("default_model").is_object()) {
+                    row["default_model"] =
+                        component.manifest.at("default_model");
+                }
+            } catch (const std::exception& error) {
+                row["package_state"] = "broken";
+                row["issue"] = error.what();
+            }
+        }
+        components.push_back(std::move(row));
+    }
+    return {
+        {"schema", "arena_component_inventory_v1"},
+        {"schema_version", 1},
+        {"retained_catalog_available", !downloadable.empty()},
+        {"components", std::move(components)},
+    };
+}
+
+json ServiceCatalog::bot_profiles() {
+    return json::array({
+        {
+            {"profile_id", "lichess_bot"},
+            {"display_name", "Lichess Bot"},
+            {"adapter_component_id", "lichess.adapter"},
+            {"optional", true},
+            {"capabilities",
+             {"account_probe", "status", "pause", "resume",
+              "scheduler", "challenge_policy"}},
+        },
+    });
+}
+
+json ServiceCatalog::discover_bot(
+    const fs::path& manager_data_root) {
+    const fs::path receipts_root = manager_data_root / "receipts";
+    json issues = json::array();
+    json readiness = json::object();
+    json candidate{
+        {"candidate_id", "botcand-lichess-local"},
+        {"profile_id", "lichess_bot"},
+        {"display_name", "Lichess Bot"},
+        {"adapter_component_id", "lichess.adapter"},
+        {"package_state", "missing"},
+        {"token_reference_available", false},
+        {"configuration_state", "missing"},
+        {"startup_state", "disabled"},
+        {"options", json::object()},
+    };
+    bool adapter_ready = false;
+    bool configuration_ready = false;
+    bool startup_installed = false;
+    json configuration = json::object();
+    try {
+        const InstalledComponent adapter =
+            installed_component(receipts_root, "lichess.adapter", true);
+        candidate["package_state"] = "installed";
+        candidate["component_version"] =
+            adapter.receipt.value("component_version", "");
+        static_cast<void>(verified_entrypoint(adapter, "adapter"));
+        adapter_ready = true;
+        const std::string configuration_path =
+            adapter.receipt.value("configuration_path", "");
+        if (configuration_path.empty() ||
+            !fs::is_regular_file(configuration_path) ||
+            fs::is_symlink(configuration_path)) {
+            issues.push_back({
+                {"code", "bot_configuration_missing"},
+                {"detail", "The installed adapter configuration is unavailable."},
+            });
+        } else {
+            candidate["configuration_state"] = "configured";
+            try {
+                configuration = read_json_file(configuration_path);
+                configuration_ready = true;
+                candidate["options"] = {
+                    {"capacity",
+                     configuration.value("capacity", json::object())},
+                    {"challenges",
+                     configuration.value("challenges", json::object())},
+                    {"outbound_challenge",
+                     configuration.value(
+                         "outbound_challenge", json::object())},
+                    {"scheduler",
+                     configuration.value("scheduler", json::object())},
+                };
+            } catch (const std::exception&) {
+                issues.push_back({
+                    {"code", "bot_configuration_invalid"},
+                    {"detail", "The installed adapter configuration is invalid."},
+                });
+            }
+        }
+        startup_installed =
+            adapter.receipt.value("startup", json::object())
+                .value("installed", false);
+        candidate["startup_state"] =
+            startup_installed ? "installed" : "disabled";
+    } catch (const std::exception&) {
+    }
+    project_bot_prerequisite(
+        readiness,
+        issues,
+        "verified_adapter",
+        adapter_ready,
+        "bot_adapter_unavailable",
+        "Install or repair the verified Lichess Bot adapter.");
+    readiness["startup"] = startup_installed ? "enabled" : "disabled";
+
+    bool runtime_ready = false;
+    try {
+        static_cast<void>(
+            installed_component(receipts_root, "node_runtime.private"));
+        runtime_ready = true;
+    } catch (const std::exception& error) {
+        issues.push_back({
+            {"code", "bot_runtime_unavailable"},
+            {"detail", error.what()},
+        });
+    }
+    readiness["adapter_runtime"] = runtime_ready ? "ready" : "missing";
+
+    bool engine_ready = false;
+    bool model_ready = false;
+    try {
+        const InstalledComponent engine =
+            installed_component(receipts_root, "uci_arena.engine");
+        static_cast<void>(verified_entrypoint(engine, "uci"));
+        engine_ready = true;
+        if (engine.manifest.contains("default_model") &&
+            engine.manifest.at("default_model").is_object()) {
+            const json& model = engine.manifest.at("default_model");
+            if (!model.value("model_id", "").empty() &&
+                !model.value("display_name", "").empty() &&
+                !model.value("input_adapter_id", "").empty()) {
+                model_ready = true;
+                candidate["default_model"] = model;
+            }
+        }
+    } catch (const std::exception&) {
+    }
+    project_bot_prerequisite(
+        readiness,
+        issues,
+        "verified_uci_arena_engine",
+        engine_ready,
+        "bot_engine_unavailable",
+        "Install or repair the verified UCI Arena Engine component.");
+    project_bot_prerequisite(
+        readiness,
+        issues,
+        "active_model",
+        model_ready,
+        "bot_model_unavailable",
+        "The installed UCI Arena Engine does not expose a verified default model.");
+
+    bool opening_book_ready = false;
+    try {
+        static_cast<void>(
+            installed_component(receipts_root, "opening_book.standard"));
+        opening_book_ready = true;
+    } catch (const std::exception&) {
+    }
+    project_bot_prerequisite(
+        readiness,
+        issues,
+        "opening_book",
+        opening_book_ready,
+        "bot_opening_book_unavailable",
+        "Install or repair the signed standard opening-book component.");
+
+    bool syzygy_ready = false;
+    try {
+        static_cast<void>(
+            installed_component(receipts_root, "syzygy.wdl.3-4-5"));
+        syzygy_ready = true;
+    } catch (const std::exception&) {
+        syzygy_ready =
+            saved_locator_reference(
+                manager_data_root, "syzygy", true).has_value();
+    }
+    project_bot_prerequisite(
+        readiness,
+        issues,
+        "syzygy",
+        syzygy_ready,
+        "bot_syzygy_unavailable",
+        "Install bounded Syzygy WDL data or select a verified local Syzygy directory.");
+
+    const auto timing =
+        saved_locator_reference(manager_data_root, "timing_profile");
+    const auto single_game =
+        saved_locator_reference(
+            manager_data_root, "lichess_single_game_profile");
+    const auto capacity =
+        saved_locator_reference(
+            manager_data_root, "lichess_capacity_profile");
+    const auto transport =
+        saved_locator_reference(
+            manager_data_root, "lichess_transport_profile");
+    const auto configured_path_matches = [&configuration, configuration_ready](
+                                             const std::vector<std::string>& fields,
+                                             const std::optional<fs::path>& locator) {
+        if (!configuration_ready || !locator.has_value()) {
+            return false;
+        }
+        const json* current = &configuration;
+        for (const auto& field : fields) {
+            if (!current->is_object() || !current->contains(field)) {
+                return false;
+            }
+            current = &current->at(field);
+        }
+        if (!current->is_string()) {
+            return false;
+        }
+        return fs::absolute(current->get<std::string>()).lexically_normal() ==
+               fs::absolute(*locator).lexically_normal();
+    };
+    project_bot_prerequisite(
+        readiness,
+        issues,
+        "timing_profile",
+        configured_path_matches(
+            {"engine", "time_profile"}, timing),
+        "bot_timing_profile_unavailable",
+        "Import an exact qualified timing profile for the installed engine and model.");
+    project_bot_prerequisite(
+        readiness,
+        issues,
+        "single_game_profile",
+        configured_path_matches(
+            {"engine", "single_game_profile"}, single_game),
+        "bot_single_game_profile_unavailable",
+        "Import an exact qualified Lichess single-game profile.");
+    project_bot_prerequisite(
+        readiness,
+        issues,
+        "capacity_profile",
+        configured_path_matches(
+            {"capacity", "capacity_profile"}, capacity),
+        "bot_capacity_profile_unavailable",
+        "Import a qualified Lichess capacity profile for this runtime.");
+    project_bot_prerequisite(
+        readiness,
+        issues,
+        "transport_profile",
+        configured_path_matches(
+            {"timing", "transport_profile_path"}, transport),
+        "bot_transport_profile_unavailable",
+        "Import a qualified Lichess transport profile.");
+
+    const bool token_ready = saved_locator_reference(
+        manager_data_root, "lichess_token_path").has_value();
+    if (token_ready) {
+        candidate["token_reference_available"] = true;
+    }
+    project_bot_prerequisite(
+        readiness,
+        issues,
+        "token_reference",
+        token_ready,
+        "bot_token_reference_missing",
+        "Select a Lichess token-file reference before probing the account.");
+    readiness["bot_account_probe"] = "not_verified";
+    candidate["readiness"] = readiness;
+    candidate["issues"] = issues;
+    candidate["state"] =
+        issues.empty() ? "ready_to_probe" : "blocked";
+    return {
+        {"schema", "arena_bot_candidates_v1"},
+        {"schema_version", 1},
+        {"candidates", json::array({std::move(candidate)})},
+    };
+}
+
+json ServiceCatalog::probe_bot(
+    const fs::path& manager_data_root,
+    const ProcessSupervisor& process_supervisor) {
+    const fs::path receipts_root = manager_data_root / "receipts";
+    const InstalledComponent adapter =
+        installed_component(receipts_root, "lichess.adapter", true);
+    const InstalledComponent node =
+        installed_component(receipts_root, "node_runtime.private");
+    const fs::path token_path =
+        saved_locator_reference(manager_data_root, "lichess_token_path")
+            .value_or(fs::path{});
+    if (token_path.empty()) {
+        throw std::runtime_error(
+            "a valid Lichess token-file reference is required");
+    }
+    const std::string configuration_path =
+        adapter.receipt.value("configuration_path", "");
+    if (configuration_path.empty() ||
+        !fs::is_regular_file(configuration_path) ||
+        fs::is_symlink(configuration_path)) {
+        throw std::runtime_error(
+            "the installed Lichess adapter configuration is unavailable");
+    }
+    const fs::path adapter_entrypoint =
+        verified_entrypoint(adapter, "adapter");
+    const json result = process_supervisor.run_json(
+        verified_entrypoint(node, "node"),
+        adapter.active_root,
+        {
+            adapter_entrypoint.string(),
+            "probe",
+            "--config",
+            configuration_path,
+            "--token-file",
+            token_path.string(),
+        },
+        std::chrono::seconds(30));
+    if (result.value("status", "") != "ready" ||
+        !result.value("is_bot", false) ||
+        result.value("account", "").empty()) {
+        throw std::runtime_error(
+            "the adapter did not return a valid BOT account identity");
+    }
+    return {
+        {"schema", "arena_bot_probe_result_v1"},
+        {"schema_version", 1},
+        {"state", "passed"},
+        {"account_name", result.at("account")},
+        {"is_bot", true},
+        {"games", result.value("games", 0ULL)},
     };
 }
 

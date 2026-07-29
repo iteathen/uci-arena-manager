@@ -61,6 +61,36 @@ engine_contract:
       - No legacy model-branded executable alias is accepted automatically.
       - UI examples use registered engine resources rather than hardcoded model
         families.
+  preferred_product_engine:
+    component_id: uci_arena.engine
+    display_name: UCI Arena Engine
+    requirements:
+      - Verified component identity, never enumeration order or a model label,
+        marks the recommended engine.
+      - The bundled model is projected as separate model-package metadata.
+      - Stockfish and every external UCI engine remain peers under the same
+        registration and probing contract.
+
+bot_contract:
+  profile_id: lichess_bot
+  v1_cardinality: one_local_account
+  credential: token_file_secret_reference
+  required_fields:
+    - profile_id
+    - display_name
+    - adapter_component_id
+    - account_name
+    - engine_id
+    - options
+    - readiness
+    - desired_state
+    - observed_state
+    - health
+  invariants:
+    - Account identity comes from the verified adapter's BOT-only account probe.
+    - Credential contents never enter Manager state, APIs, logs, argv, or receipts.
+    - Discovery, probing, and installation never register or start a bot.
+    - Provider-owned per-user startup cannot be duplicated by Manager.
 
 local_match_planner:
   supported:

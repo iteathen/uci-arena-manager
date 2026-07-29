@@ -141,6 +141,73 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/EngineProbeResult"
+  /components:
+    get:
+      operationId: listInstallableComponents
+      description: >
+        Project verified receipt state and retained signed-catalog availability.
+        This read surface never installs a component.
+      responses:
+        "200":
+          description: Component installation inventory
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComponentInventory"
+  /bot-profiles:
+    get:
+      operationId: listBotProfiles
+      responses:
+        "200":
+          description: Built-in bot adapter profiles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BotProfile"
+  /bot-candidates:
+    get:
+      operationId: listBotCandidates
+      description: >
+        Detect verified adapter, configuration, token-reference, and startup
+        state without reading credentials or registering a bot.
+      responses:
+        "200":
+          description: Bot onboarding candidates and blockers
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BotDiscovery"
+  /bot-token-reference:
+    post:
+      operationId: saveBotTokenReference
+      description: >
+        Save a normalized path reference selected by the interactive user.
+        Manager checks filesystem metadata but never opens or returns the file.
+        Account probing is deliberately excluded because it must run through
+        the authenticated interactive-user helper.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [path]
+              properties:
+                path:
+                  type: string
+                  minLength: 1
+      responses:
+        "200":
+          description: Saved path-reference acknowledgement with no path or token material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BotTokenReferenceResult"
+        "422":
+          $ref: "#/components/responses/Problem"
   /resources/{kind}:
     get:
       operationId: listResources
@@ -258,6 +325,55 @@ components:
       $ref: "schemas/engine-candidate.schema.json"
     EngineProbeResult:
       $ref: "schemas/engine-probe-result.schema.json"
+    ComponentInventory:
+      type: object
+      required: [schema, schema_version, components]
+      properties:
+        schema:
+          const: arena_component_inventory_v1
+        schema_version:
+          const: 1
+        components:
+          type: array
+          items:
+            type: object
+    BotProfile:
+      type: object
+      required: [profile_id, display_name, adapter_component_id, optional]
+      properties:
+        profile_id:
+          const: lichess_bot
+        display_name:
+          type: string
+        adapter_component_id:
+          const: lichess.adapter
+        optional:
+          const: true
+    BotDiscovery:
+      type: object
+      required: [schema, schema_version, candidates]
+      properties:
+        schema:
+          const: arena_bot_candidates_v1
+        schema_version:
+          const: 1
+        candidates:
+          type: array
+          items:
+            type: object
+    BotTokenReferenceResult:
+      type: object
+      additionalProperties: false
+      required: [schema, schema_version, state, validation]
+      properties:
+        schema:
+          const: arena_bot_token_reference_result_v1
+        schema_version:
+          const: 1
+        state:
+          const: saved
+        validation:
+          const: path_reference_only
     SystemStatus:
       type: object
       required:

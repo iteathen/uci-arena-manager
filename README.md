@@ -17,6 +17,36 @@ limits, and identity fingerprint.
 - `web`: React and TypeScript operator dashboard
 - `specs`: authoritative product, API, persistence, lifecycle, and UX contracts
 
+## Start the installed application
+
+On Windows, open **UCI Arena Manager** from the Start menu. The GUI-subsystem
+launcher starts the authenticated interactive session and opens the dashboard
+without a terminal window. On Linux, open UCI Arena Manager from the
+application menu.
+
+The installed CLI is `arena`. Windows setup adds it to the machine `PATH`;
+open a new terminal after setup. Linux packages install both the command and
+the `arena(1)` man page.
+
+```text
+arena status
+arena --output json health
+arena doctor
+arena ui
+arena engine list
+arena engine probe PATH-TO-ENGINE
+arena service profiles
+```
+
+Global flags precede the command:
+
+- `--endpoint URL` selects the loopback service endpoint.
+- `--data-dir PATH` selects the Manager data root.
+- `--output human|json|jsonl` controls output formatting.
+- `--help` is context-sensitive; for example, `arena engine --help`.
+
+See `docs/cli.md` or run `man arena` on Linux for the complete quick reference.
+
 ## Development
 
 Prerequisites:
@@ -57,9 +87,9 @@ Register each engine, then create a match or tournament plan using engine IDs.
 No engine names are hardcoded.
 
 ```powershell
-arena engine add --name Stockfish --executable C:\engines\stockfish.exe
-arena engine add --name LC0 --executable C:\engines\lc0.exe
-arena engine add --name "UCI Arena Engine" --executable C:\engines\uci_arena_engine.exe
+arena engine add --executable C:\engines\stockfish.exe
+arena engine add --executable C:\engines\lc0.exe
+arena engine add --executable C:\engines\uci_arena_engine.exe
 arena match plan --name "LC0 vs Stockfish" --engine <lc0-id> --engine <stockfish-id> --games-per-pair 20 --initial-ms 60000 --increment-ms 600
 arena tournament create --name "Local round robin" --format round_robin --engine <stockfish-id> --engine <lc0-id> --engine <uci-arena-engine-id>
 ```
@@ -100,11 +130,36 @@ count. Evidence integration similarly validates the public dataset-list
 contract and projects bounded dataset identities and authority. Manager never
 opens either provider's database or rewrites provider output.
 
+The Bots dashboard installs and detects the packaged Lichess adapter, lets the
+operator select an existing token file, and verifies the BOT account without a
+terminal. Manager saves only normalized path metadata. The credential probe
+runs through the authenticated, ephemeral helper hosted by the desktop
+launcher under the interactive user; only the receipt-verified adapter may
+open the token file, and only redacted account identity returns to the
+dashboard. Readiness is projected separately for the adapter runtime, verified
+UCI Arena Engine and default model, opening book, Syzygy, timing, single-game,
+capacity and transport evidence, token reference, account probe, and provider
+startup; a missing dimension is never collapsed into a generic active state.
+
 ## Installer and releases
 
 This repository is the suite composition and release authority. Provider
 repositories build immutable component candidates; they cannot publish suite
 installers or advance release channels.
+
+Complete Arena setup presents UCI Arena Engine, Book Forge, UCI Arena Evidence
+Service, and the Lichess Bot adapter as named, selected-by-default components.
+On Windows, reopen **UCI Arena Suite Setup** from Apps and Features and choose
+**Modify**, then **Choose Components**, to add or remove them. Feature choices
+are persisted across upgrades. The Lichess adapter is installed disabled until
+its token-file reference and evidence gates are explicitly completed.
+
+Component changes are executed by `arena-setup`, not by direct file deletion.
+The installer stops affected provider startup registrations, stops Manager for
+the bounded receipt/configuration commit, applies or removes verified payloads,
+then starts Manager and verifies the resulting state. Linux DEB/RPM lifecycle
+scripts perform the equivalent systemd stop, daemon-reload, enable, and start;
+portable `.run` installers use the same `arena-setup` operations and catalog.
 
 Installer sources and official output locations are:
 

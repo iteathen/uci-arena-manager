@@ -24,7 +24,7 @@ import {
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, makeCommand } from '../api/client'
 import type { ManagedServiceData } from '../api/types'
 import { PageHeader } from '../components/PageHeader'
@@ -34,10 +34,38 @@ import { StatusPill } from '../components/StatusPill'
 export function ServicesPage() {
   const queryClient = useQueryClient()
   const profiles = useQuery({ queryKey: ['service-profiles'], queryFn: api.serviceProfiles })
+  const components = useQuery({ queryKey: ['components'], queryFn: api.components })
   const services = useQuery({
     queryKey: ['resources', 'managed_service'],
     queryFn: () => api.resources<ManagedServiceData>('managed_service'),
   })
+  const automaticallyProbed = useRef(new Set<string>())
+  useEffect(() => {
+    const pending = (services.data ?? []).filter(
+      (service) =>
+        !automaticallyProbed.current.has(service.id) &&
+        service.data.observed_state === 'unknown',
+    )
+    if (!pending.length) return
+    pending.forEach((service) => automaticallyProbed.current.add(service.id))
+    void Promise.allSettled(
+      pending.map((service) =>
+        api.command(
+          makeCommand(
+            'service.status',
+            'managed_service',
+            {},
+            false,
+            service.id,
+          ),
+        ),
+      ),
+    ).then(() =>
+      queryClient.invalidateQueries({
+        queryKey: ['resources', 'managed_service'],
+      }),
+    )
+  }, [queryClient, services.data])
   const [bookOpened, bookModal] = useDisclosure(false)
   const [evidenceOpened, evidenceModal] = useDisclosure(false)
   const [nodePath, setNodePath] = useState('')
@@ -52,6 +80,20 @@ export function ServicesPage() {
   )
   const bookService = serviceByProfile.get('book_forge')
   const evidenceService = serviceByProfile.get('uci_arena_evidence')
+  const packageById = new Map(
+    components.data?.components.map((component) => [component.component_id, component]),
+  )
+  const bookPackage = packageById.get('book_forge.service')
+  const evidencePackage = packageById.get('uci_arena_evidence.service')
+  const serviceBadge = (
+    packageState: string | undefined,
+    configured: boolean,
+    observed: string | undefined,
+  ) => {
+    if (packageState !== 'installed') return 'MISSING · INSTALL WITH SETUP'
+    if (!configured) return 'INSTALLED · NOT CONFIGURED'
+    return `CONFIGURED · ${(observed ?? 'UNKNOWN').toUpperCase()}`
+  }
   const save = useMutation({
     mutationFn: ({
       parameters,
@@ -143,8 +185,8 @@ export function ServicesPage() {
             <ThemeIcon size={46} radius="md" variant="light">
               <IconBook2 size={24} />
             </ThemeIcon>
-            <Badge color="teal" variant="light">
-              OPTIONAL · AVAILABLE
+            <Badge color={bookPackage?.package_state === 'installed' ? 'teal' : 'gray'} variant="light">
+              {serviceBadge(bookPackage?.package_state, Boolean(bookService), bookService?.data.observed_state)}
             </Badge>
           </Group>
           <Title order={2} mt="lg">
@@ -176,14 +218,19 @@ export function ServicesPage() {
           >
             {bookService ? 'Edit locator' : 'Detect or configure'}
           </Button>
+          {bookPackage?.package_state !== 'installed' && (
+            <Text size="xs" c="dimmed" mt="sm">
+              Reopen UCI Arena Suite Setup and choose Modify to install Book Forge.
+            </Text>
+          )}
         </Paper>
         <Paper withBorder className="service-profile profile-planned">
           <Group justify="space-between" align="flex-start">
             <ThemeIcon size={46} radius="md" variant="light" color="violet">
               <IconClockHour4 size={24} />
             </ThemeIcon>
-            <Badge color="violet" variant="light">
-              OPTIONAL · AVAILABLE
+            <Badge color={evidencePackage?.package_state === 'installed' ? 'violet' : 'gray'} variant="light">
+              {serviceBadge(evidencePackage?.package_state, Boolean(evidenceService), evidenceService?.data.observed_state)}
             </Badge>
           </Group>
           <Title order={2} mt="lg">
@@ -216,6 +263,11 @@ export function ServicesPage() {
           >
             {evidenceService ? 'Edit locator' : 'Detect or configure'}
           </Button>
+          {evidencePackage?.package_state !== 'installed' && (
+            <Text size="xs" c="dimmed" mt="sm">
+              Reopen UCI Arena Suite Setup and choose Modify to install Evidence Service.
+            </Text>
+          )}
         </Paper>
       </SimpleGrid>
 

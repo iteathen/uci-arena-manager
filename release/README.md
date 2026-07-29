@@ -4,6 +4,15 @@
 channel, and suite-publication authority. `iteathen/UCI_Arena` may publish only
 immutable component candidates and their provider results.
 
+Windows suite bundles expose Engine, Book Forge, Evidence Service, and Lichess
+adapter as persisted default-on feature variables. The custom WiX options page
+is used during initial setup and through Apps and Features Modify. Burn passes
+only typed `component-id=0|1` selections to `arena-setup`; setup resolves
+dependencies, stops Manager during the bounded transition, invokes provider
+startup uninstall/install contracts, restarts Manager, and fails closed on a
+transition error. Major upgrades reuse the persisted selection rather than
+silently restoring a component the operator removed.
+
 The checked-in `catalog.lock.json` is deliberately non-releasable until a
 reviewed pull request pins every required platform candidate and managed
 dependency by digest. Setting `release_ready` to `true` without complete
@@ -41,20 +50,27 @@ signed, or promoted from a developer workstation.
 
 ## Canonical clean builds
 
-The same entrypoint builds and verifies native Manager installers locally and
-in CI:
+The same explicitly scoped entrypoint builds and verifies native Manager-Core
+installers locally and in CI:
 
 ```powershell
-node tools/release/clean-build.mjs --platform windows-x86_64
-node tools/release/clean-build.mjs --platform linux-x86_64
+node tools/release/clean-build.mjs --manager-only --platform windows-x86_64
+node tools/release/clean-build.mjs --manager-only --platform linux-x86_64
 ```
+
+Omitting `--manager-only` fails closed: a native Manager package must never be
+mislabelled as Complete Arena. The canonical complete clean build is the
+protected `Suite release` workflow. It requires a release-ready lock, composes
+reviewed provider candidates, runs both platform acceptance matrices, and emits
+the Windows setup executables and Linux portable installers together with the
+native Manager packages.
 
 The command requires a clean tracked worktree, runs the spec and neutral naming
 gates, builds and tests the dashboard and Manager Core, cleans the native build
 before recompiling, and invokes the existing CPack generators. Windows builds
 require WiX `6.0.2`; Linux builds require the platform package toolchain.
 
-A successful Windows build emits exactly the versioned MSI and ZIP under
+A successful Manager-Core Windows build emits exactly the versioned MSI and ZIP under
 `dist/windows`. A successful Linux build emits exactly the versioned DEB, RPM,
 and tarball under `dist/linux`. Each directory also contains
 `clean-build-result.json`, which binds the exact artifact names, sizes, and

@@ -95,11 +95,16 @@ function parseArguments(argv) {
     version: undefined,
     tufRootSha256: "",
     verifyOnly: false,
+    managerOnly: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--verify-only") {
       parsed.verifyOnly = true;
+      continue;
+    }
+    if (argument === "--manager-only") {
+      parsed.managerOnly = true;
       continue;
     }
     if (!["--platform", "--version", "--tuf-root-sha256"].includes(argument)) {
@@ -264,6 +269,7 @@ export function writeCleanBuildResult({
     clean_tree: true,
     build_preset: definition.preset,
     installer_authority: "iteathen/uci-arena-manager",
+    release_scope: "manager_core_development",
     release_classification: "unsigned_platform_installer_candidate",
     artifacts: verifyInstallerSet({ platform, version, outputDirectory }),
   };
@@ -279,7 +285,14 @@ export function cleanBuild({
   version,
   tufRootSha256 = "",
   verifyOnly = false,
+  managerOnly = false,
 }) {
+  if (!managerOnly) {
+    fail(
+      "scope is required: use --manager-only for a Core development installer; " +
+      "Complete Arena installers are built only by the protected suite release workflow",
+    );
+  }
   const definition = definitionFor(platform);
   if (tufRootSha256 && !/^[0-9a-f]{64}$/u.test(tufRootSha256)) {
     fail("TUF root SHA-256 must be empty or exactly 64 lowercase hexadecimal characters");

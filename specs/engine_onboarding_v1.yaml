@@ -18,7 +18,8 @@ sources:
     - Saved uci_engine locators are projected as candidates without copying or
       silently registering the engine.
     - Additional discovery is restricted to an explicitly selected file or
-      bounded root, plus exact well-known names on PATH.
+      bounded root, exact well-known names on PATH, and bounded platform
+      application locations.
     - Whole-disk recursive discovery is forbidden.
     - Symbolic links, missing files, unsafe relative entrypoints, malformed
       receipts, and malformed manifests are never returned as ready candidates.
@@ -32,6 +33,8 @@ probe:
       discovery, and a legal start-position bestmove.
     - Probe failure is returned with its stable failure code and remediation
       detail and never creates a resource.
+    - A probe returns the UCI-reported display name and separately reported
+      model-package metadata so manual setup needs only an executable selection.
 
 registration:
   confirmation: explicit_only
@@ -41,6 +44,14 @@ registration:
     - Registration probes again to close the probe-to-register race and then
       persists through the existing transactional command path.
     - Existing raw launch-spec registration remains compatible for automation.
+    - Dashboard registration binds to a successful short-lived probe id,
+      repeats the probe, and retains verified installed-component provenance.
+
+recommendation:
+  component_id: uci_arena.engine
+  behavior:
+    - The verified UCI Arena component is ordered first and marked recommended.
+    - Recommendation never depends on filename guessing, candidate order, or a model label.
 
 installation:
   complete_arena:
@@ -59,3 +70,5 @@ acceptance:
   - A renamed UCI executable under an explicitly selected root is discoverable.
   - A path usable by the interactive user but unavailable to the service fails
     during probe with no persisted engine resource.
+  - Selecting one external executable automatically derives its display name
+    and working directory before the single explicit Add engine confirmation.

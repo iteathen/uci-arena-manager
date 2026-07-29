@@ -45,6 +45,11 @@ class ControlPlane final {
     [[nodiscard]] nlohmann::json service_profiles() const;
     [[nodiscard]] nlohmann::json discover_service_profile(
         const std::string& profile_id) const;
+    [[nodiscard]] nlohmann::json component_inventory() const;
+    [[nodiscard]] nlohmann::json bot_profiles() const;
+    [[nodiscard]] nlohmann::json bot_candidates() const;
+    [[nodiscard]] nlohmann::json save_bot_token_reference(
+        const std::filesystem::path& path) const;
 
   private:
     [[nodiscard]] nlohmann::json register_engine(

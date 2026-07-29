@@ -153,7 +153,11 @@ void add_candidate(
     for (const auto& [key, value] : metadata.items()) {
         candidate[key] = value;
     }
-    candidates.push_back(std::move(candidate));
+    if (candidate.value("recommended", false)) {
+        candidates.insert(candidates.begin(), std::move(candidate));
+    } else {
+        candidates.push_back(std::move(candidate));
+    }
 }
 
 void append_receipt_candidates(
@@ -209,14 +213,29 @@ void append_receipt_candidates(
                 continue;
             }
             const fs::path executable = active_root / relative;
+            json metadata{
+                {"component_id", receipt.value("component_id", "")},
+                {"component_version",
+                 receipt.value("component_version", "")},
+                {"recommended",
+                 receipt.value("component_id", "") ==
+                     "uci_arena.engine"},
+            };
+            if (manifest.contains("default_model") &&
+                manifest.at("default_model").is_object()) {
+                metadata["default_model"] =
+                    manifest.at("default_model");
+            }
+            const std::string component_id =
+                receipt.value("component_id", "");
             add_candidate(
                 candidates, seen, "install_receipt", executable, active_root,
-                manifest.value("display_name", display_name_for(executable)),
-                {
-                    {"component_id", receipt.value("component_id", "")},
-                    {"component_version",
-                     receipt.value("component_version", "")},
-                });
+                component_id == "uci_arena.engine"
+                    ? "UCI Arena Engine"
+                    : manifest.value(
+                          "display_name",
+                          display_name_for(executable)),
+                metadata);
         } catch (const std::exception&) {
         }
     }

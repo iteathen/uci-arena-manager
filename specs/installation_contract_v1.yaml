@@ -43,6 +43,35 @@ setup:
   elevation: commit_phase_only
   broker_dependency: false
   self_update: false
+  selectable_components:
+    windows_ui: installer_modify_feature_selection
+    linux_ui: package_or_arena_setup_component_selection
+    default_on:
+      - uci_arena.engine
+      - book_forge.service
+      - uci_arena_evidence.service
+      - lichess.adapter
+    rules:
+      - Initial Windows installation presents the named suite components as
+        selected by default and permits the operator to clear any optional
+        component before commit.
+      - Apps and Features Modify reopens the same selection surface. Adding or
+        removing a selection invokes arena-setup apply or uninstall; it never
+        edits immutable component roots directly.
+      - Upgrade carries the installed selection forward, restages every
+        selected component from the new signed catalog, and does not silently
+        reinstall a component the operator previously removed.
+      - Linux packages carry arena-setup, the retained signed catalog, and
+        lifecycle integration; distro-native service scripts and arena-setup
+        provide equivalent component install, repair, upgrade, and removal.
+      - Component changes stop affected provider startup registrations before
+        payload replacement, stop Manager only for the bounded receipt/config
+        commit window, then restart and verify every service selected to run.
+      - Each apply and uninstall operation is independently transactional.
+        Selection reconciliation keeps Manager stopped across the bounded
+        sequence, restores its prior running/stopped state on success or a
+        component-operation error, and never reports a failed transition as
+        complete.
 
 packaging:
   windows_sources: packaging/windows
@@ -51,7 +80,9 @@ packaging:
   linux_outputs: dist/linux
   clean_build:
     authority: iteathen/uci-arena-manager
-    command: node tools/release/clean-build.mjs --platform <target>
+    suite_command: protected .github/workflows/release.yml workflow_dispatch
+    manager_component_command: >
+      node tools/release/clean-build.mjs --manager-only --platform <target>
     output_manifest:
       schema: arena_clean_build_result_v1
       filename: clean-build-result.json
@@ -73,17 +104,30 @@ packaging:
         arena_clean_build_result_v1 manifest and cannot succeed when any
         required installer is missing, empty, ambiguously named, or accompanied
         by stale installer output.
-      - CI and local clean builds use the same command and artifact verifier.
-      - The ordinary Windows and Linux integration matrix runs the clean build
-        and retains its installer artifacts independently of suite release-lock
-        readiness. A deliberately incomplete release lock blocks composition
-        and publication, not installer-build validation.
+      - Local and CI Manager-Core builds use the same explicit --manager-only
+        command and artifact verifier. Omitting that scope fails closed rather
+        than claiming native Manager packages are Complete Arena media.
+      - The protected suite workflow is the canonical complete clean build. It
+        requires a release-ready lock, builds Manager-Core on both platforms,
+        assembles exact provider candidates, runs the acceptance gates, and
+        emits the complete installer sets from the accepted bytes.
       - Provider artifacts from iteathen/UCI_Arena remain immutable component
         candidates. They never satisfy or replace a suite installer artifact.
       - Unsigned local artifacts are development installers, not official
         releases. Signing, stable promotion, and protected acceptance remain
         protected-CI-only operations over the exact accepted bytes.
     required_outputs:
+      windows-x86_64:
+        - UCI-Arena-Setup-<version>-windows-x64-online.exe
+        - UCI-Arena-Setup-<version>-windows-x64-offline.exe
+        - UCI-Arena-Manager-<version>-windows-x64.msi
+      linux-x86_64:
+        - uci-arena-setup-<version>-linux-x86_64-online.run
+        - uci-arena-setup-<version>-linux-x86_64-offline.run
+        - uci-arena-manager_<version>_amd64.deb
+        - uci-arena-manager-<version>-1.x86_64.rpm
+        - uci-arena-manager-<version>-linux-x86_64.tar.gz
+    manager_component_outputs:
       windows-x86_64:
         - UCI-Arena-Manager-<version>-windows-x64.msi
         - UCI-Arena-Manager-<version>-windows-x64.zip
@@ -100,6 +144,9 @@ packaging:
       - dashboard_assets
       - installed_contract_schemas
     rules:
+      - The arena executable directory is added to the machine PATH through an
+        MSI-owned Environment row and is removed from PATH on uninstall.
+        Setup never rewrites unrelated PATH entries.
       - The MSI service executable and every required native DLL are installed
         into the same private binary directory before the service is started.
       - The bundle embeds arena-setup with its complete adjacent private
@@ -131,6 +178,9 @@ packaging:
       - MSI major upgrades require a strictly greater three-field product
         version. Rebuilding different bytes under the same product version is
         not an upgrade path; use the explicit repair lifecycle instead.
+      - The bundle feature-selection state is default-on for Engine, Book
+        Forge, Evidence Service, and Lichess adapter, is available again from
+        Modify, and is preserved across a major upgrade.
   artifact_names:
     - UCI-Arena-Setup-<version>-windows-x64-online.exe
     - UCI-Arena-Setup-<version>-windows-x64-offline.exe
@@ -173,10 +223,13 @@ components:
     - book_forge.service
     - opening_book.standard
     - uci_arena_evidence.service
+    - lichess.adapter
   composition_rules:
     - The validated default model is an immutable runtime asset inside the
       uci_arena.engine provider component and is not selected as a nonexistent
       independent catalog component.
+    - The Lichess adapter payload is installed disabled. Credentials are not
+      accessed and per-user startup is not registered until explicit bot onboarding.
   optional:
     - lichess.adapter
     - opening_book.standard
@@ -571,6 +624,26 @@ transaction:
       - Transaction rollback invokes startup_uninstall before restoring or
         removing the provider payload.
       - Disabled component binaries are installed without startup registration.
+  service_transition_scripts:
+    owner: arena_setup_and_native_package_lifecycle
+    windows:
+      before_change: stop_affected_provider_startup_then_manager
+      after_change: restart_manager_then_verify_selected_provider_startup
+    linux:
+      before_change: prerm_or_arena_setup_stop_affected_services
+      after_change: postinst_or_arena_setup_daemon_reload_enable_start_verify
+    rules:
+      - Scripts use typed service identities and provider public lifecycle
+        entrypoints; arbitrary executable, argv, and shell input are forbidden.
+      - Component startup outcomes are recorded in the install transaction.
+        The installer wrapper preserves the Manager service's prior
+        running/stopped state across its bounded multi-operation feature
+        reconciliation.
+      - A component is never reported installed, removed, repaired, or upgraded
+        until its required service transition has completed successfully.
+      - If the operating system refuses the final Manager service restoration,
+        setup returns an error and leaves verified receipts as the authoritative
+        recovery state; it never claims an exact rollback that did not occur.
   installed_engine_handoff:
     owner: arena_setup
     rules:

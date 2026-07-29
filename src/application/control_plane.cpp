@@ -1,6 +1,7 @@
 #include "arena/application/control_plane.hpp"
 
 #include "arena/adapters/uci_process.hpp"
+#include "arena/application/installer/setup.hpp"
 #include "arena/application/service_catalog.hpp"
 #include "arena/domain/match_planner.hpp"
 #include "arena/domain/uuid.hpp"
@@ -369,7 +370,6 @@ json ControlPlane::submit(const json& raw_request, const std::string& actor) {
 
 json ControlPlane::register_engine(const json& request, const std::string& actor) {
     const json& parameters = request.at("parameters");
-    const std::string display_name = required_string(parameters, "display_name");
     const std::filesystem::path executable = required_string(parameters, "executable");
     if (!std::filesystem::is_regular_file(executable)) {
         throw CommandFailure("engine_not_found", "engine executable is not a regular file", 422);
@@ -385,6 +385,10 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
     if (!probe.ok) {
         throw CommandFailure("uci_probe_failed", probe.error, 422);
     }
+    const std::string display_name =
+        parameters.value("display_name", std::string{}).empty()
+            ? (probe.engine_name.empty() ? "UCI engine" : probe.engine_name)
+            : parameters.at("display_name").get<std::string>();
 
     const std::string id = domain::uuid_v7();
     json options = json::array();
@@ -564,6 +568,29 @@ json ControlPlane::discover_service_profile(const std::string& profile_id) const
         return ServiceCatalog::discover(profile_id, manager_data_root_);
     } catch (const std::exception& error) {
         throw CommandFailure("service_profile_not_found", error.what(), 404);
+    }
+}
+
+json ControlPlane::component_inventory() const {
+    return ServiceCatalog::component_inventory(manager_data_root_);
+}
+
+json ControlPlane::bot_profiles() const {
+    return ServiceCatalog::bot_profiles();
+}
+
+json ControlPlane::bot_candidates() const {
+    return ServiceCatalog::discover_bot(manager_data_root_);
+}
+
+json ControlPlane::save_bot_token_reference(
+    const std::filesystem::path& path) const {
+    try {
+        return installer::SetupEngine::save_lichess_token_reference(
+            manager_data_root_, path);
+    } catch (const std::exception& error) {
+        throw CommandFailure(
+            "bot_token_reference_invalid", error.what(), 422);
     }
 }
 

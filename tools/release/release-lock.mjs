@@ -476,6 +476,7 @@ export function assembleCatalog(lock, lockedRows, managerArtifacts) {
         "book_forge.service",
         "opening_book.standard",
         "uci_arena_evidence.service",
+        "lichess.adapter",
       ],
     },
     components: [manager, ...byIdentity.values()],

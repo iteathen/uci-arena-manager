@@ -79,10 +79,46 @@ test("Windows bundle owns complete install, repair, and uninstall lifecycle", ()
     source,
     /UninstallArguments="[^"]*--data-root &quot;\$\(var\.ArenaDataRoot\)&quot;/,
   );
-  assert.match(source, /RepairArguments="[\s\S]*\$\(var\.SetupRepairArguments\)"/);
+  assert.match(source, /RepairArguments="[^"]*\$\(var\.SetupRepairArguments\)[^"]*"/);
   assert.match(source, /UninstallArguments="[\s\S]*\$\(var\.SetupUninstallArguments\)"/);
   assert.match(source, /Permanent="no"/);
   assert.doesNotMatch(source, /Permanent="yes"/);
+  for (const variable of [
+    "InstallUciArenaEngine",
+    "InstallBookForge",
+    "InstallEvidenceService",
+    "InstallLichessAdapter",
+  ]) {
+    assert.match(
+      source,
+      new RegExp(`Name="${variable}"[\\s\\S]*?Value="1"[\\s\\S]*?Persisted="yes"`),
+    );
+    assert.match(
+      source,
+      new RegExp(`--bundle-feature [^"]*=\\[${variable}\\]`),
+    );
+  }
+  assert.match(source, /ThemeFile="packaging\/windows\/SuiteTheme\.xml"/);
+  const theme = readFileSync(
+    path.join(repositoryRoot, "packaging", "windows", "SuiteTheme.xml"),
+    "utf8",
+  );
+  assert.match(theme, /Name="InstallUciArenaEngine"[\s\S]*recommended default/);
+  assert.match(theme, /Name="ModifyOptionsButton"/);
+  assert.match(theme, /Choose Components/);
+  const setupSource = readFileSync(
+    path.join(repositoryRoot, "apps", "setup", "main.cpp"),
+    "utf8",
+  );
+  assert.match(setupSource, /bool manager_service_running\(\)/);
+  assert.match(
+    setupSource,
+    /manager_was_running = manager_service_running\(\)/,
+  );
+  assert.match(
+    setupSource,
+    /manager_service_state_preserved/,
+  );
 });
 
 test("Windows release workflow keeps channel labels out of the visible product name", () => {
@@ -96,6 +132,15 @@ test("Windows release workflow keeps channel labels out of the visible product n
     source.match(/dotnet tool install --global wix --version 6\.0\.2/g)?.length,
     2,
   );
+  assert.match(
+    source,
+    /wix extension add -g WixToolset\.BootstrapperApplications\.wixext\/6\.0\.2/,
+  );
+  assert.equal(
+    source.match(/-ext WixToolset\.BootstrapperApplications\.wixext/g)?.length,
+    2,
+  );
+  assert.doesNotMatch(source, /WixToolset\.Bal\.wixext/);
   assert.doesNotMatch(source, /wix --version 7\./);
 });
 
@@ -127,4 +172,13 @@ test("Windows Manager MSI patches the complete staged tree with service lifecycl
   assert.match(patch, /<ServiceControl/);
   assert.match(patch, /Remove="uninstall"/);
   assert.match(patch, /\[INSTALL_ROOT\]share\\uci-arena\\web/);
+  assert.match(patch, /Id="CM_CP_bin\.arena\.exe"/);
+  assert.match(patch, /Name="PATH"/);
+  assert.match(patch, /Value="\[INSTALL_ROOT\]bin"/);
+  assert.match(patch, /Permanent="no"/);
+  assert.match(patch, /System="yes"/);
+  assert.match(patch, /Id="CM_CP_bin\.uci_arena_manager\.exe"/);
+  assert.match(patch, /Name="UCI Arena Manager"/);
+  assert.match(patch, /Target="\[INSTALL_ROOT\]bin\\uci-arena-manager\.exe"/);
+  assert.match(cmake, /CPACK_WIX_PRODUCT_ICON/);
 });

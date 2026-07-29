@@ -1,6 +1,11 @@
 import type {
   ArenaEvent,
+  BotCandidates,
+  BotProbeResult,
+  BotProfile,
+  BotTokenReferenceResult,
   CommandEnvelope,
+  ComponentInventory,
   EngineCandidates,
   EngineProbeResult,
   Resource,
@@ -131,6 +136,48 @@ export async function pickLocalPath(options: {
   return body.status === 'selected' && body.path ? body.path : null
 }
 
+export async function probeLocalBot(): Promise<BotProbeResult> {
+  const port = sessionStorage.getItem(pickerPortKey)
+  const token = sessionStorage.getItem(pickerTokenKey)
+  if (!port || !token) {
+    throw new ApiError(
+      'Open UCI Arena Manager from its desktop launcher and keep it open to verify the BOT account.',
+      503,
+      'interactive_helper_unavailable',
+    )
+  }
+  let response: Response
+  try {
+    response = await fetch(`http://127.0.0.1:${port}/v1/bot-probe`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ schema: 'arena_ui_bot_probe_request_v1' }),
+    })
+  } catch {
+    throw new ApiError(
+      'The interactive-user helper is no longer running. Reopen UCI Arena Manager and try again.',
+      503,
+      'interactive_helper_unavailable',
+    )
+  }
+  const body = (await response.json()) as BotProbeResult & {
+    code?: string
+    detail?: string
+  }
+  if (!response.ok) {
+    throw new ApiError(
+      body.detail ?? 'BOT account verification failed',
+      response.status,
+      body.code ?? 'bot_probe_failed',
+    )
+  }
+  return body
+}
+
 export const api = {
   status: () => request<SystemStatus>('/api/v1/system/status'),
   resources: <T extends Record<string, unknown>>(kind: ResourceKind) =>
@@ -138,6 +185,14 @@ export const api = {
   events: (cursor = 0) =>
     request<ArenaEvent[]>(`/api/v1/events/snapshot?cursor=${cursor}`),
   serviceProfiles: () => request<ServiceProfile[]>('/api/v1/service-profiles'),
+  components: () => request<ComponentInventory>('/api/v1/components'),
+  botProfiles: () => request<BotProfile[]>('/api/v1/bot-profiles'),
+  botCandidates: () => request<BotCandidates>('/api/v1/bot-candidates'),
+  saveBotTokenReference: (path: string) =>
+    request<BotTokenReferenceResult>('/api/v1/bot-token-reference', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
   discoverService: (profileId: ServiceProfile['profile_id']) =>
     request<ServiceDiscovery>(`/api/v1/service-profiles/${profileId}/discovery`),
   engineCandidates: (root = '') =>

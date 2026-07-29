@@ -67,7 +67,7 @@ jobs:
           vcpkgGitCommitId: cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3
       - name: Clean build and verify platform installers
         shell: pwsh
-        run: node tools/release/clean-build.mjs --platform '${{ matrix.target }}'
+        run: node tools/release/clean-build.mjs --manager-only --platform '${{ matrix.target }}'
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
         with:
           name: clean-build-${{ matrix.target }}

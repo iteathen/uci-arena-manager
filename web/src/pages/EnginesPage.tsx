@@ -192,13 +192,19 @@ export function EnginesPage() {
                           </div>
                         </Group>
                         <Badge
-                          color={registered ? 'green' : tested ? 'teal' : 'gray'}
+                          color={registered ? 'green' : tested ? 'teal' : candidate.recommended ? 'blue' : 'gray'}
                           variant="light"
                         >
-                          {registered ? 'Registered' : tested ? 'Test passed' : 'Not tested'}
+                          {registered ? 'Registered' : tested ? 'Test passed' : candidate.recommended ? 'Recommended' : 'Not tested'}
                         </Badge>
                       </Group>
                       <Code block>{candidate.executable}</Code>
+                      {candidate.default_model && (
+                        <Text size="sm" c="dimmed">
+                          Default model: {candidate.default_model.display_name} ·{' '}
+                          {candidate.default_model.input_adapter_id}
+                        </Text>
+                      )}
                       {candidate.issues.map((issue) => (
                         <Alert color="red" key={issue.code}>
                           {issue.detail}
@@ -300,8 +306,9 @@ export function EnginesPage() {
             then confirm registration.
           </Text>
           <TextInput
-            label="Display name"
-            placeholder="UCI Arena Engine"
+            label="Display name (optional)"
+            description="Leave blank to use the name reported by the engine."
+            placeholder="Detected automatically"
             value={name}
             onChange={(event) => {
               setName(event.currentTarget.value)
@@ -344,7 +351,7 @@ export function EnginesPage() {
             <Button
               variant="default"
               loading={probeManual.isPending}
-              disabled={!name || !executable}
+              disabled={!executable}
               onClick={() => probeManual.mutate()}
             >
               Test engine

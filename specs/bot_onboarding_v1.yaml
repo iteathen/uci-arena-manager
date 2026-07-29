@@ -1,0 +1,97 @@
+schema: arena_bot_onboarding_v1
+schema_version: 1
+status: authoritative
+
+purpose: >
+  Define command-line-free installation, detection, account probing,
+  configuration, and lifecycle projection for the Lichess BOT adapter.
+
+profile:
+  profile_id: lichess_bot
+  adapter_component_id: lichess.adapter
+  v1_cardinality: one_local_account
+  authentication: token_file_reference
+
+token_reference:
+  selection_owner: interactive_user_native_picker
+  persistence_owner: manager_locator_store
+  rules:
+    - The dashboard can select and replace the token-file reference without a terminal.
+    - The authenticated Manager mutation receives and stores only the normalized path.
+    - Manager validation uses filesystem metadata only and never opens, hashes, copies,
+      logs, or returns token contents.
+    - Mutation responses and discovery output do not return the selected path.
+
+discovery:
+  sources:
+    - verified_adapter_receipt
+    - saved_lichess_token_locator
+    - installer_generated_configuration
+    - provider_startup_status
+    - redacted_runtime_status
+  rules:
+    - Discovery never reads credentials, registers an account, or starts a process.
+    - Missing or broken prerequisites remain explicit candidate blockers.
+
+probe:
+  owner: verified_provider_adapter_under_interactive_user_helper
+  transport: authenticated_ephemeral_loopback_helper
+  output_allowlist: [account_name, title, is_bot, game_count]
+  rules:
+    - The adapter alone may open the referenced token file.
+    - The Manager service never launches the credential probe under its service identity.
+    - The helper accepts no credential contents or arbitrary executable path and resolves
+      only receipt-verified adapter/runtime entrypoints from the Manager data root.
+    - A non-BOT account is rejected.
+    - Probe output never includes token material, headers, URLs with credentials,
+      raw provider responses, or the token-file path.
+
+options:
+  groups:
+    - capacity
+    - inbound_challenges
+    - outbound_challenge
+    - scheduler
+    - opponent_selection
+  rules:
+    - UI controls are schema-backed and never expose arbitrary configuration text.
+    - Capacity cannot exceed the exact qualified capacity profile.
+    - Rated or outbound play requires explicit operator confirmation.
+
+readiness:
+  required:
+    - verified_adapter
+    - verified_uci_arena_engine
+    - active_model
+    - opening_book
+    - syzygy
+    - timing_profile
+    - single_game_profile
+    - capacity_profile
+    - transport_profile
+    - token_reference
+    - bot_account_probe
+  projection:
+    prerequisite_states: [ready, missing]
+    account_probe_states: [not_verified, verified]
+    startup_states: [disabled, enabled]
+    rules:
+      - Every required dimension is returned independently; a generic blocked
+        state cannot replace the per-dimension evidence.
+      - ready_to_probe requires every prerequisite except bot_account_probe.
+      - The interactive probe result may project bot_account_probe as verified
+        for the current launcher session, but it does not enable startup.
+  rule: Missing readiness never appears as active.
+
+lifecycle:
+  startup_owner: provider_per_user
+  manager_actions: [status, pause, resume]
+  explicit_user_actions: [register, configure, enable_startup, disable_startup, remove]
+  duplicate_daemon: forbidden
+
+acceptance:
+  - A Complete Arena install shows the adapter as installed but disabled.
+  - A token-file reference can be selected without Manager or installer reading it.
+  - The account probe discovers one BOT account and rejects a normal account.
+  - Every missing safety prerequisite is visible before startup.
+  - No happy-path bot setup step requires a terminal command.

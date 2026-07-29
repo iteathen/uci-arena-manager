@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="UCI Arena Manager">
+  <defs>
+    <linearGradient id="arena" x1="24" y1="20" x2="224" y2="236" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6d5dfc"/>
+      <stop offset="1" stop-color="#16c7d9"/>
+    </linearGradient>
+  </defs>
+  <rect x="12" y="12" width="232" height="232" rx="52" fill="#101426"/>
+  <path d="M52 184h152v24H52zM65 168l14-81 29 28 20-64 20 64 29-28 14 81z" fill="url(#arena)"/>
+  <circle cx="128" cy="146" r="16" fill="#101426"/>
+  <path d="M112 146h32M128 130v32" stroke="#fff" stroke-width="8" stroke-linecap="round"/>
+</svg>

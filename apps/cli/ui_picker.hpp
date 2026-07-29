@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 
 namespace arena::cli {
@@ -12,6 +13,7 @@ namespace arena::cli {
 void run_ui_picker(
     std::uint16_t port,
     const std::string& bearer_token,
-    const std::string& dashboard_origin);
+    const std::string& dashboard_origin,
+    const std::filesystem::path& manager_data_root);
 
 }  // namespace arena::cli

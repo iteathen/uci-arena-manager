@@ -10,10 +10,21 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  cleanBuild,
   expectedInstallerNames,
   verifyInstallerSet,
   writeCleanBuildResult,
 } from "./clean-build.mjs";
+
+test("clean build requires an explicit Manager-Core scope locally", () => {
+  assert.throws(
+    () => cleanBuild({
+      platform: "windows-x86_64",
+      version: "1.2.3",
+    }),
+    /scope is required.*protected suite release workflow/,
+  );
+});
 
 function fixture(platform, version = "1.2.3") {
   const root = mkdtempSync(path.join(tmpdir(), "arena-clean-build-"));
@@ -35,6 +46,7 @@ test("Windows clean-build result binds the complete exact installer set", () => 
     });
     assert.equal(result.schema, "arena_clean_build_result_v1");
     assert.equal(result.installer_authority, "iteathen/uci-arena-manager");
+    assert.equal(result.release_scope, "manager_core_development");
     assert.deepEqual(
       result.artifacts.map((artifact) => artifact.name),
       expectedInstallerNames("windows-x86_64", version),
@@ -109,7 +121,7 @@ test("release workflow delegates platform packaging to the canonical clean build
   )?.[0] ?? "";
   assert.match(
     managerJob,
-    /node tools\/release\/clean-build\.mjs[\s\S]*--platform '\$\{\{ matrix\.target \}\}'/,
+    /node tools\/release\/clean-build\.mjs[\s\S]*--manager-only[\s\S]*--platform '\$\{\{ matrix\.target \}\}'/,
   );
   assert.doesNotMatch(managerJob, /^\s+cpack /mu);
 
@@ -122,7 +134,7 @@ test("release workflow delegates platform packaging to the canonical clean build
   )?.[0] ?? "";
   assert.match(
     nativeJob,
-    /node tools\/release\/clean-build\.mjs --platform '\$\{\{ matrix\.target \}\}'/,
+    /node tools\/release\/clean-build\.mjs --manager-only --platform '\$\{\{ matrix\.target \}\}'/,
   );
   assert.match(nativeJob, /name: clean-build-\$\{\{ matrix\.target \}\}/);
   assert.match(
