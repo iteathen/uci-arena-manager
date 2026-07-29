@@ -332,6 +332,8 @@ test("release workflow uses only pinned fail-closed Sigstore provenance", () => 
     /export PATH=\/c\/mingw64\/bin:`\$PATH; make[\s\S]*COMP=gcc COMPCXX=g\+\+/u,
   );
   assert.doesNotMatch(managedWorkflow, /PATH=\/mingw64\/bin/u);
+  assert.match(managedWorkflow, /make -C '\$windowsPath\/src'/u);
+  assert.doesNotMatch(managedWorkflow, /cygpath -u/u);
   assert.doesNotMatch(
     managedWorkflow,
     /insecure-ignore|check-claims=false|ignore-sct|curl\s+-[^ \n]*k/u,
