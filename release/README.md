@@ -39,6 +39,34 @@ Production output names are governed by
 `specs/installation_contract_v1.yaml`. Official artifacts may not be built,
 signed, or promoted from a developer workstation.
 
+## Canonical clean builds
+
+The same entrypoint builds and verifies native Manager installers locally and
+in CI:
+
+```powershell
+node tools/release/clean-build.mjs --platform windows-x86_64
+node tools/release/clean-build.mjs --platform linux-x86_64
+```
+
+The command requires a clean tracked worktree, runs the spec and neutral naming
+gates, builds and tests the dashboard and Manager Core, cleans the native build
+before recompiling, and invokes the existing CPack generators. Windows builds
+require WiX `6.0.2`; Linux builds require the platform package toolchain.
+
+A successful Windows build emits exactly the versioned MSI and ZIP under
+`dist/windows`. A successful Linux build emits exactly the versioned DEB, RPM,
+and tarball under `dist/linux`. Each directory also contains
+`clean-build-result.json`, which binds the exact artifact names, sizes, and
+SHA-256 digests to the source commit and build preset. Missing, empty,
+ambiguously named, or stale output fails the build.
+
+These unsigned outputs are development installers. The protected release
+workflow remains the only authority that can compose full suite setup media,
+sign accepted bytes, or promote a channel. Provider builds from
+`iteathen/UCI_Arena` remain component handoffs and cannot satisfy this installer
+contract.
+
 ## Local Windows installer-candidate validation
 
 A developer-workstation MSI is an unsigned test candidate, never an official

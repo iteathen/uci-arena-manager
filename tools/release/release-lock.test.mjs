@@ -94,6 +94,8 @@ test("file-set provider results require exact one-byte range evidence", () => {
   );
   const result = {
     schema: "arena_provider_release_result_v1",
+    release_authority: "provider_component_only",
+    suite_installer_authority: "iteathen/uci-arena-manager",
     component_id: locked.component_id,
     component_version: locked.component_version,
     target_triple: locked.target_triple,
@@ -113,6 +115,14 @@ test("file-set provider results require exact one-byte range evidence", () => {
   };
   assert.doesNotThrow(() =>
     validateLockedProviderResult(locked, result, 100));
+  assert.throws(
+    () => validateLockedProviderResult(
+      locked,
+      { ...result, release_authority: "suite_installer" },
+      100,
+    ),
+    /provider result mismatch/,
+  );
   assert.throws(
     () => validateLockedProviderResult(
       locked,
