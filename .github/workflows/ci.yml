@@ -79,7 +79,9 @@ jobs:
           retention-days: 14
 
   dependency-review:
-    if: github.event_name == 'pull_request'
+    if: >-
+      github.event_name == 'pull_request' &&
+      vars.DEPENDENCY_REVIEW_ENABLED == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
