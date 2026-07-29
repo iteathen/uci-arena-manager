@@ -882,3 +882,8 @@ release_gate_rules:
   - Every accepted Syzygy provider result records a successful one-byte range
     probe for every exact manifest member; the Manager rejects missing,
     incomplete, or larger-transfer range evidence.
+  - The signed one-byte probe is represented as status
+    availability_verified with content_verified false, exact manifest file
+    count, and exactly one transferred byte per file. Full content integrity
+    is enforced later against each signed per-file SHA-256 during acquisition;
+    the availability probe must never claim that it verified full content.

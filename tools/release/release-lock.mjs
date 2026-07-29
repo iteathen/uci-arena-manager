@@ -329,7 +329,8 @@ export function validateLockedProviderResult(
   }
   if (isFileSet
       && (
-        result.validation_evidence?.range_probe?.status !== "passed"
+        result.validation_evidence?.range_probe?.status !== "availability_verified"
+        || result.validation_evidence.range_probe.content_verified !== false
         || result.validation_evidence.range_probe.files !== component.file_count
         || result.validation_evidence.range_probe.bytes_transferred
           !== component.file_count
