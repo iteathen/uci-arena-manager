@@ -8,6 +8,8 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { verifyProviderProvenance } from "./sigstore-provenance.mjs";
+
 const REQUIRED_PROVIDER_COMPONENTS = new Set([
   "uci_arena.engine",
   "book_forge.service",
@@ -83,7 +85,11 @@ export function validateReleaseLock(lock, { requireReady = true } = {}) {
     } else if (!component.artifact_name?.endsWith(".tar.gz")) {
       errors.push(`${identity} archive must use a .tar.gz artifact`);
     }
-    for (const key of ["artifact_sha256", "provider_result_sha256"]) {
+    for (const key of [
+      "artifact_sha256",
+      "provider_result_sha256",
+      "provenance_bundle_sha256",
+    ]) {
       if (!/^[0-9a-f]{64}$/.test(component[key] ?? "")) {
         errors.push(`${identity} has invalid ${key}`);
       }
@@ -94,10 +100,37 @@ export function validateReleaseLock(lock, { requireReady = true } = {}) {
     if (!/^component\/[A-Za-z0-9._/-]+$/.test(component.provider_release_tag ?? "")) {
       errors.push(`${identity} has invalid provider_release_tag`);
     }
-    for (const key of ["artifact_name", "provider_result_name"]) {
+    for (const key of [
+      "artifact_name",
+      "provider_result_name",
+      "provenance_bundle_name",
+    ]) {
       if (!component[key] || path.basename(component[key]) !== component[key]) {
         errors.push(`${identity} has unsafe ${key}`);
       }
+    }
+    if (component.provenance_bundle_name
+        !== `${component.artifact_name}.sigstore.json`) {
+      errors.push(`${identity} does not bind provenance to artifact_name`);
+    }
+    if (component.provenance_oidc_issuer
+        !== "https://token.actions.githubusercontent.com") {
+      errors.push(`${identity} has an untrusted provenance_oidc_issuer`);
+    }
+    if (component.provenance_workflow_name !== "Provider component candidate") {
+      errors.push(`${identity} has an untrusted provenance_workflow_name`);
+    }
+    const workflowRef = component.provenance_workflow_ref ?? "";
+    const workflowTrigger = component.provenance_workflow_trigger ?? "";
+    if (workflowRef !== "refs/heads/main"
+        || workflowTrigger !== "workflow_dispatch") {
+      errors.push(`${identity} has an invalid provenance workflow ref/trigger pair`);
+    }
+    const expectedIdentity =
+      `https://github.com/${lock.provider_repository}`
+      + `/.github/workflows/component-release.yml@${workflowRef}`;
+    if (component.provenance_certificate_identity !== expectedIdentity) {
+      errors.push(`${identity} has an untrusted provenance_certificate_identity`);
     }
   }
   const managedCoverage = new Map([...TARGETS].map((target) => [target, new Set()]));
@@ -255,9 +288,12 @@ export function validateLockedProviderResult(
   if (result.schema !== "arena_provider_release_result_v1"
       || result.release_authority !== "provider_component_only"
       || result.suite_installer_authority !== "iteathen/uci-arena-manager"
+      || result.source_repository !== "iteathen/UCI_Arena"
       || result.component_id !== component.component_id
+      || result.component_version !== component.component_version
       || result.target_triple !== component.target_triple
       || result.source_commit !== component.source_commit
+      || result.artifact_name !== component.artifact_name
       || (
         isFileSet
           ? result.artifact_kind !== "external_file_set_manifest"
@@ -266,6 +302,16 @@ export function validateLockedProviderResult(
       || result.artifact_sha256 !== component.artifact_sha256
       || result.artifact_size_bytes !== artifactSize) {
     throw new Error(`provider result mismatch for ${component.component_id}`);
+  }
+  const workflowIdentityPrefix =
+    `iteathen/UCI_Arena/.github/workflows/component-release.yml@`
+    + `${component.provenance_workflow_ref}#`;
+  if (typeof result.workflow_identity !== "string"
+      || !result.workflow_identity.startsWith(workflowIdentityPrefix)
+      || !/^[1-9][0-9]*\.[1-9][0-9]*$/.test(
+        result.workflow_identity.slice(workflowIdentityPrefix.length),
+      )) {
+    throw new Error(`provider workflow identity mismatch for ${component.component_id}`);
   }
   if (isFileSet
       && (
@@ -291,7 +337,12 @@ export function validateLockedProviderResult(
   }
 }
 
-export async function fetchLockedComponents(lock, outputDirectory, token) {
+export async function fetchLockedComponents(
+  lock,
+  outputDirectory,
+  token,
+  { cosignExecutable = "cosign" } = {},
+) {
   const validation = validateReleaseLock(lock);
   if (!validation.ok) throw new Error(validation.errors.join("\n"));
   if (!token) throw new Error("a short-lived provider read token is required");
@@ -300,7 +351,8 @@ export async function fetchLockedComponents(lock, outputDirectory, token) {
   for (const component of lock.components) {
     const artifactPath = path.join(outputDirectory, component.artifact_name);
     const resultPath = path.join(outputDirectory, component.provider_result_name);
-    if (existsSync(artifactPath) || existsSync(resultPath)) {
+    const bundlePath = path.join(outputDirectory, component.provenance_bundle_name);
+    if (existsSync(artifactPath) || existsSync(resultPath) || existsSync(bundlePath)) {
       throw new Error(`refusing to overwrite provider assets for ${component.component_id}`);
     }
     await downloadAsset(
@@ -317,8 +369,16 @@ export async function fetchLockedComponents(lock, outputDirectory, token) {
       token,
       resultPath,
     );
+    await downloadAsset(
+      lock.provider_repository,
+      component.provider_release_tag,
+      component.provenance_bundle_name,
+      token,
+      bundlePath,
+    );
     if (sha256File(artifactPath) !== component.artifact_sha256
-        || sha256File(resultPath) !== component.provider_result_sha256) {
+        || sha256File(resultPath) !== component.provider_result_sha256
+        || sha256File(bundlePath) !== component.provenance_bundle_sha256) {
       throw new Error(`locked digest mismatch for ${component.component_id}`);
     }
     const result = JSON.parse(readFileSync(resultPath, "utf8"));
@@ -327,7 +387,20 @@ export async function fetchLockedComponents(lock, outputDirectory, token) {
       result,
       statSync(artifactPath).size,
     );
-    rows.push({ ...component, artifactPath, resultPath, result });
+    verifyProviderProvenance(
+      component,
+      result,
+      artifactPath,
+      bundlePath,
+      { cosignExecutable },
+    );
+    rows.push({
+      ...component,
+      artifactPath,
+      bundlePath,
+      resultPath,
+      result,
+    });
   }
   for (const component of lock.managed_components) {
     const artifactPath = path.join(outputDirectory, component.artifact_name);

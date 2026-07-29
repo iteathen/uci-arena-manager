@@ -19,6 +19,7 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: node tools/spec-check.mjs
+      - run: node --test tools/release/*.test.mjs
       - run: npm ci
         working-directory: web
       - run: npm test

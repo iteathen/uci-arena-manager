@@ -4,6 +4,7 @@ import {
   copyFileSync,
   mkdirSync,
   readFileSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -11,6 +12,7 @@ import process from "node:process";
 import {
   assembleCatalog,
   sha256File,
+  validateLockedProviderResult,
   validateReleaseLock,
 } from "./release-lock.mjs";
 
@@ -41,14 +43,26 @@ const providerDirectory = path.resolve(args["provider-dir"]);
 const providerRows = lock.components.map((component) => {
   const artifactPath = path.join(providerDirectory, component.artifact_name);
   const resultPath = path.join(providerDirectory, component.provider_result_name);
+  const bundlePath = path.join(
+    providerDirectory,
+    component.provenance_bundle_name,
+  );
   if (sha256File(artifactPath) !== component.artifact_sha256
-      || sha256File(resultPath) !== component.provider_result_sha256) {
+      || sha256File(resultPath) !== component.provider_result_sha256
+      || sha256File(bundlePath) !== component.provenance_bundle_sha256) {
     throw new Error(`provider bytes do not match lock for ${component.component_id}`);
   }
+  const result = JSON.parse(readFileSync(resultPath, "utf8"));
+  validateLockedProviderResult(
+    component,
+    result,
+    statSync(artifactPath).size,
+  );
   return {
     ...component,
     artifactPath,
-    result: JSON.parse(readFileSync(resultPath, "utf8")),
+    bundlePath,
+    result,
   };
 });
 const managedRows = lock.managed_components.map((component) => {
@@ -89,6 +103,10 @@ for (const row of providerRows) {
   copyFileSync(
     path.join(providerDirectory, row.provider_result_name),
     path.join(provenance, row.provider_result_name),
+  );
+  copyFileSync(
+    row.bundlePath,
+    path.join(provenance, row.provenance_bundle_name),
   );
 }
 for (const row of managedRows) {

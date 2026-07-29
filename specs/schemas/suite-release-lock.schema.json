@@ -81,7 +81,14 @@
             "artifact_name",
             "artifact_sha256",
             "provider_result_name",
-            "provider_result_sha256"
+            "provider_result_sha256",
+            "provenance_bundle_name",
+            "provenance_bundle_sha256",
+            "provenance_certificate_identity",
+            "provenance_oidc_issuer",
+            "provenance_workflow_name",
+            "provenance_workflow_ref",
+            "provenance_workflow_trigger"
           ],
           "properties": {
             "component_id": true,
@@ -108,7 +115,27 @@
               "type": "string",
               "pattern": "^[A-Za-z0-9._-]+\\.provider-result\\.json$"
             },
-            "provider_result_sha256": {"$ref": "#/$defs/digest"}
+            "provider_result_sha256": {"$ref": "#/$defs/digest"},
+            "provenance_bundle_name": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._-]+(?:\\.tar\\.gz|\\.file-set\\.json)\\.sigstore\\.json$"
+            },
+            "provenance_bundle_sha256": {"$ref": "#/$defs/digest"},
+            "provenance_certificate_identity": {
+              "const": "https://github.com/iteathen/UCI_Arena/.github/workflows/component-release.yml@refs/heads/main"
+            },
+            "provenance_oidc_issuer": {
+              "const": "https://token.actions.githubusercontent.com"
+            },
+            "provenance_workflow_name": {
+              "const": "Provider component candidate"
+            },
+            "provenance_workflow_ref": {
+              "const": "refs/heads/main"
+            },
+            "provenance_workflow_trigger": {
+              "const": "workflow_dispatch"
+            }
           }
         }
       ]

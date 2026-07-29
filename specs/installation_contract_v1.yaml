@@ -22,6 +22,67 @@ authority:
     - Stable promotion republishes the exact tested candidate bytes and never rebuilds.
     - Build identities never receive private signing keys.
 
+signed_provenance:
+  repository_visibility: private
+  implementation: sigstore_cosign_keyless
+  cosign_version: 3.0.6
+  cosign_installer_action:
+    repository: sigstore/cosign-installer
+    commit: 6f9f17788090df1f26f669e9d70d6ae9567deba6
+  oidc_issuer: https://token.actions.githubusercontent.com
+  provider_candidates:
+    predicate_type: https://uci-arena.example/attestations/provider-release-result/v1
+    trusted_repository: iteathen/UCI_Arena
+    trusted_workflow: .github/workflows/component-release.yml
+    trusted_workflow_name: Provider component candidate
+    lock_fields:
+      - provenance_bundle_name
+      - provenance_bundle_sha256
+      - provenance_certificate_identity
+      - provenance_oidc_issuer
+      - provenance_workflow_name
+      - provenance_workflow_ref
+      - provenance_workflow_trigger
+    verification:
+      - Download the exact lock-pinned artifact, provider result, and Sigstore
+        bundle from the same immutable private provider release.
+      - Verify all three asset SHA-256 values before interpreting them.
+      - Cosign verification pins the exact certificate identity, OIDC issuer,
+        provider repository, source commit, workflow name, workflow ref,
+        workflow trigger, predicate type, and artifact bytes.
+      - Official suite locks accept only the trusted provider workflow from
+        refs/heads/main with workflow_dispatch. Source-tag candidates may be
+        diagnostic provider outputs but have no official suite authority.
+      - Independently decode the verified DSSE payload and require exactly one
+        subject for the locked artifact digest plus a predicate exactly equal
+        to the separately digest-pinned arena_provider_release_result_v1.
+      - The signed provider result workflow_identity must name the trusted
+        workflow at the lock-pinned ref and one exact run id and attempt.
+  manager_artifacts:
+    predicate_type: https://uci-arena.example/attestations/manager-release/v1
+    statement_type: https://in-toto.io/Statement/v1
+    workflow: .github/workflows/release.yml
+    rules:
+      - Official Manager provenance is issued only by release.yml at
+        refs/heads/main through workflow_dispatch.
+      - Each platform Manager build signs one exact multi-subject statement
+        covering the Manager archive and every native package emitted for that
+        target before the build artifact is uploaded.
+      - Final publication signs one exact multi-subject statement covering
+        every accepted installer, payload, catalog, TUF metadata file, and
+        detached signature before GitHub release creation.
+      - The signing workflow immediately verifies its certificate identity,
+        issuer, repository, commit, workflow name, ref, trigger, predicate
+        type, one exact subject, and the complete signed statement payload.
+  fail_closed_rules:
+    - Transparency-log inclusion, certificate-chain and signed-certificate
+      timestamp verification, claim checking, and exact predicate checking are
+      mandatory. Ignore-log, ignore-certificate, ignore-claim, ignore-SCT, and
+      unsigned fallback modes are forbidden in release workflows.
+    - Signing, transparency-log, download, digest, bundle, claim, or predicate
+      failure blocks composition or publication. Repository visibility is
+      never weakened to satisfy an attestation storage service.
+
 interfaces:
   catalog: arena_install_catalog_v1
   component: arena_install_component_v1
@@ -746,6 +807,9 @@ release_gate_order:
   - remote_signing
   - exact_digest_publication
 release_gate_rules:
+  - Provider attestations and Manager release provenance are independently
+    verifiable Sigstore bundles; passing the reviewed lock or ordinary GitHub
+    artifact transport does not substitute for cryptographic verification.
   - Complete Arena acceptance excludes Lichess credentials and Syzygy bytes;
     those are separate opt-in gates over the same immutable candidate.
   - Production signing jobs require every preceding applicable gate and cannot
