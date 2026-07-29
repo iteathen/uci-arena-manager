@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
@@ -33,6 +34,36 @@ const V2_PROVIDERS = Object.freeze(Object.fromEntries(
     },
   ]),
 ));
+
+test("suite composition token is scoped to every trusted provider", () => {
+  const workflow = readFileSync(
+    fileURLToPath(
+      new URL("../../.github/workflows/release.yml", import.meta.url),
+    ),
+    "utf8",
+  );
+  const tokenStepStart = workflow.indexOf(
+    "uses: actions/create-github-app-token@",
+  );
+  const fetchStepStart = workflow.indexOf(
+    "- name: Fetch exact private component candidates",
+    tokenStepStart,
+  );
+  assert.ok(tokenStepStart >= 0 && fetchStepStart > tokenStepStart);
+  const tokenStep = workflow.slice(tokenStepStart, fetchStepStart);
+  assert.match(tokenStep, /repositories:\s*\|/u);
+  const scopedRepositories = tokenStep
+    .split(/repositories:\s*\|/u, 2)
+    .at(1)
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .sort();
+  const trustedRepositories = Object.values(PROVIDERS)
+    .map((provider) => provider.repository.split("/").at(-1))
+    .sort();
+  assert.deepEqual(scopedRepositories, trustedRepositories);
+});
 
 function row(component, target, options = {}) {
   const fileSet = options.artifactType === "file_set";

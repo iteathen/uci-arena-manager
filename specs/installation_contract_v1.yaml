@@ -34,6 +34,10 @@ authority:
   rules:
     - Provider automation may publish only immutable, attested component candidates.
     - Suite composition pins exact provider, commit, manifest, provenance, and artifact digests.
+    - The candidate-fetch GitHub App token is repository-scoped to every
+      trusted provider in component_candidate_repositories and no other
+      repository. Adding a provider is incomplete until this exact workflow
+      scope and its regression test are updated.
     - Stable promotion republishes the exact tested candidate bytes and never rebuilds.
     - Build identities never receive private signing keys.
     - Private-repository CI always runs the lockfile-backed npm audit. GitHub
