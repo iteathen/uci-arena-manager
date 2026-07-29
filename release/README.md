@@ -61,6 +61,11 @@ and tarball under `dist/linux`. Each directory also contains
 SHA-256 digests to the source commit and build preset. Missing, empty,
 ambiguously named, or stale output fails the build.
 
+The ordinary pull-request matrix runs this command for both target platforms
+and retains the verified outputs as workflow artifacts. That validation does
+not require `release_ready: true`; an incomplete release lock still blocks
+suite composition, signing, and publication.
+
 These unsigned outputs are development installers. The protected release
 workflow remains the only authority that can compose full suite setup media,
 sign accepted bytes, or promote a channel. Provider builds from

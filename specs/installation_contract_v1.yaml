@@ -74,6 +74,10 @@ packaging:
         required installer is missing, empty, ambiguously named, or accompanied
         by stale installer output.
       - CI and local clean builds use the same command and artifact verifier.
+      - The ordinary Windows and Linux integration matrix runs the clean build
+        and retains its installer artifacts independently of suite release-lock
+        readiness. A deliberately incomplete release lock blocks composition
+        and publication, not installer-build validation.
       - Provider artifacts from iteathen/UCI_Arena remain immutable component
         candidates. They never satisfy or replace a suite installer artifact.
       - Unsigned local artifacts are development installers, not official

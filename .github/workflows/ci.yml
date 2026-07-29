@@ -34,27 +34,45 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            preset: windows-release
+            target: windows-x86_64
           - os: ubuntu-latest
-            preset: linux-release
+            target: linux-x86_64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57 # v3.0.0
         if: runner.os == 'Windows'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
       - name: Install Linux native build prerequisites
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes autoconf autoconf-archive automake libtool ninja-build
+          sudo apt-get install --yes autoconf autoconf-archive automake libtool ninja-build rpm
+      - name: Install pinned WiX toolset
+        if: runner.os == 'Windows'
+        run: |
+          dotnet tool install --global wix --version 6.0.2
+          wix extension add -g WixToolset.UI.wixext/6.0.2
       - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
         with:
           vcpkgGitCommitId: cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3
-      - uses: lukka/run-cmake@5d55ea7949e25f69f0ecb516d8d572297e03a956 # v10
+      - name: Clean build and verify platform installers
+        shell: pwsh
+        run: node tools/release/clean-build.mjs --platform '${{ matrix.target }}'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
         with:
-          configurePreset: ${{ matrix.preset }}
-          buildPreset: ${{ matrix.preset }}
-          testPreset: ${{ matrix.preset }}
+          name: clean-build-${{ matrix.target }}
+          path: |
+            dist/windows/*
+            dist/linux/*
+          if-no-files-found: error
+          retention-days: 14
 
   dependency-review:
     if: github.event_name == 'pull_request'

@@ -100,11 +100,11 @@ test("installer verification rejects missing, empty, and stale outputs", () => {
 
 test("release workflow delegates platform packaging to the canonical clean build", () => {
   const repositoryRoot = path.resolve(import.meta.dirname, "../..");
-  const workflow = readFileSync(
+  const releaseWorkflow = readFileSync(
     path.join(repositoryRoot, ".github", "workflows", "release.yml"),
     "utf8",
   );
-  const managerJob = workflow.match(
+  const managerJob = releaseWorkflow.match(
     /^  build-manager:[\s\S]*?(?=^  compose-candidate:)/mu,
   )?.[0] ?? "";
   assert.match(
@@ -112,4 +112,19 @@ test("release workflow delegates platform packaging to the canonical clean build
     /node tools\/release\/clean-build\.mjs[\s\S]*--platform '\$\{\{ matrix\.target \}\}'/,
   );
   assert.doesNotMatch(managerJob, /^\s+cpack /mu);
+
+  const integrationWorkflow = readFileSync(
+    path.join(repositoryRoot, ".github", "workflows", "ci.yml"),
+    "utf8",
+  );
+  const nativeJob = integrationWorkflow.match(
+    /^  native:[\s\S]*?(?=^  dependency-review:)/mu,
+  )?.[0] ?? "";
+  assert.match(
+    nativeJob,
+    /node tools\/release\/clean-build\.mjs --platform '\$\{\{ matrix\.target \}\}'/,
+  );
+  assert.match(nativeJob, /name: clean-build-\$\{\{ matrix\.target \}\}/);
+  assert.doesNotMatch(nativeJob, /lukka\/run-cmake/);
+  assert.doesNotMatch(nativeJob, /matrix\.preset|preset:/);
 });
