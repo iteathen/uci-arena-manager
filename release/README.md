@@ -45,6 +45,11 @@ A developer-workstation MSI is an unsigned test candidate, never an official
 release. Record its source commit and SHA-256 before testing. Do not use an MSI
 from a dirty worktree or infer provenance from its filename.
 
+Windows MSI and bundle builds use WiX `6.0.2`. The MSI deliberately rejects a
+different build with the same three-field product version as an upgrade; bump
+the suite version for an upgrade or use the explicit repair lifecycle for the
+same installed version.
+
 Use `tools/release/windows-installer-cycle.ps1` as the local entrypoint. It
 stores a commit-bound, digest-bound state machine under
 `build/installer-validation/<commit>/cycle.json`. The state is written as

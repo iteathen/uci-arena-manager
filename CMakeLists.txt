@@ -224,6 +224,8 @@ if(ARENA_ENABLE_PACKAGING)
     set(CPACK_PACKAGE_INSTALL_DIRECTORY "UCI Arena Manager")
     set(CPACK_WIX_VERSION 4)
     set(CPACK_WIX_UPGRADE_GUID "930B856A-66FB-4A34-B998-8A61684EA345")
+    set(CPACK_WIX_TEMPLATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/Package.wxs.in")
     set(CPACK_WIX_PATCH_FILE
       "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/ServicePatch.xml")
   else()

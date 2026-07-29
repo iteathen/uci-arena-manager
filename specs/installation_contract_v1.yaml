@@ -86,6 +86,9 @@ packaging:
       - The suite bundle is the only visible Programs and Features entry.
       - Bundle uninstall invokes arena-setup suite uninstall before removing
         the Manager MSI so provider startup registrations cannot be stranded.
+      - MSI major upgrades require a strictly greater three-field product
+        version. Rebuilding different bytes under the same product version is
+        not an upgrade path; use the explicit repair lifecycle instead.
   artifact_names:
     - UCI-Arena-Setup-<version>-windows-x64-online.exe
     - UCI-Arena-Setup-<version>-windows-x64-offline.exe

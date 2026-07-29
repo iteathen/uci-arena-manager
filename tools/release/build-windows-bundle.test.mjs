@@ -92,6 +92,11 @@ test("Windows release workflow keeps channel labels out of the visible product n
   );
   assert.doesNotMatch(source, /ProductName=UCI Arena Suite Setup/);
   assert.doesNotMatch(source, /--catalog release\\catalog\.json/);
+  assert.equal(
+    source.match(/dotnet tool install --global wix --version 6\.0\.2/g)?.length,
+    2,
+  );
+  assert.doesNotMatch(source, /wix --version 7\./);
 });
 
 test("Windows Manager MSI patches the complete staged tree with service lifecycle", () => {
@@ -103,8 +108,16 @@ test("Windows Manager MSI patches the complete staged tree with service lifecycl
     path.join(repositoryRoot, "packaging", "windows", "ServicePatch.xml"),
     "utf8",
   );
+  const packageTemplate = readFileSync(
+    path.join(repositoryRoot, "packaging", "windows", "Package.wxs.in"),
+    "utf8",
+  );
   assert.match(cmake, /CPACK_RESOURCE_FILE_LICENSE "\$\{CMAKE_CURRENT_BINARY_DIR\}\/LICENSE\.txt"/);
+  assert.match(cmake, /CPACK_WIX_TEMPLATE/);
   assert.match(cmake, /CPACK_WIX_PATCH_FILE/);
+  assert.match(packageTemplate, /<MajorUpgrade/);
+  assert.match(packageTemplate, /AllowSameVersionUpgrades="no"/);
+  assert.doesNotMatch(packageTemplate, /AllowSameVersionUpgrades="yes"/);
   assert.match(patch, /Id="CM_CP_bin\.arena_service\.exe"/);
   assert.match(patch, /<ServiceInstall/);
   assert.match(patch, /Account="NT AUTHORITY\\LocalService"/);
