@@ -7,6 +7,21 @@ meta:
 authority:
   suite_release_repository: iteathen/uci-arena-manager
   component_candidate_repository: iteathen/UCI_Arena
+  component_candidate_repositories:
+    uci_arena:
+      repository: iteathen/UCI_Arena
+      components:
+        - uci_arena.engine
+        - uci_arena_evidence.runtime
+        - lichess.adapter
+        - syzygy.wdl.3-4-5
+        - syzygy.dtz.3-4-5
+    book_forge:
+      repository: iteathen/uci-arena-book-forge
+      components: [book_forge.service, opening_book.standard]
+    evidence_service:
+      repository: iteathen/uci-arena-evidence-service
+      components: [uci_arena_evidence.service]
   release_steward: "@iteathen"
   official_builder: protected_manager_ci
   stable_publisher: protected_manager_ci_after_production_environment_approval
@@ -36,9 +51,19 @@ signed_provenance:
   oidc_issuer: https://token.actions.githubusercontent.com
   provider_candidates:
     predicate_type: https://uci-arena.example/attestations/provider-release-result/v1
-    trusted_repository: iteathen/UCI_Arena
-    trusted_workflow: .github/workflows/component-release.yml
-    trusted_workflow_name: Provider component candidate
+    trusted_providers:
+      uci_arena:
+        repository: iteathen/UCI_Arena
+        workflow: .github/workflows/component-release.yml
+        workflow_name: Provider component candidate
+      book_forge:
+        repository: iteathen/uci-arena-book-forge
+        workflow: .github/workflows/component-release.yml
+        workflow_name: Book Forge component candidate
+      evidence_service:
+        repository: iteathen/uci-arena-evidence-service
+        workflow: .github/workflows/component-release.yml
+        workflow_name: Evidence Service component candidate
     lock_fields:
       - provenance_bundle_name
       - provenance_bundle_sha256
@@ -137,14 +162,17 @@ interfaces:
   plan: arena_install_plan_v1
   receipt: arena_install_receipt_v1
   transaction: arena_install_transaction_v1
-  release_lock: arena_suite_release_lock_v1
+  release_lock: [arena_suite_release_lock_v1, arena_suite_release_lock_v2]
   schema_compatibility: reject_unknown_major_accept_additive_minor
+  manager_service_api: uci_arena_manager_service_api_v1
+  service_output: uci_arena_service_output_v1
 
 standalone_service_contracts:
   components:
     - book_forge.service
     - uci_arena_evidence.service
   required_from_component_version: 0.2.0
+  manager_service_api_required_from_component_version: 0.3.0
   legacy_compatibility: >
     Existing 0.1.x provider candidates remain readable without a standalone
     service contract. A service candidate at or after 0.2.0 fails closed when
@@ -163,6 +191,16 @@ standalone_service_contracts:
       smoke is the public status command with exit-zero plus schema validation.
     - Upgrade preserves and migrates service data, while repair and normal
       uninstall preserve it.
+    - At or after component version 0.3.0, the standalone service contract and
+      arena-component.json both contain the same manager_integration_api
+      declaration.
+    - The declaration uses uci_arena_manager_service_api_v1 version 1.x over
+      CLI JSON, selects the verified cli entrypoint with the argv prefix
+      [api], declares all five required operations, and emits only
+      uci_arena_service_output_v1 output records.
+    - Manager service API metadata is covered by the immutable component
+      manifest and provider attestation; installer or Manager code never
+      synthesizes it for an installed provider.
   receipt:
     fields:
       - schema
@@ -170,6 +208,7 @@ standalone_service_contracts:
       - sha256
       - configuration_schema
       - status_schema
+      - manager_integration_api
     rules:
       - Apply records the exact validated contract evidence in the component receipt.
       - Verify recomputes contract evidence from the immutable active root and
@@ -256,8 +295,9 @@ packaging:
         requires a release-ready lock, builds Manager-Core on both platforms,
         assembles exact provider candidates, runs the acceptance gates, and
         emits the complete installer sets from the accepted bytes.
-      - Provider artifacts from iteathen/UCI_Arena remain immutable component
-        candidates. They never satisfy or replace a suite installer artifact.
+      - Provider artifacts from every lock-allowlisted private repository
+        remain immutable component candidates. They never satisfy or replace a
+        suite installer artifact.
       - Unsigned local artifacts are development installers, not official
         releases. Signing, stable promotion, and protected acceptance remain
         protected-CI-only operations over the exact accepted bytes.
@@ -367,6 +407,7 @@ components:
     - stockfish.engine
     - book_forge.service
     - opening_book.standard
+    - uci_arena_evidence.runtime
     - uci_arena_evidence.service
     - lichess.adapter
   composition_rules:

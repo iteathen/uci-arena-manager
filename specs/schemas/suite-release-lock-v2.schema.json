@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uci-arena.example/schemas/suite-release-lock-v2.schema.json",
+  "title": "arena_suite_release_lock_v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "suite_version",
+    "release_ready",
+    "providers",
+    "managed_repository",
+    "components",
+    "managed_components"
+  ],
+  "properties": {
+    "schema": {"const": "arena_suite_release_lock_v2"},
+    "suite_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(?:[-.][A-Za-z0-9.-]+)?$"
+    },
+    "release_ready": {"type": "boolean"},
+    "providers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uci_arena", "book_forge", "evidence_service"],
+      "properties": {
+        "uci_arena": {"$ref": "#/$defs/uciArenaProvider"},
+        "book_forge": {"$ref": "#/$defs/bookForgeProvider"},
+        "evidence_service": {"$ref": "#/$defs/evidenceProvider"}
+      }
+    },
+    "managed_repository": {"const": "iteathen/uci-arena-manager"},
+    "components": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/providerComponent"}
+    },
+    "managed_components": {
+      "type": "array",
+      "items": {
+        "$ref": "suite-release-lock.schema.json#/$defs/managedComponent"
+      }
+    }
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "providerBase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "workflow_path", "workflow_name"],
+      "properties": {
+        "repository": {"type": "string"},
+        "workflow_path": {"const": ".github/workflows/component-release.yml"},
+        "workflow_name": {"type": "string"}
+      }
+    },
+    "uciArenaProvider": {
+      "allOf": [
+        {"$ref": "#/$defs/providerBase"},
+        {
+          "properties": {
+            "repository": {"const": "iteathen/UCI_Arena"},
+            "workflow_name": {"const": "Provider component candidate"}
+          }
+        }
+      ]
+    },
+    "bookForgeProvider": {
+      "allOf": [
+        {"$ref": "#/$defs/providerBase"},
+        {
+          "properties": {
+            "repository": {"const": "iteathen/uci-arena-book-forge"},
+            "workflow_name": {"const": "Book Forge component candidate"}
+          }
+        }
+      ]
+    },
+    "evidenceProvider": {
+      "allOf": [
+        {"$ref": "#/$defs/providerBase"},
+        {
+          "properties": {
+            "repository": {"const": "iteathen/uci-arena-evidence-service"},
+            "workflow_name": {"const": "Evidence Service component candidate"}
+          }
+        }
+      ]
+    },
+    "providerComponent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider_id",
+        "component_id",
+        "component_version",
+        "target_triple",
+        "source_commit",
+        "provider_release_tag",
+        "artifact_name",
+        "artifact_sha256",
+        "provider_result_name",
+        "provider_result_sha256",
+        "provenance_bundle_name",
+        "provenance_bundle_sha256",
+        "provenance_certificate_identity",
+        "provenance_oidc_issuer",
+        "provenance_workflow_name",
+        "provenance_workflow_ref",
+        "provenance_workflow_trigger"
+      ],
+      "properties": {
+        "provider_id": {"enum": ["uci_arena", "book_forge", "evidence_service"]},
+        "component_id": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+        "component_version": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+        "target_triple": {
+          "enum": ["windows-x86_64", "linux-x86_64", "any", "any-any"]
+        },
+        "source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "provider_release_tag": {
+          "type": "string",
+          "pattern": "^component/[A-Za-z0-9._/-]+$"
+        },
+        "artifact_name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+(?:\\.tar\\.gz|\\.file-set\\.json)$"
+        },
+        "artifact_sha256": {"$ref": "#/$defs/digest"},
+        "artifact_type": {"enum": ["archive", "file_set"]},
+        "file_count": {"type": "integer", "minimum": 1},
+        "installed_bytes": {"type": "integer", "minimum": 0},
+        "staging_bytes": {"type": "integer", "minimum": 0},
+        "backup_bytes": {"type": "integer", "minimum": 0},
+        "workspace_reserve_bytes": {"type": "integer", "minimum": 0},
+        "dependencies": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+          "uniqueItems": true
+        },
+        "provider_result_name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+\\.provider-result\\.json$"
+        },
+        "provider_result_sha256": {"$ref": "#/$defs/digest"},
+        "provenance_bundle_name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+(?:\\.tar\\.gz|\\.file-set\\.json)\\.sigstore\\.json$"
+        },
+        "provenance_bundle_sha256": {"$ref": "#/$defs/digest"},
+        "provenance_certificate_identity": {
+          "type": "string",
+          "pattern": "^https://github\\.com/"
+        },
+        "provenance_oidc_issuer": {
+          "const": "https://token.actions.githubusercontent.com"
+        },
+        "provenance_workflow_name": {"type": "string"},
+        "provenance_workflow_ref": {"const": "refs/heads/main"},
+        "provenance_workflow_trigger": {"const": "workflow_dispatch"}
+      }
+    }
+  }
+}

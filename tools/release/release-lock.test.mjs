@@ -8,12 +8,41 @@ import {
   validateReleaseLock,
 } from "./release-lock.mjs";
 
+const PROVIDERS = Object.freeze({
+  uci_arena: Object.freeze({
+    repository: "iteathen/UCI_Arena",
+    workflow_name: "Provider component candidate",
+  }),
+  book_forge: Object.freeze({
+    repository: "iteathen/uci-arena-book-forge",
+    workflow_name: "Book Forge component candidate",
+  }),
+  evidence_service: Object.freeze({
+    repository: "iteathen/uci-arena-evidence-service",
+    workflow_name: "Evidence Service component candidate",
+  }),
+});
+
+const V2_PROVIDERS = Object.freeze(Object.fromEntries(
+  Object.entries(PROVIDERS).map(([providerId, provider]) => [
+    providerId,
+    {
+      repository: provider.repository,
+      workflow_path: ".github/workflows/component-release.yml",
+      workflow_name: provider.workflow_name,
+    },
+  ]),
+));
+
 function row(component, target, options = {}) {
   const fileSet = options.artifactType === "file_set";
+  const providerId = options.providerId ?? "uci_arena";
+  const provider = PROVIDERS[providerId];
   const artifactName = fileSet
     ? `${component}-${target}.file-set.json`
     : `${component}-${target}.tar.gz`;
   return {
+    ...(options.providerId ? { provider_id: providerId } : {}),
     component_id: component,
     component_version: "1.0.0",
     target_triple: target,
@@ -27,14 +56,25 @@ function row(component, target, options = {}) {
     provenance_bundle_name: `${artifactName}.sigstore.json`,
     provenance_bundle_sha256: "8".repeat(64),
     provenance_certificate_identity:
-      "https://github.com/iteathen/UCI_Arena/"
+      `https://github.com/${provider.repository}/`
       + ".github/workflows/component-release.yml@refs/heads/main",
     provenance_oidc_issuer: "https://token.actions.githubusercontent.com",
-    provenance_workflow_name: "Provider component candidate",
+    provenance_workflow_name: provider.workflow_name,
     provenance_workflow_ref: "refs/heads/main",
     provenance_workflow_trigger: "workflow_dispatch",
     ...(fileSet ? { file_count: 4, installed_bytes: 4096 } : {}),
   };
+}
+
+function v2Row(component, target, options = {}) {
+  const providerId = options.providerId ?? (
+    ["book_forge.service", "opening_book.standard"].includes(component)
+      ? "book_forge"
+      : component === "uci_arena_evidence.service"
+        ? "evidence_service"
+        : "uci_arena"
+  );
+  return row(component, target, { ...options, providerId });
 }
 
 function managed(component, target) {
@@ -94,6 +134,76 @@ test("release lock requires every provider component on both platforms", () => {
     managed_components: managedComponents,
   });
   assert.deepEqual(result, { ok: true, errors: [] });
+});
+
+test("v2 release lock requires the exact provider registry and ownership map", () => {
+  const components = [];
+  const managedComponents = [];
+  for (const target of ["windows-x86_64", "linux-x86_64"]) {
+    for (const component of [
+      "uci_arena.engine",
+      "book_forge.service",
+      "uci_arena_evidence.runtime",
+      "uci_arena_evidence.service",
+      "opening_book.standard",
+      "lichess.adapter",
+    ]) components.push(v2Row(component, target));
+    managedComponents.push(managed("node_runtime.private", target));
+    managedComponents.push(managed("stockfish.engine", target));
+  }
+  components.push(v2Row(
+    "syzygy.wdl.3-4-5",
+    "any-any",
+    { artifactType: "file_set" },
+  ));
+  components.push(v2Row(
+    "syzygy.dtz.3-4-5",
+    "any-any",
+    { artifactType: "file_set" },
+  ));
+  const result = validateReleaseLock({
+    schema: "arena_suite_release_lock_v2",
+    suite_version: "1.1.0",
+    release_ready: true,
+    providers: V2_PROVIDERS,
+    managed_repository: "iteathen/uci-arena-manager",
+    components,
+    managed_components: managedComponents,
+  });
+  assert.deepEqual(result, { ok: true, errors: [] });
+});
+
+test("v2 release lock rejects provider and workflow substitution", () => {
+  const wrongOwner = v2Row(
+    "book_forge.service",
+    "windows-x86_64",
+    { providerId: "uci_arena" },
+  );
+  const substitutedWorkflow = v2Row(
+    "book_forge.service",
+    "linux-x86_64",
+  );
+  substitutedWorkflow.provenance_certificate_identity =
+    "https://github.com/iteathen/UCI_Arena/"
+    + ".github/workflows/component-release.yml@refs/heads/main";
+  const providers = structuredClone(V2_PROVIDERS);
+  providers.evidence_service.repository = "iteathen/UCI_Arena";
+  const validation = validateReleaseLock({
+    schema: "arena_suite_release_lock_v2",
+    suite_version: "1.1.0",
+    release_ready: false,
+    providers,
+    managed_repository: "iteathen/uci-arena-manager",
+    components: [wrongOwner, substitutedWorkflow],
+    managed_components: [],
+  }, { requireReady: false });
+  assert.equal(validation.ok, false);
+  assert.ok(validation.errors.some((error) =>
+    error.includes("book_forge.service is not owned by provider uci_arena")));
+  assert.ok(validation.errors.some((error) =>
+    error.includes("untrusted provenance_certificate_identity")));
+  assert.ok(validation.errors.some((error) =>
+    error.includes("provider evidence_service does not match")));
 });
 
 test("release lock rejects mutable and incomplete composition", () => {
@@ -291,6 +401,7 @@ test("catalog assembly preserves provider digests and dependency ownership", () 
     "uci_arena.engine",
     "book_forge.service",
     "opening_book.standard",
+    "uci_arena_evidence.runtime",
     "uci_arena_evidence.service",
     "lichess.adapter",
   ]) {
@@ -353,6 +464,16 @@ test("catalog assembly preserves provider digests and dependency ownership", () 
     catalog.components.find((component) =>
       component.id === "opening_book.standard").dependencies,
     [],
+  );
+  assert.deepEqual(
+    catalog.components.find((component) =>
+      component.id === "uci_arena_evidence.service").dependencies,
+    [
+      "node_runtime.private",
+      "uci_arena_evidence.runtime",
+      "uci_arena.engine",
+      "stockfish.engine",
+    ],
   );
   assert.deepEqual(
     catalog.components.find((component) =>

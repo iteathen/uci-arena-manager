@@ -103,11 +103,43 @@ test("provider verification pins every certificate claim and exact predicate", (
       "--type",
     ]) assert.ok(arguments_.includes(flag), `missing ${flag}`);
     assert.ok(arguments_.includes(PROVIDER_PREDICATE_TYPE));
+    assert.ok(arguments_.includes("iteathen/UCI_Arena"));
     assert.equal(arguments_.at(-1), fixture.artifactPath);
     assert.equal(
       arguments_.some((argument) => /ignore|check-claims=false/u.test(argument)),
       false,
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("provider verification pins the selected private provider repository", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "arena-manager-provider-"));
+  try {
+    const fixture = providerFixture(root);
+    const calls = [];
+    verifyProviderProvenance(
+      fixture.component,
+      fixture.result,
+      fixture.artifactPath,
+      fixture.bundlePath,
+      {
+        providerRepository: "iteathen/uci-arena-book-forge",
+        execute(executable, arguments_) {
+          calls.push({ executable, arguments_ });
+        },
+      },
+    );
+    assert.equal(calls.length, 1);
+    const repositoryFlag = calls[0].arguments_.indexOf(
+      "--certificate-github-workflow-repository",
+    );
+    assert.equal(
+      calls[0].arguments_[repositoryFlag + 1],
+      "iteathen/uci-arena-book-forge",
+    );
+    assert.equal(calls[0].arguments_.includes("iteathen/UCI_Arena"), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

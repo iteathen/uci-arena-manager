@@ -177,6 +177,19 @@ bool standalone_service_contract_required(const std::string& component_id,
     return parsed->at(0) > 0 || parsed->at(1) >= 2;
 }
 
+bool manager_service_api_required(const std::string& component_id,
+                                  const std::string& component_version) {
+    if (!standalone_service_component(component_id)) {
+        return false;
+    }
+    const auto parsed = semantic_version(component_version);
+    if (!parsed.has_value()) {
+        throw std::runtime_error(
+            "standalone service component version is not semantic: " + component_version);
+    }
+    return parsed->at(0) > 0 || parsed->at(1) >= 3;
+}
+
 bool valid_bundle_owner(const std::string& value) {
     return value.size() <= 128 &&
            std::all_of(value.begin(), value.end(), [](const unsigned char character) {
@@ -755,6 +768,58 @@ std::string identifier_field(const json& document, const char* field) {
     return value;
 }
 
+bool compatible_manager_api_version(const std::string_view version) {
+    return version.size() > 2 && version.starts_with("1.") &&
+           std::ranges::all_of(
+               version.substr(2),
+               [](const unsigned char character) {
+                   return std::isdigit(character) != 0;
+               });
+}
+
+json validate_manager_service_api(const json& declaration,
+                                  const json& component_manifest) {
+    if (!declaration.is_object() ||
+        declaration.value("schema", "") !=
+            "uci_arena_manager_service_api_v1" ||
+        !declaration.contains("version") ||
+        !declaration.at("version").is_string() ||
+        !compatible_manager_api_version(
+            declaration.at("version").get_ref<const std::string&>()) ||
+        declaration.value("transport", "") != "cli_json" ||
+        declaration.value("entrypoint", "") != "cli" ||
+        declaration.value("output_schema", "") !=
+            "uci_arena_service_output_v1") {
+        throw std::runtime_error(
+            "standalone service Manager API declaration is incompatible");
+    }
+    if (!component_manifest.contains("entrypoints") ||
+        !component_manifest.at("entrypoints").is_object() ||
+        !component_manifest.at("entrypoints").contains("cli") ||
+        !component_manifest.at("entrypoints").at("cli").is_string()) {
+        throw std::runtime_error(
+            "standalone service Manager API entrypoint is unavailable");
+    }
+    if (!declaration.contains("arguments") ||
+        declaration.at("arguments") != json::array({"api"})) {
+        throw std::runtime_error(
+            "standalone service Manager API arguments are incompatible");
+    }
+    const std::set<std::string> required_operations{
+        "config_validate",
+        "describe",
+        "outputs_inspect",
+        "outputs_list",
+        "status",
+    };
+    if (identifier_set_field(declaration, "operations") !=
+        required_operations) {
+        throw std::runtime_error(
+            "standalone service Manager API operations are incomplete");
+    }
+    return declaration;
+}
+
 std::optional<json> validate_standalone_service_contract(
     const fs::path& root, const json& manifest, const std::set<fs::path>& listed_files) {
     const std::string component_id = manifest.at("component_id").get<std::string>();
@@ -843,13 +908,36 @@ std::optional<json> validate_standalone_service_contract(
         throw std::runtime_error(
             "standalone service contract does not preserve persistent service data");
     }
-    return json{
+    std::optional<json> manager_integration_api;
+    const bool manager_api_required =
+        manager_service_api_required(component_id, component_version);
+    if (manifest.contains("manager_integration_api") ||
+        contract.contains("manager_integration_api")) {
+        if (!manifest.contains("manager_integration_api") ||
+            !contract.contains("manager_integration_api") ||
+            manifest.at("manager_integration_api") !=
+                contract.at("manager_integration_api")) {
+            throw std::runtime_error(
+                "standalone service Manager API declarations do not match");
+        }
+        manager_integration_api = validate_manager_service_api(
+            manifest.at("manager_integration_api"), manifest);
+    } else if (manager_api_required) {
+        throw std::runtime_error(
+            "standalone service component is missing its Manager API declaration");
+    }
+    json projection{
         {"schema", "uci_arena_standalone_service_contract_v1"},
         {"path", contract_relative.generic_string()},
         {"sha256", sha256_file(contract_path)},
         {"configuration_schema", configuration_schema},
         {"status_schema", status_schema},
     };
+    if (manager_integration_api.has_value()) {
+        projection["manager_integration_api"] =
+            *manager_integration_api;
+    }
+    return projection;
 }
 
 struct ValidatedComponentPayload {

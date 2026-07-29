@@ -20,6 +20,39 @@ const REQUIRED_PROVIDER_COMPONENTS = new Set([
   "opening_book.standard",
   "lichess.adapter",
 ]);
+const REQUIRED_V2_PROVIDER_COMPONENTS = new Set([
+  ...REQUIRED_PROVIDER_COMPONENTS,
+  "uci_arena_evidence.runtime",
+]);
+const TRUSTED_PROVIDERS = Object.freeze({
+  uci_arena: Object.freeze({
+    repository: "iteathen/UCI_Arena",
+    workflowPath: ".github/workflows/component-release.yml",
+    workflowName: "Provider component candidate",
+    components: new Set([
+      "uci_arena.engine",
+      "uci_arena_evidence.runtime",
+      "lichess.adapter",
+      "syzygy.wdl.3-4-5",
+      "syzygy.dtz.3-4-5",
+    ]),
+  }),
+  book_forge: Object.freeze({
+    repository: "iteathen/uci-arena-book-forge",
+    workflowPath: ".github/workflows/component-release.yml",
+    workflowName: "Book Forge component candidate",
+    components: new Set([
+      "book_forge.service",
+      "opening_book.standard",
+    ]),
+  }),
+  evidence_service: Object.freeze({
+    repository: "iteathen/uci-arena-evidence-service",
+    workflowPath: ".github/workflows/component-release.yml",
+    workflowName: "Evidence Service component candidate",
+    components: new Set(["uci_arena_evidence.service"]),
+  }),
+});
 const TARGETS = new Set(["windows-x86_64", "linux-x86_64"]);
 const REQUIRED_PORTABLE_PROVIDER_COMPONENTS = new Set([
   "syzygy.wdl.3-4-5",
@@ -34,14 +67,53 @@ export function sha256File(filename) {
   return createHash("sha256").update(readFileSync(filename)).digest("hex");
 }
 
+function providerFor(lock, component, errors = []) {
+  if (lock.schema === "arena_suite_release_lock_v1") {
+    return TRUSTED_PROVIDERS.uci_arena;
+  }
+  const providerId = component.provider_id;
+  const provider = TRUSTED_PROVIDERS[providerId];
+  if (!provider) {
+    errors.push(`${component.component_id ?? "<unknown>"} has an untrusted provider_id`);
+    return null;
+  }
+  if (!provider.components.has(component.component_id)) {
+    errors.push(
+      `${component.component_id} is not owned by provider ${providerId}`,
+    );
+  }
+  return provider;
+}
+
 export function validateReleaseLock(lock, { requireReady = true } = {}) {
   const errors = [];
-  if (lock.schema !== "arena_suite_release_lock_v1") errors.push("wrong lock schema");
+  if (![
+    "arena_suite_release_lock_v1",
+    "arena_suite_release_lock_v2",
+  ].includes(lock.schema)) {
+    errors.push("wrong lock schema");
+  }
   if (!/^\d+\.\d+\.\d+(?:[-.][A-Za-z0-9.-]+)?$/.test(lock.suite_version ?? "")) {
     errors.push("suite_version must be immutable semver text");
   }
-  if (lock.provider_repository !== "iteathen/UCI_Arena") {
+  if (lock.schema === "arena_suite_release_lock_v1"
+      && lock.provider_repository !== "iteathen/UCI_Arena") {
     errors.push("provider_repository must be iteathen/UCI_Arena");
+  }
+  if (lock.schema === "arena_suite_release_lock_v2") {
+    for (const [providerId, expected] of Object.entries(TRUSTED_PROVIDERS)) {
+      const actual = lock.providers?.[providerId];
+      if (actual?.repository !== expected.repository
+          || actual?.workflow_path !== expected.workflowPath
+          || actual?.workflow_name !== expected.workflowName) {
+        errors.push(`provider ${providerId} does not match the trusted registry`);
+      }
+    }
+    const actualIds = Object.keys(lock.providers ?? {}).sort();
+    const expectedIds = Object.keys(TRUSTED_PROVIDERS).sort();
+    if (JSON.stringify(actualIds) !== JSON.stringify(expectedIds)) {
+      errors.push("providers must exactly match the trusted registry");
+    }
   }
   if (lock.managed_repository !== "iteathen/uci-arena-manager") {
     errors.push("managed_repository must be iteathen/uci-arena-manager");
@@ -56,6 +128,7 @@ export function validateReleaseLock(lock, { requireReady = true } = {}) {
   const portableProviderCoverage = new Set();
   for (const component of lock.components ?? []) {
     const identity = `${component.component_id}:${component.target_triple}`;
+    const provider = providerFor(lock, component, errors);
     if (identities.has(identity)) errors.push(`duplicate component target ${identity}`);
     identities.add(identity);
     if (!/^[A-Za-z0-9._-]+$/.test(component.component_id ?? "")) {
@@ -123,7 +196,8 @@ export function validateReleaseLock(lock, { requireReady = true } = {}) {
         !== "https://token.actions.githubusercontent.com") {
       errors.push(`${identity} has an untrusted provenance_oidc_issuer`);
     }
-    if (component.provenance_workflow_name !== "Provider component candidate") {
+    if (provider
+        && component.provenance_workflow_name !== provider.workflowName) {
       errors.push(`${identity} has an untrusted provenance_workflow_name`);
     }
     const workflowRef = component.provenance_workflow_ref ?? "";
@@ -132,10 +206,11 @@ export function validateReleaseLock(lock, { requireReady = true } = {}) {
         || workflowTrigger !== "workflow_dispatch") {
       errors.push(`${identity} has an invalid provenance workflow ref/trigger pair`);
     }
-    const expectedIdentity =
-      `https://github.com/${lock.provider_repository}`
-      + `/.github/workflows/component-release.yml@${workflowRef}`;
-    if (component.provenance_certificate_identity !== expectedIdentity) {
+    const expectedIdentity = provider
+      ? `https://github.com/${provider.repository}/${provider.workflowPath}@${workflowRef}`
+      : "";
+    if (!provider
+        || component.provenance_certificate_identity !== expectedIdentity) {
       errors.push(`${identity} has an untrusted provenance_certificate_identity`);
     }
   }
@@ -220,8 +295,12 @@ export function validateReleaseLock(lock, { requireReady = true } = {}) {
     }
   }
   if (requireReady) {
+    const requiredProviderComponents =
+      lock.schema === "arena_suite_release_lock_v2"
+        ? REQUIRED_V2_PROVIDER_COMPONENTS
+        : REQUIRED_PROVIDER_COMPONENTS;
     for (const [target, components] of coverage) {
-      for (const required of REQUIRED_PROVIDER_COMPONENTS) {
+      for (const required of requiredProviderComponents) {
         if (!components.has(required)) errors.push(`${target} is missing ${required}`);
       }
     }
@@ -296,13 +375,14 @@ export function validateLockedProviderResult(
   component,
   result,
   artifactSize,
+  provider = TRUSTED_PROVIDERS.uci_arena,
 ) {
   const isFileSet =
     (component.artifact_type ?? "archive") === "file_set";
   if (result.schema !== "arena_provider_release_result_v1"
       || result.release_authority !== "provider_component_only"
       || result.suite_installer_authority !== "iteathen/uci-arena-manager"
-      || result.source_repository !== "iteathen/UCI_Arena"
+      || result.source_repository !== provider.repository
       || result.component_id !== component.component_id
       || result.component_version !== component.component_version
       || result.target_triple !== component.target_triple
@@ -318,7 +398,7 @@ export function validateLockedProviderResult(
     throw new Error(`provider result mismatch for ${component.component_id}`);
   }
   const workflowIdentityPrefix =
-    `iteathen/UCI_Arena/.github/workflows/component-release.yml@`
+    `${provider.repository}/${provider.workflowPath}@`
     + `${component.provenance_workflow_ref}#`;
   if (typeof result.workflow_identity !== "string"
       || !result.workflow_identity.startsWith(workflowIdentityPrefix)
@@ -422,6 +502,10 @@ export async function fetchLockedComponents(
   mkdirSync(outputDirectory, { recursive: true });
   const rows = [];
   for (const component of lock.components) {
+    const provider = providerFor(lock, component);
+    if (!provider) {
+      throw new Error(`component ${component.component_id} has no trusted provider`);
+    }
     const artifactPath = path.join(outputDirectory, component.artifact_name);
     const resultPath = path.join(outputDirectory, component.provider_result_name);
     const bundlePath = path.join(outputDirectory, component.provenance_bundle_name);
@@ -429,21 +513,21 @@ export async function fetchLockedComponents(
       throw new Error(`refusing to overwrite provider assets for ${component.component_id}`);
     }
     await downloadAsset(
-      lock.provider_repository,
+      provider.repository,
       component.provider_release_tag,
       component.artifact_name,
       providerToken,
       artifactPath,
     );
     await downloadAsset(
-      lock.provider_repository,
+      provider.repository,
       component.provider_release_tag,
       component.provider_result_name,
       providerToken,
       resultPath,
     );
     await downloadAsset(
-      lock.provider_repository,
+      provider.repository,
       component.provider_release_tag,
       component.provenance_bundle_name,
       providerToken,
@@ -459,13 +543,17 @@ export async function fetchLockedComponents(
       component,
       result,
       statSync(artifactPath).size,
+      provider,
     );
     verifyProviderProvenance(
       component,
       result,
       artifactPath,
       bundlePath,
-      { cosignExecutable },
+      {
+        cosignExecutable,
+        providerRepository: provider.repository,
+      },
     );
     rows.push({
       ...component,
@@ -537,8 +625,14 @@ const DEPENDENCIES = Object.freeze({
   "stockfish.engine": ["manager.core"],
   "book_forge.service": ["node_runtime.private", "stockfish.engine"],
   "opening_book.standard": [],
+  "uci_arena_evidence.runtime": [
+    "node_runtime.private",
+    "uci_arena.engine",
+    "stockfish.engine",
+  ],
   "uci_arena_evidence.service": [
     "node_runtime.private",
+    "uci_arena_evidence.runtime",
     "uci_arena.engine",
     "stockfish.engine",
   ],
@@ -625,6 +719,7 @@ export function assembleCatalog(lock, lockedRows, managerArtifacts) {
     "stockfish.engine",
     "book_forge.service",
     "opening_book.standard",
+    "uci_arena_evidence.runtime",
     "uci_arena_evidence.service",
     "lichess.adapter",
     "syzygy.wdl.3-4-5",
@@ -648,6 +743,7 @@ export function assembleCatalog(lock, lockedRows, managerArtifacts) {
         "stockfish.engine",
         "book_forge.service",
         "opening_book.standard",
+        "uci_arena_evidence.runtime",
         "uci_arena_evidence.service",
         "lichess.adapter",
       ],

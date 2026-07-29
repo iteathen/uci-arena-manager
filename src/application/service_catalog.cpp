@@ -292,6 +292,125 @@ fs::path verified_entrypoint(
         "installed component entrypoint is not in its signed file manifest");
 }
 
+bool compatible_manager_api_version(const std::string_view version) {
+    return version.size() > 2 && version.starts_with("1.") &&
+           std::ranges::all_of(
+               version.substr(2),
+               [](const unsigned char character) {
+                   return std::isdigit(character) != 0;
+               });
+}
+
+bool manager_service_api_required(const std::string_view version) {
+    std::array<unsigned int, 3> parts{};
+    std::size_t part = 0;
+    bool digit = false;
+    for (const unsigned char character : version) {
+        if (character == '.') {
+            if (!digit || part >= parts.size() - 1) {
+                throw std::runtime_error(
+                    "installed service component version is not semantic");
+            }
+            ++part;
+            digit = false;
+        } else if (std::isdigit(character) != 0) {
+            parts[part] = parts[part] * 10 +
+                          static_cast<unsigned int>(character - '0');
+            digit = true;
+        } else {
+            throw std::runtime_error(
+                "installed service component version is not semantic");
+        }
+    }
+    if (!digit || part != 2) {
+        throw std::runtime_error(
+            "installed service component version is not semantic");
+    }
+    return parts[0] > 0 || parts[1] >= 3;
+}
+
+json normalized_manager_service_api(const json& declaration) {
+    if (!declaration.is_object() ||
+        declaration.value("schema", "") !=
+            "uci_arena_manager_service_api_v1" ||
+        !declaration.contains("version") ||
+        !declaration.at("version").is_string() ||
+        !compatible_manager_api_version(
+            declaration.at("version").get_ref<const std::string&>()) ||
+        declaration.value("transport", "") != "cli_json" ||
+        declaration.value("entrypoint", "") != "cli" ||
+        declaration.value("output_schema", "") !=
+            "uci_arena_service_output_v1" ||
+        declaration.value("arguments", json::array()) !=
+            json::array({"api"})) {
+        throw std::runtime_error(
+            "installed service Manager API declaration is incompatible");
+    }
+    const std::set<std::string> expected{
+        "config_validate",
+        "describe",
+        "outputs_inspect",
+        "outputs_list",
+        "status",
+    };
+    if (!declaration.contains("operations") ||
+        !declaration.at("operations").is_array()) {
+        throw std::runtime_error(
+            "installed service Manager API operations are missing");
+    }
+    std::set<std::string> operations;
+    for (const auto& operation : declaration.at("operations")) {
+        if (!operation.is_string() ||
+            !operations.insert(operation.get<std::string>()).second) {
+            throw std::runtime_error(
+                "installed service Manager API operations are malformed");
+        }
+    }
+    if (operations != expected) {
+        throw std::runtime_error(
+            "installed service Manager API operations are incomplete");
+    }
+    return declaration;
+}
+
+json manual_manager_service_api() {
+    return {
+        {"schema", "uci_arena_manager_service_api_v1"},
+        {"version", "1.0"},
+        {"transport", "cli_json"},
+        {"entrypoint", "cli"},
+        {"arguments", {"api"}},
+        {"operations",
+         {"describe",
+          "status",
+          "outputs_list",
+          "outputs_inspect",
+          "config_validate"}},
+        {"output_schema", "uci_arena_service_output_v1"},
+    };
+}
+
+std::optional<json> verified_manager_service_api(
+    const InstalledComponent& component) {
+    if (!component.manifest.contains("manager_integration_api")) {
+        if (manager_service_api_required(
+                component.receipt.at("component_version")
+                    .get_ref<const std::string&>())) {
+            throw std::runtime_error(
+                "installed service is missing its signed Manager API declaration");
+        }
+        return std::nullopt;
+    }
+    const json declaration = normalized_manager_service_api(
+        component.manifest.at("manager_integration_api"));
+    if (declaration.at("entrypoint").get<std::string>() != "cli") {
+        throw std::runtime_error(
+            "installed service Manager API entrypoint is incompatible");
+    }
+    static_cast<void>(verified_entrypoint(component, "cli"));
+    return std::optional<json>{declaration};
+}
+
 json book_forge_profile() {
     return {
         {"profile_id", "book_forge"},
@@ -651,6 +770,20 @@ json ServiceCatalog::normalize_registration(const json& parameters) {
     const std::string profile_id = parameters.value("profile_id", "");
     json data = parameters;
     data.erase("labels");
+    data.erase("manager_integration_api");
+    data.erase("manager_integration_api_source");
+    if (parameters.contains("manager_integration_api")) {
+        data["manager_integration_api"] = normalized_manager_service_api(
+            parameters.at("manager_integration_api"));
+        data["manager_integration_api_source"] =
+            parameters.value(
+                "manager_integration_api_source",
+                "signed_component_manifest");
+    } else if (!parameters.contains("installed_component_id")) {
+        data["manager_integration_api"] = manual_manager_service_api();
+        data["manager_integration_api_source"] =
+            "manual_profile_expectation";
+    }
     if (profile_id == "book_forge") {
         const auto node = required_path(parameters, "node_executable");
         const auto entrypoint = required_path(parameters, "cli_entrypoint");
@@ -777,6 +910,8 @@ json ServiceCatalog::installed_registrations(
             }
             const InstalledComponent service =
                 installed_component(receipts_root, component_id);
+            const auto manager_service_api =
+                verified_manager_service_api(service);
             if (!service.receipt.contains("data_paths") ||
                 !service.receipt.at("data_paths").is_array() ||
                 service.receipt.at("data_paths").empty()) {
@@ -809,6 +944,12 @@ json ServiceCatalog::installed_registrations(
                  service.receipt.value("startup", json::object())
                      .value("installed", false)},
             };
+            if (manager_service_api.has_value()) {
+                registration["manager_integration_api"] =
+                    *manager_service_api;
+                registration["manager_integration_api_source"] =
+                    "signed_component_manifest";
+            }
             const std::string configuration_path =
                 service.receipt.value("configuration_path", "");
             if (!configuration_path.empty()) {
