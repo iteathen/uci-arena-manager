@@ -232,7 +232,8 @@ test("file-set provider results require exact one-byte range evidence", () => {
     external_size_bytes: 4096,
     validation_evidence: {
       range_probe: {
-        status: "passed",
+        status: "availability_verified",
+        content_verified: false,
         files: 4,
         bytes_transferred: 4,
       },
@@ -256,8 +257,25 @@ test("file-set provider results require exact one-byte range evidence", () => {
         validation_evidence: {
           range_probe: {
             status: "not_requested",
+            content_verified: false,
             files: 0,
             bytes_transferred: 0,
+          },
+        },
+      },
+      100,
+    ),
+    /range evidence mismatch/,
+  );
+  assert.throws(
+    () => validateLockedProviderResult(
+      locked,
+      {
+        ...result,
+        validation_evidence: {
+          range_probe: {
+            ...result.validation_evidence.range_probe,
+            content_verified: true,
           },
         },
       },
