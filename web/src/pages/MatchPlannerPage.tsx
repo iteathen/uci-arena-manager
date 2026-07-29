@@ -136,7 +136,7 @@ export function MatchPlannerPage() {
                   searchable
                   clearable
                   label="Participants"
-                  placeholder="Choose LC0, Stockfish, LatticeKnight…"
+                  placeholder="Choose registered UCI engines…"
                   data={options}
                   value={selected}
                   onChange={setSelected}

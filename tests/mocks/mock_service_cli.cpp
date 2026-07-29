@@ -30,7 +30,7 @@ int main(int argc, char** argv) {
     }
     if (!evidence && command == "status") {
         std::cout
-            << R"({"ok":true,"status":{"schema":"flashfork_book_forge_status_v2","control":{"paused":false},"channels":[{"channel":"integration","snapshot_id":"0123456789abcdefabcd","directory":"C:/signed/book-snapshot","published_at":"2026-07-25T00:00:00Z"}]}})"
+            << R"({"ok":true,"status":{"schema":"uci_arena_book_forge_status_v2","control":{"paused":false},"channels":[{"channel":"integration","snapshot_id":"0123456789abcdefabcd","directory":"C:/signed/book-snapshot","published_at":"2026-07-25T00:00:00Z"}]}})"
             << '\n';
         return 0;
     }

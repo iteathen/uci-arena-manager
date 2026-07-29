@@ -143,7 +143,7 @@ export function OverviewPage({ navigate }: { navigate: (page: string) => void })
         <Grid align="center">
           <Grid.Col span={{ base: 12, md: 8 }}>
             <Text className="eyebrow">QUICK START</Text>
-            <Title order={2}>LC0 vs Stockfish vs LatticeKnight</Title>
+            <Title order={2}>Registered engine round robin</Title>
             <Text c="dimmed" mt={6}>
               Register each executable once, then build head-to-head, round-robin, gauntlet,
               Swiss, or SPRT schedules without engine-specific code.

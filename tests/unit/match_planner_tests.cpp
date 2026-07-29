@@ -9,7 +9,7 @@ namespace {
 arena::domain::MatchPlan base_plan() {
     arena::domain::MatchPlan plan;
     plan.id = "018f218e-7be1-7a56-9daa-3f003641c801";
-    plan.display_name = "LC0 vs Stockfish vs LatticeKnight";
+    plan.display_name = "Registered engine round robin";
     plan.engine_ids = {
         "018f218e-7be1-7a56-9daa-3f003641c811",
         "018f218e-7be1-7a56-9daa-3f003641c812",

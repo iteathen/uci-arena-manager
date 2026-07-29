@@ -112,7 +112,7 @@ function Invoke-UciAcceptance {
             if ($null -eq $line) {
                 throw "UCI engine exited before uciok: $($process.StandardError.ReadToEnd())"
             }
-            if ($line.StartsWith("info string model loaded:backend:flashfork:")) {
+            if ($line.StartsWith("info string model loaded:backend:onnx:")) {
                 $modelLine = $line
             }
             $prefix = "option name ModelRoot type string default "

@@ -210,6 +210,13 @@ discovery:
   symbolic_link_traversal: forbidden
   registration_after_detection: explicit_only
   engine_probe: [process_launch, uciok, readyok, typed_options, legal_startpos_bestmove]
+  engine_naming:
+    uci_arena_executable_names: [uci_arena_engine.exe, uci_arena_engine]
+    model_branded_executable_aliases: forbidden
+    rule: >
+      Model package labels are not product identities and never participate in
+      installer discovery. Other UCI engines require their own recognized
+      product executable or an explicit operator-selected path.
   browse_contract:
     returned_per_kind: [selection, filters, hints, managed_copy_allowed]
     paths_are_non_secret: true
