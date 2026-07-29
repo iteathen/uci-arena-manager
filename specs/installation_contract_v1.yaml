@@ -58,6 +58,48 @@ signed_provenance:
         to the separately digest-pinned arena_provider_release_result_v1.
       - The signed provider result workflow_identity must name the trusted
         workflow at the lock-pinned ref and one exact run id and attempt.
+  managed_candidates:
+    predicate_type: https://uci-arena.example/attestations/managed-component-release-result/v1
+    trusted_repository: iteathen/uci-arena-manager
+    trusted_workflow: .github/workflows/managed-component-release.yml
+    trusted_workflow_name: Managed component candidate
+    lock_fields:
+      - managed_release_tag
+      - managed_result_name
+      - managed_result_sha256
+      - provenance_bundle_name
+      - provenance_bundle_sha256
+      - provenance_certificate_identity
+      - provenance_oidc_issuer
+      - provenance_workflow_name
+      - provenance_workflow_ref
+      - provenance_workflow_trigger
+    verification:
+      - Managed Node.js and Stockfish payloads are private immutable prerelease
+        candidates and are never accepted from mutable public download URLs.
+      - Download the exact lock-pinned archive, managed result, and Sigstore
+        bundle from the same immutable private Manager release.
+      - Verify all three asset SHA-256 values before interpreting them.
+      - Cosign verification pins the exact certificate identity, OIDC issuer,
+        Manager repository, source commit, workflow name, workflow ref,
+        workflow trigger, predicate type, and artifact bytes.
+      - Official suite locks accept only the trusted managed-component workflow
+        from refs/heads/main with workflow_dispatch.
+      - Independently decode the verified DSSE payload and require exactly one
+        subject for the locked archive digest plus a predicate exactly equal
+        to the separately digest-pinned arena_managed_component_release_result_v1.
+      - The managed result binds every exact upstream input URL and full
+        SHA-256, including the Stockfish evaluation network, plus component
+        manifest and license digests, native executable smoke evidence, and
+        one exact workflow run id and attempt.
+      - Stockfish compilation prepositions the full-digest-verified evaluation
+        network and never lets the upstream Makefile perform its insecure
+        network fallback.
+      - Stockfish results and locks retain an HTTPS source offer for the exact
+        corresponding source version.
+      - Managed component versions preserve the upstream identity exactly and
+        accept two- or three-part numeric versions; Stockfish 15.1 must not be
+        relabeled as 15.1.0.
   manager_artifacts:
     predicate_type: https://uci-arena.example/attestations/manager-release/v1
     statement_type: https://in-toto.io/Statement/v1

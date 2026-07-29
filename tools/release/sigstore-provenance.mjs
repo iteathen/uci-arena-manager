@@ -20,6 +20,8 @@ import { isDeepStrictEqual } from "node:util";
 
 export const PROVIDER_PREDICATE_TYPE =
   "https://uci-arena.example/attestations/provider-release-result/v1";
+export const MANAGED_PREDICATE_TYPE =
+  "https://uci-arena.example/attestations/managed-component-release-result/v1";
 export const MANAGER_PREDICATE_TYPE =
   "https://uci-arena.example/attestations/manager-release/v1";
 export const INTOTO_STATEMENT_TYPE = "https://in-toto.io/Statement/v1";
@@ -122,6 +124,51 @@ export function buildExpectedProviderStatement(providerResult) {
   };
 }
 
+export function buildExpectedManagedStatement(managedResult) {
+  return {
+    _type: INTOTO_STATEMENT_TYPE,
+    subject: [{
+      name: managedResult.artifact_name,
+      digest: { sha256: managedResult.artifact_sha256 },
+    }],
+    predicateType: MANAGED_PREDICATE_TYPE,
+    predicate: managedResult,
+  };
+}
+
+export function prepareManagedProvenance({
+  artifactPath,
+  managedResultPath,
+  statementDirectory,
+}) {
+  const artifact = path.resolve(artifactPath);
+  const resultPath = path.resolve(managedResultPath);
+  const managedResult = readJson(resultPath);
+  if (managedResult.schema !== "arena_managed_component_release_result_v1"
+      || managedResult.source_repository !== MANAGER_REPOSITORY
+      || !COMMIT_PATTERN.test(managedResult.source_commit ?? "")
+      || path.basename(artifact) !== managedResult.artifact_name
+      || sha256File(artifact) !== managedResult.artifact_sha256) {
+    throw new Error("managed result does not bind the exact managed artifact");
+  }
+  const statement = buildExpectedManagedStatement(managedResult);
+  const statementRoot = path.resolve(statementDirectory);
+  mkdirSync(statementRoot, { recursive: true });
+  const bundlePath = `${artifact}.sigstore.json`;
+  const statementPath = path.join(
+    statementRoot,
+    `${managedResult.artifact_name}.intoto.json`,
+  );
+  writeFileSync(statementPath, canonicalJson(statement), { flag: "wx" });
+  return {
+    artifactPath: artifact,
+    bundlePath,
+    predicateType: MANAGED_PREDICATE_TYPE,
+    statement,
+    statementPath,
+  };
+}
+
 export function verifyProviderProvenance(
   component,
   providerResult,
@@ -159,6 +206,60 @@ export function verifyProviderProvenance(
     component.provenance_workflow_trigger,
     "--type",
     PROVIDER_PREDICATE_TYPE,
+    artifactPath,
+  ];
+  try {
+    execute(cosignExecutable, arguments_, {
+      encoding: "utf8",
+      stdio: "pipe",
+      windowsHide: true,
+    });
+  } catch (error) {
+    throw new Error(
+      `Sigstore verification failed for ${component.component_id}`,
+      { cause: error },
+    );
+  }
+  return actualStatement;
+}
+
+export function verifyManagedProvenance(
+  component,
+  managedResult,
+  artifactPath,
+  bundlePath,
+  {
+    cosignExecutable = "cosign",
+    execute = execFileSync,
+  } = {},
+) {
+  const actualStatement = readBundleStatement(bundlePath);
+  const expectedStatement = buildExpectedManagedStatement(managedResult);
+  if (!isDeepStrictEqual(actualStatement, expectedStatement)) {
+    throw new Error(
+      `signed managed predicate mismatch for ${component.component_id}`,
+    );
+  }
+  const arguments_ = [
+    "verify-blob-attestation",
+    "--bundle",
+    bundlePath,
+    "--certificate-identity",
+    component.provenance_certificate_identity,
+    "--certificate-oidc-issuer",
+    component.provenance_oidc_issuer,
+    "--certificate-github-workflow-repository",
+    MANAGER_REPOSITORY,
+    "--certificate-github-workflow-sha",
+    component.source_commit,
+    "--certificate-github-workflow-name",
+    component.provenance_workflow_name,
+    "--certificate-github-workflow-ref",
+    component.provenance_workflow_ref,
+    "--certificate-github-workflow-trigger",
+    component.provenance_workflow_trigger,
+    "--type",
+    MANAGED_PREDICATE_TYPE,
     artifactPath,
   ];
   try {
@@ -340,13 +441,32 @@ function main(argv) {
     }
     return;
   }
+  if (command === "prepare-managed") {
+    const prepared = prepareManagedProvenance({
+      artifactPath: args.artifact,
+      managedResultPath: args.result,
+      statementDirectory: args["statement-directory"],
+    });
+    if (args["github-output"]) {
+      writeGitHubOutputs(args["github-output"], {
+        artifact_path: prepared.artifactPath,
+        bundle_path: prepared.bundlePath,
+        predicate_type: prepared.predicateType,
+        statement_path: prepared.statementPath,
+      });
+    } else {
+      process.stdout.write(canonicalJson(prepared));
+    }
+    return;
+  }
   if (command === "verify-bundle") {
     verifyBundlePayload(args.bundle, args.statement);
     process.stdout.write("sigstore-provenance: bundle payload verified\n");
     return;
   }
   throw new Error(
-    "usage: sigstore-provenance.mjs <prepare-manager|verify-bundle> [options]",
+    "usage: sigstore-provenance.mjs "
+    + "<prepare-managed|prepare-manager|verify-bundle> [options]",
   );
 }
 

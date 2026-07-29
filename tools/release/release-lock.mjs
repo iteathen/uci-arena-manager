@@ -8,7 +8,10 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-import { verifyProviderProvenance } from "./sigstore-provenance.mjs";
+import {
+  verifyManagedProvenance,
+  verifyProviderProvenance,
+} from "./sigstore-provenance.mjs";
 
 const REQUIRED_PROVIDER_COMPONENTS = new Set([
   "uci_arena.engine",
@@ -39,6 +42,9 @@ export function validateReleaseLock(lock, { requireReady = true } = {}) {
   }
   if (lock.provider_repository !== "iteathen/UCI_Arena") {
     errors.push("provider_repository must be iteathen/UCI_Arena");
+  }
+  if (lock.managed_repository !== "iteathen/uci-arena-manager") {
+    errors.push("managed_repository must be iteathen/uci-arena-manager");
   }
   if (requireReady && lock.release_ready !== true) errors.push("release_ready is not true");
   if (!Array.isArray(lock.components)) errors.push("components must be an array");
@@ -152,28 +158,65 @@ export function validateReleaseLock(lock, { requireReady = true } = {}) {
       "artifact_sha256",
       "component_manifest_sha256",
       "licenses_sha256",
-      "provenance_sha256",
+      "managed_result_sha256",
+      "provenance_bundle_sha256",
     ]) {
       if (!/^[0-9a-f]{64}$/.test(component[key] ?? "")) {
         errors.push(`${identity} has invalid ${key}`);
       }
     }
-    for (const key of ["artifact_url", "provenance_url"]) {
-      if (!/^https:\/\//.test(component[key] ?? "")) {
-        errors.push(`${identity} has invalid ${key}`);
+    if (!/^[0-9a-f]{40}$/.test(component.source_commit ?? "")) {
+      errors.push(`${identity} has invalid source_commit`);
+    }
+    if (!/^managed\/[A-Za-z0-9._/-]+$/.test(component.managed_release_tag ?? "")) {
+      errors.push(`${identity} has invalid managed_release_tag`);
+    }
+    for (const key of [
+      "artifact_name",
+      "managed_result_name",
+      "provenance_bundle_name",
+    ]) {
+      if (!component[key] || path.basename(component[key]) !== component[key]) {
+        errors.push(`${identity} has unsafe ${key}`);
       }
     }
-    if (!component.artifact_name
-        || path.basename(component.artifact_name) !== component.artifact_name) {
-      errors.push(`${identity} has unsafe artifact_name`);
+    if (!component.artifact_name?.endsWith(".tar.gz")) {
+      errors.push(`${identity} must use a .tar.gz artifact`);
+    }
+    if (component.provenance_bundle_name
+        !== `${component.artifact_name}.sigstore.json`) {
+      errors.push(`${identity} does not bind provenance to artifact_name`);
     }
     if (!Number.isSafeInteger(component.artifact_size_bytes)
         || component.artifact_size_bytes <= 0) {
       errors.push(`${identity} has invalid artifact_size_bytes`);
     }
+    if (!Number.isSafeInteger(component.installed_bytes)
+        || component.installed_bytes <= 0) {
+      errors.push(`${identity} has invalid installed_bytes`);
+    }
     if (component.component_id === "stockfish.engine"
         && !/^https:\/\//.test(component.source_offer_url ?? "")) {
       errors.push(`${identity} must include the Stockfish source offer`);
+    }
+    if (component.provenance_oidc_issuer
+        !== "https://token.actions.githubusercontent.com") {
+      errors.push(`${identity} has an untrusted provenance_oidc_issuer`);
+    }
+    if (component.provenance_workflow_name !== "Managed component candidate") {
+      errors.push(`${identity} has an untrusted provenance_workflow_name`);
+    }
+    const workflowRef = component.provenance_workflow_ref ?? "";
+    const workflowTrigger = component.provenance_workflow_trigger ?? "";
+    if (workflowRef !== "refs/heads/main"
+        || workflowTrigger !== "workflow_dispatch") {
+      errors.push(`${identity} has an invalid provenance workflow ref/trigger pair`);
+    }
+    const expectedIdentity =
+      `https://github.com/${lock.managed_repository}`
+      + `/.github/workflows/managed-component-release.yml@${workflowRef}`;
+    if (component.provenance_certificate_identity !== expectedIdentity) {
+      errors.push(`${identity} has an untrusted provenance_certificate_identity`);
     }
   }
   if (requireReady) {
@@ -211,11 +254,11 @@ async function downloadAsset(repository, tag, name, token, destination) {
     },
   );
   if (!releaseResponse.ok) {
-    throw new Error(`cannot resolve provider release ${tag}: HTTP ${releaseResponse.status}`);
+    throw new Error(`cannot resolve private release ${tag}: HTTP ${releaseResponse.status}`);
   }
   const release = await releaseResponse.json();
   const asset = release.assets.find((candidate) => candidate.name === name);
-  if (!asset) throw new Error(`provider release ${tag} is missing ${name}`);
+  if (!asset) throw new Error(`private release ${tag} is missing ${name}`);
   const response = await fetch(asset.url, {
     headers: {
       Accept: "application/octet-stream",
@@ -226,36 +269,7 @@ async function downloadAsset(repository, tag, name, token, destination) {
     redirect: "follow",
   });
   if (!response.ok || !response.body) {
-    throw new Error(`cannot download provider asset ${name}: HTTP ${response.status}`);
-  }
-  await new Promise((resolve, reject) => {
-    const output = createWriteStream(destination, { flags: "wx", mode: 0o600 });
-    output.on("error", reject);
-    output.on("finish", resolve);
-    response.body.pipeTo(new WritableStream({
-      write(chunk) {
-        return new Promise((writeResolve, writeReject) => {
-          output.write(Buffer.from(chunk), (error) =>
-            error ? writeReject(error) : writeResolve());
-        });
-      },
-      close() {
-        output.end();
-      },
-      abort(error) {
-        output.destroy(error);
-      },
-    })).catch(reject);
-  });
-}
-
-async function downloadUrl(url, destination) {
-  const response = await fetch(url, {
-    headers: {"User-Agent": "uci-arena-manager-release"},
-    redirect: "follow",
-  });
-  if (!response.ok || !response.body) {
-    throw new Error(`cannot download managed component: HTTP ${response.status}`);
+    throw new Error(`cannot download private asset ${name}: HTTP ${response.status}`);
   }
   await new Promise((resolve, reject) => {
     const output = createWriteStream(destination, { flags: "wx", mode: 0o600 });
@@ -337,15 +351,73 @@ export function validateLockedProviderResult(
   }
 }
 
+export function validateLockedManagedResult(component, result, artifactSize) {
+  if (result.schema !== "arena_managed_component_release_result_v1"
+      || result.release_authority !== "manager_managed_component_only"
+      || result.suite_installer_authority !== "iteathen/uci-arena-manager"
+      || result.source_repository !== "iteathen/uci-arena-manager"
+      || result.component_id !== component.component_id
+      || result.component_version !== component.component_version
+      || result.target_triple !== component.target_triple
+      || result.source_commit !== component.source_commit
+      || result.artifact_name !== component.artifact_name
+      || result.artifact_sha256 !== component.artifact_sha256
+      || result.artifact_size_bytes !== artifactSize
+      || result.artifact_size_bytes !== component.artifact_size_bytes
+      || result.installed_bytes !== component.installed_bytes
+      || result.component_manifest_sha256 !== component.component_manifest_sha256
+      || result.licenses_sha256 !== component.licenses_sha256
+      || result.validation_evidence?.executable_smoke?.status !== "passed") {
+    throw new Error(`managed result mismatch for ${component.component_id}`);
+  }
+  const upstreamInputs = result.upstream_inputs;
+  const expectedRoles = component.component_id === "stockfish.engine"
+    ? ["source", "evaluation_network"]
+    : ["source"];
+  if (!Array.isArray(upstreamInputs)
+      || upstreamInputs.length !== expectedRoles.length
+      || upstreamInputs.some((input, index) =>
+        input?.role !== expectedRoles[index]
+        || !/^https:\/\//.test(input.url ?? "")
+        || !/^[0-9a-f]{64}$/.test(input.sha256 ?? ""))) {
+    throw new Error(`managed upstream input mismatch for ${component.component_id}`);
+  }
+  const expectedProtocol = component.component_id === "stockfish.engine"
+    ? "uci_startup"
+    : "node_version";
+  if (result.validation_evidence.executable_smoke.protocol !== expectedProtocol) {
+    throw new Error(`managed smoke evidence mismatch for ${component.component_id}`);
+  }
+  if (component.component_id === "stockfish.engine"
+      && result.source_offer_url !== component.source_offer_url) {
+    throw new Error(`managed source offer mismatch for ${component.component_id}`);
+  }
+  const workflowIdentityPrefix =
+    "iteathen/uci-arena-manager/"
+    + ".github/workflows/managed-component-release.yml@"
+    + `${component.provenance_workflow_ref}#`;
+  if (typeof result.workflow_identity !== "string"
+      || !result.workflow_identity.startsWith(workflowIdentityPrefix)
+      || !/^[1-9][0-9]*\.[1-9][0-9]*$/.test(
+        result.workflow_identity.slice(workflowIdentityPrefix.length),
+      )) {
+    throw new Error(`managed workflow identity mismatch for ${component.component_id}`);
+  }
+}
+
 export async function fetchLockedComponents(
   lock,
   outputDirectory,
-  token,
-  { cosignExecutable = "cosign" } = {},
+  providerToken,
+  {
+    managerToken,
+    cosignExecutable = "cosign",
+  } = {},
 ) {
   const validation = validateReleaseLock(lock);
   if (!validation.ok) throw new Error(validation.errors.join("\n"));
-  if (!token) throw new Error("a short-lived provider read token is required");
+  if (!providerToken) throw new Error("a short-lived provider read token is required");
+  if (!managerToken) throw new Error("a short-lived Manager read token is required");
   mkdirSync(outputDirectory, { recursive: true });
   const rows = [];
   for (const component of lock.components) {
@@ -359,21 +431,21 @@ export async function fetchLockedComponents(
       lock.provider_repository,
       component.provider_release_tag,
       component.artifact_name,
-      token,
+      providerToken,
       artifactPath,
     );
     await downloadAsset(
       lock.provider_repository,
       component.provider_release_tag,
       component.provider_result_name,
-      token,
+      providerToken,
       resultPath,
     );
     await downloadAsset(
       lock.provider_repository,
       component.provider_release_tag,
       component.provenance_bundle_name,
-      token,
+      providerToken,
       bundlePath,
     );
     if (sha256File(artifactPath) !== component.artifact_sha256
@@ -404,26 +476,53 @@ export async function fetchLockedComponents(
   }
   for (const component of lock.managed_components) {
     const artifactPath = path.join(outputDirectory, component.artifact_name);
-    const provenanceName = `${component.artifact_name}.provenance.json`;
-    const provenancePath = path.join(outputDirectory, provenanceName);
-    if (existsSync(artifactPath) || existsSync(provenancePath)) {
+    const resultPath = path.join(outputDirectory, component.managed_result_name);
+    const bundlePath = path.join(outputDirectory, component.provenance_bundle_name);
+    if (existsSync(artifactPath) || existsSync(resultPath) || existsSync(bundlePath)) {
       throw new Error(`refusing to overwrite managed assets for ${component.component_id}`);
     }
-    await downloadUrl(component.artifact_url, artifactPath);
-    await downloadUrl(component.provenance_url, provenancePath);
+    await downloadAsset(
+      lock.managed_repository,
+      component.managed_release_tag,
+      component.artifact_name,
+      managerToken,
+      artifactPath,
+    );
+    await downloadAsset(
+      lock.managed_repository,
+      component.managed_release_tag,
+      component.managed_result_name,
+      managerToken,
+      resultPath,
+    );
+    await downloadAsset(
+      lock.managed_repository,
+      component.managed_release_tag,
+      component.provenance_bundle_name,
+      managerToken,
+      bundlePath,
+    );
     if (sha256File(artifactPath) !== component.artifact_sha256
         || statSync(artifactPath).size !== component.artifact_size_bytes
-        || sha256File(provenancePath) !== component.provenance_sha256) {
+        || sha256File(resultPath) !== component.managed_result_sha256
+        || sha256File(bundlePath) !== component.provenance_bundle_sha256) {
       throw new Error(`locked digest mismatch for managed ${component.component_id}`);
     }
+    const result = JSON.parse(readFileSync(resultPath, "utf8"));
+    validateLockedManagedResult(component, result, statSync(artifactPath).size);
+    verifyManagedProvenance(
+      component,
+      result,
+      artifactPath,
+      bundlePath,
+      { cosignExecutable },
+    );
     rows.push({
       ...component,
       artifactPath,
-      provenancePath,
-      result: {
-        component_version: component.component_version,
-        artifact_size_bytes: component.artifact_size_bytes,
-      },
+      bundlePath,
+      resultPath,
+      result,
       managed: true,
     });
   }

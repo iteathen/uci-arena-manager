@@ -201,9 +201,10 @@ jobs:
           private-key: ${{ secrets.COMPONENT_READER_PRIVATE_KEY }}
           owner: iteathen
           repositories: UCI_Arena
-      - name: Fetch exact provider candidates
+      - name: Fetch exact private component candidates
         env:
           GH_PROVIDER_TOKEN: ${{ steps.provider-token.outputs.token }}
+          GH_MANAGER_TOKEN: ${{ github.token }}
         run: node tools/release/fetch-components.mjs release/catalog.lock.json dist/provider
       - name: Assemble immutable suite catalog
         run: |

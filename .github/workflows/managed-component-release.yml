@@ -1,0 +1,297 @@
+name: Managed component candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      component_id:
+        description: Manager-owned dependency
+        required: true
+        type: choice
+        options:
+          - node_runtime.private
+          - stockfish.engine
+      target:
+        description: Target platform
+        required: true
+        type: choice
+        options:
+          - windows-x86_64
+          - linux-x86_64
+
+permissions:
+  contents: read
+
+concurrency:
+  group: managed-${{ inputs.component_id }}-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ${{ inputs.target == 'windows-x86_64' && 'windows-latest' || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      artifact_name: ${{ steps.metadata.outputs.artifact_name }}
+      bundle_name: ${{ steps.metadata.outputs.bundle_name }}
+      component_id: ${{ inputs.component_id }}
+      component_version: ${{ steps.input.outputs.component_version }}
+      release_tag: ${{ steps.metadata.outputs.release_tag }}
+      result_name: ${{ steps.metadata.outputs.result_name }}
+      source_commit: ${{ github.sha }}
+      target: ${{ inputs.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.15.0
+      - name: Resolve exact upstream input
+        id: input
+        shell: pwsh
+        run: |
+          $component = '${{ inputs.component_id }}'
+          $target = '${{ inputs.target }}'
+          if ($component -eq 'node_runtime.private') {
+            $version = '24.15.0'
+            if ($target -eq 'windows-x86_64') {
+              $name = 'node-v24.15.0-win-x64.zip'
+              $sha = 'cc5149eabd53779ce1e7bdc5401643622d0c7e6800ade18928a767e940bb0e62'
+            } else {
+              $name = 'node-v24.15.0-linux-x64.tar.gz'
+              $sha = '44836872d9aec49f1e6b52a9a922872db9a2b02d235a616a5681b6a85fec8d89'
+            }
+            $url = "https://nodejs.org/download/release/v$version/$name"
+            $networkName = ''
+            $networkSha = ''
+            $networkUrl = ''
+            $sourceOffer = ''
+            $slug = 'node-runtime'
+          } else {
+            $version = '15.1'
+            $name = 'stockfish-15.1-source.tar.gz'
+            $url = 'https://github.com/official-stockfish/Stockfish/archive/refs/tags/sf_15.1.tar.gz'
+            $sha = 'd4272657905319328294355973faee40a8c28e3eecb0e7b266ed34ff33383b76'
+            $networkName = 'nn-ad9b42354671.nnue'
+            $networkSha = 'ad9b423546714137916bd38978af6fd68d7b8951bef25ff76bf43da72d6cb786'
+            $networkUrl = "https://tests.stockfishchess.org/api/nn/$networkName"
+            $sourceOffer = $url
+            $slug = 'stockfish'
+          }
+          @(
+            "component_version=$version"
+            "input_name=$name"
+            "network_name=$networkName"
+            "network_sha256=$networkSha"
+            "network_url=$networkUrl"
+            "source_offer_url=$sourceOffer"
+            "source_sha256=$sha"
+            "source_url=$url"
+            "tag_slug=$slug"
+          ) | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
+      - name: Download and verify exact upstream input
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/input | Out-Null
+          node tools/release/download-pinned-input.mjs `
+            --url '${{ steps.input.outputs.source_url }}' `
+            --sha256 '${{ steps.input.outputs.source_sha256 }}' `
+            --output "dist/input/${{ steps.input.outputs.input_name }}"
+          if ('${{ inputs.component_id }}' -eq 'stockfish.engine') {
+            node tools/release/download-pinned-input.mjs `
+              --url '${{ steps.input.outputs.network_url }}' `
+              --sha256 '${{ steps.input.outputs.network_sha256 }}' `
+              --output "dist/input/${{ steps.input.outputs.network_name }}"
+          }
+      - name: Prepare native managed executable on Windows
+        if: runner.os == 'Windows'
+        id: windows-input
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'managed-source'
+          New-Item -ItemType Directory -Force $root | Out-Null
+          $source = Resolve-Path "dist/input/${{ steps.input.outputs.input_name }}"
+          if ('${{ inputs.component_id }}' -eq 'node_runtime.private') {
+            Expand-Archive -LiteralPath $source -DestinationPath $root
+            $tree = Get-ChildItem -LiteralPath $root -Directory | Select-Object -First 1
+            $executable = Join-Path $tree.FullName 'node.exe'
+            $license = Join-Path $tree.FullName 'LICENSE'
+          } else {
+            tar -xzf $source -C $root
+            if ($LASTEXITCODE -ne 0) { throw 'Stockfish source extraction failed' }
+            $tree = Get-ChildItem -LiteralPath $root -Directory | Select-Object -First 1
+            Copy-Item -LiteralPath "dist/input/${{ steps.input.outputs.network_name }}" `
+              -Destination (Join-Path $tree.FullName 'src\${{ steps.input.outputs.network_name }}')
+            $bash = 'C:\msys64\usr\bin\bash.exe'
+            if (-not (Test-Path -LiteralPath $bash -PathType Leaf)) {
+              throw 'windows-latest is missing the pinned MSYS2 build environment'
+            }
+            $windowsPath = $tree.FullName.Replace('\','/')
+            $posixPath = (& $bash -lc "cygpath -u '$windowsPath'").Trim()
+            & $bash -lc "export PATH=/mingw64/bin:`$PATH; make -C '$posixPath/src' -j2 build ARCH=x86-64 COMP=gcc COMPCXX=g++"
+            if ($LASTEXITCODE -ne 0) { throw 'Stockfish Windows build failed' }
+            $executable = Join-Path $tree.FullName 'src\stockfish.exe'
+            $license = Join-Path $tree.FullName 'Copying.txt'
+          }
+          if (-not (Test-Path -LiteralPath $executable -PathType Leaf) -or
+              -not (Test-Path -LiteralPath $license -PathType Leaf)) {
+            throw 'Managed executable or license is missing'
+          }
+          @(
+            "executable=$executable"
+            "license=$license"
+          ) | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
+      - name: Prepare native managed executable on Linux
+        if: runner.os == 'Linux'
+        id: linux-input
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/managed-source"
+          mkdir -p "$root"
+          source="dist/input/${{ steps.input.outputs.input_name }}"
+          if [[ '${{ inputs.component_id }}' == 'node_runtime.private' ]]; then
+            tar -xzf "$source" -C "$root"
+            tree="$(find "$root" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+            executable="$tree/bin/node"
+            license="$tree/LICENSE"
+          else
+            tar -xzf "$source" -C "$root"
+            tree="$(find "$root" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+            cp "dist/input/${{ steps.input.outputs.network_name }}" \
+              "$tree/src/${{ steps.input.outputs.network_name }}"
+            make -C "$tree/src" -j2 build ARCH=x86-64 COMP=gcc
+            executable="$tree/src/stockfish"
+            license="$tree/Copying.txt"
+          fi
+          test -f "$executable"
+          test -f "$license"
+          {
+            echo "executable=$executable"
+            echo "license=$license"
+          } >> "$GITHUB_OUTPUT"
+      - name: Build reproducible managed candidate and native smoke it
+        id: metadata
+        shell: pwsh
+        env:
+          EXECUTABLE_PATH: ${{ steps.windows-input.outputs.executable || steps.linux-input.outputs.executable }}
+          LICENSE_PATH: ${{ steps.windows-input.outputs.license || steps.linux-input.outputs.license }}
+        run: |
+          $epoch = git show -s --format=%ct HEAD
+          $arguments = @(
+            'tools/release/build-managed-component.mjs'
+            '--component-id', '${{ inputs.component_id }}'
+            '--version', '${{ steps.input.outputs.component_version }}'
+            '--target', '${{ inputs.target }}'
+            '--executable', $env:EXECUTABLE_PATH
+            '--license', $env:LICENSE_PATH
+            '--source-url', '${{ steps.input.outputs.source_url }}'
+            '--source-sha256', '${{ steps.input.outputs.source_sha256 }}'
+            '--source-commit', '${{ github.sha }}'
+            '--workflow-identity', '${{ github.workflow_ref }}#${{ github.run_id }}.${{ github.run_attempt }}'
+            '--output-dir', 'dist/candidate'
+            '--source-date-epoch', $epoch
+          )
+          if ('${{ inputs.component_id }}' -eq 'stockfish.engine') {
+            $arguments += @(
+              '--network-url', '${{ steps.input.outputs.network_url }}'
+              '--network-sha256', '${{ steps.input.outputs.network_sha256 }}'
+              '--source-offer-url', '${{ steps.input.outputs.source_offer_url }}'
+            )
+          }
+          node @arguments
+          if ($LASTEXITCODE -ne 0) { throw 'Managed component build failed' }
+          $base = '${{ inputs.component_id }}-${{ steps.input.outputs.component_version }}-${{ inputs.target }}'
+          $artifact = "$base.tar.gz"
+          @(
+            "artifact_name=$artifact"
+            "bundle_name=$artifact.sigstore.json"
+            "release_tag=managed/${{ steps.input.outputs.tag_slug }}/v${{ steps.input.outputs.component_version }}/${{ inputs.target }}"
+            "result_name=$base.managed-result.json"
+          ) | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v3.0.6
+      - name: Prepare exact managed provenance
+        id: provenance
+        shell: pwsh
+        run: |
+          node tools/release/sigstore-provenance.mjs prepare-managed `
+            --artifact "dist/candidate/${{ steps.metadata.outputs.artifact_name }}" `
+            --result "dist/candidate/${{ steps.metadata.outputs.result_name }}" `
+            --statement-directory "${{ runner.temp }}/managed-provenance" `
+            --github-output $env:GITHUB_OUTPUT
+      - name: Sign and verify exact managed provenance
+        shell: pwsh
+        env:
+          ARTIFACT_PATH: ${{ steps.provenance.outputs.artifact_path }}
+          BUNDLE_PATH: ${{ steps.provenance.outputs.bundle_path }}
+          CERTIFICATE_IDENTITY: https://github.com/${{ github.workflow_ref }}
+          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+          PREDICATE_TYPE: ${{ steps.provenance.outputs.predicate_type }}
+          STATEMENT_PATH: ${{ steps.provenance.outputs.statement_path }}
+        run: |
+          cosign attest-blob `
+            --yes `
+            --statement $env:STATEMENT_PATH `
+            --bundle $env:BUNDLE_PATH
+          if ($LASTEXITCODE -ne 0) { throw 'Managed Sigstore attestation failed' }
+          cosign verify-blob-attestation `
+            --bundle $env:BUNDLE_PATH `
+            --certificate-identity $env:CERTIFICATE_IDENTITY `
+            --certificate-oidc-issuer $env:CERTIFICATE_OIDC_ISSUER `
+            --certificate-github-workflow-repository '${{ github.repository }}' `
+            --certificate-github-workflow-sha '${{ github.sha }}' `
+            --certificate-github-workflow-name '${{ github.workflow }}' `
+            --certificate-github-workflow-ref '${{ github.ref }}' `
+            --certificate-github-workflow-trigger '${{ github.event_name }}' `
+            --type $env:PREDICATE_TYPE `
+            $env:ARTIFACT_PATH
+          if ($LASTEXITCODE -ne 0) { throw 'Managed Sigstore verification failed' }
+          node tools/release/sigstore-provenance.mjs verify-bundle `
+            --bundle $env:BUNDLE_PATH `
+            --statement $env:STATEMENT_PATH
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: managed-${{ inputs.component_id }}-${{ inputs.target }}
+          path: |
+            dist/candidate/${{ steps.metadata.outputs.artifact_name }}
+            dist/candidate/${{ steps.metadata.outputs.result_name }}
+            dist/candidate/${{ steps.metadata.outputs.bundle_name }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: managed-${{ needs.build.outputs.component_id }}-${{ needs.build.outputs.target }}
+          path: dist/candidate
+      - name: Publish immutable private managed prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+          SOURCE_COMMIT: ${{ needs.build.outputs.source_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(find dist/candidate -maxdepth 1 -type f | wc -l)" -eq 3
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "managed release already exists: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          matching="$(gh api \
+            "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$RELEASE_TAG" \
+            --jq length)"
+          test "$matching" -eq 0
+          gh release create "$RELEASE_TAG" dist/candidate/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_COMMIT" \
+            --prerelease \
+            --title "${{ needs.build.outputs.component_id }} ${{ needs.build.outputs.component_version }} ${{ needs.build.outputs.target }}" \
+            --notes "Private immutable managed candidate with exact Sigstore provenance."

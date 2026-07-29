@@ -13,11 +13,15 @@ import test from "node:test";
 
 import {
   MANAGER_PREDICATE_TYPE,
+  MANAGED_PREDICATE_TYPE,
   PROVIDER_PREDICATE_TYPE,
   SIGSTORE_BUNDLE_MEDIA_TYPE,
+  buildExpectedManagedStatement,
   buildExpectedProviderStatement,
+  prepareManagedProvenance,
   prepareManagerProvenance,
   verifyBundlePayload,
+  verifyManagedProvenance,
   verifyProviderProvenance,
 } from "./sigstore-provenance.mjs";
 
@@ -138,6 +142,67 @@ test("provider verification rejects predicate substitution and Cosign failure", 
   }
 });
 
+test("managed verification pins the Manager workflow and exact predicate", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "arena-manager-managed-"));
+  try {
+    const artifactPath = path.join(
+      root,
+      "node_runtime.private-24.15.0-linux-x86_64.tar.gz",
+    );
+    writeFileSync(artifactPath, "managed artifact");
+    const result = {
+      schema: "arena_managed_component_release_result_v1",
+      source_repository: "iteathen/uci-arena-manager",
+      source_commit: "9".repeat(40),
+      artifact_name: path.basename(artifactPath),
+      artifact_sha256: sha256("managed artifact"),
+    };
+    const resultPath = path.join(root, "node.managed-result.json");
+    writeFileSync(resultPath, `${JSON.stringify(result)}\n`);
+    const prepared = prepareManagedProvenance({
+      artifactPath,
+      managedResultPath: resultPath,
+      statementDirectory: path.join(root, "statements"),
+    });
+    assert.equal(prepared.predicateType, MANAGED_PREDICATE_TYPE);
+    assert.deepEqual(prepared.statement, buildExpectedManagedStatement(result));
+    writeBundle(prepared.bundlePath, prepared.statement);
+    const calls = [];
+    const component = {
+      component_id: "node_runtime.private",
+      source_commit: result.source_commit,
+      provenance_certificate_identity:
+        "https://github.com/iteathen/uci-arena-manager/"
+        + ".github/workflows/managed-component-release.yml@refs/heads/main",
+      provenance_oidc_issuer: "https://token.actions.githubusercontent.com",
+      provenance_workflow_name: "Managed component candidate",
+      provenance_workflow_ref: "refs/heads/main",
+      provenance_workflow_trigger: "workflow_dispatch",
+    };
+    verifyManagedProvenance(
+      component,
+      result,
+      artifactPath,
+      prepared.bundlePath,
+      {
+        execute(executable, arguments_) {
+          calls.push({ executable, arguments_ });
+        },
+      },
+    );
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0].arguments_.includes(MANAGED_PREDICATE_TYPE));
+    assert.ok(calls[0].arguments_.includes("iteathen/uci-arena-manager"));
+    assert.equal(
+      calls[0].arguments_.some((argument) =>
+        /ignore|check-claims=false/u.test(argument)),
+      false,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("Manager statements cover exactly the selected release artifact set", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "arena-manager-release-"));
   try {
@@ -192,6 +257,17 @@ test("release workflow uses only pinned fail-closed Sigstore provenance", () => 
     new URL("../../.github/workflows/ci.yml", import.meta.url),
     "utf8",
   );
+  const catalogAssembler = readFileSync(
+    new URL("./assemble-catalog.mjs", import.meta.url),
+    "utf8",
+  );
+  const managedWorkflow = readFileSync(
+    new URL(
+      "../../.github/workflows/managed-component-release.yml",
+      import.meta.url,
+    ),
+    "utf8",
+  );
   assert.equal(
     workflow.match(
       /sigstore\/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6/gu,
@@ -205,7 +281,8 @@ test("release workflow uses only pinned fail-closed Sigstore provenance", () => 
     workflow.match(/sigstore-provenance\.mjs verify-bundle/gu)?.length,
     2,
   );
-  assert.match(workflow, /Fetch exact provider candidates/u);
+  assert.match(workflow, /Fetch exact private component candidates/u);
+  assert.match(workflow, /GH_MANAGER_TOKEN:\s*\$\{\{ github\.token \}\}/u);
   assert.doesNotMatch(workflow, /actions\/attest-build-provenance/u);
   assert.doesNotMatch(workflow, /attestations:\s*write/u);
   assert.doesNotMatch(workflow, /insecure-ignore|check-claims=false|ignore-sct/u);
@@ -214,5 +291,38 @@ test("release workflow uses only pinned fail-closed Sigstore provenance", () => 
   assert.match(
     continuousIntegration,
     /node --test tools\/release\/\*\.test\.mjs/u,
+  );
+  assert.match(catalogAssembler, /validateLockedManagedResult/u);
+  assert.match(catalogAssembler, /managed_result_sha256/u);
+  assert.match(catalogAssembler, /provenance_bundle_sha256/u);
+  assert.doesNotMatch(
+    catalogAssembler,
+    /provenance_sha256|\.provenance\.json/u,
+  );
+  assert.match(managedWorkflow, /^name:\s*Managed component candidate$/mu);
+  assert.match(
+    managedWorkflow,
+    /sigstore\/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6/u,
+  );
+  assert.match(managedWorkflow, /cosign-release:\s*v3\.0\.6/u);
+  assert.match(managedWorkflow, /cosign attest-blob/u);
+  assert.match(managedWorkflow, /cosign verify-blob-attestation/u);
+  assert.match(managedWorkflow, /sigstore-provenance\.mjs verify-bundle/u);
+  assert.match(
+    managedWorkflow,
+    /cc5149eabd53779ce1e7bdc5401643622d0c7e6800ade18928a767e940bb0e62/u,
+  );
+  assert.match(
+    managedWorkflow,
+    /d4272657905319328294355973faee40a8c28e3eecb0e7b266ed34ff33383b76/u,
+  );
+  assert.match(
+    managedWorkflow,
+    /ad9b423546714137916bd38978af6fd68d7b8951bef25ff76bf43da72d6cb786/u,
+  );
+  assert.match(managedWorkflow, /\$version = '15\.1'/u);
+  assert.doesNotMatch(
+    managedWorkflow,
+    /insecure-ignore|check-claims=false|ignore-sct|curl\s+-[^ \n]*k/u,
   );
 });

@@ -12,7 +12,10 @@ const rows = await fetchLockedComponents(
   lock,
   output,
   process.env.GH_PROVIDER_TOKEN,
-  { cosignExecutable: process.env.COSIGN_EXECUTABLE ?? "cosign" },
+  {
+    managerToken: process.env.GH_MANAGER_TOKEN,
+    cosignExecutable: process.env.COSIGN_EXECUTABLE ?? "cosign",
+  },
 );
 process.stdout.write(`${JSON.stringify({
   schema: "arena_suite_component_fetch_result_v1",

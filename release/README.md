@@ -18,6 +18,12 @@ reviewed pull request pins every required platform candidate and managed
 dependency by digest. Setting `release_ready` to `true` without complete
 attested rows fails release-lock validation.
 
+Manager-owned Node.js and Stockfish dependencies use private immutable
+`managed/*` prereleases. Each lock row pins the archive, managed result, and
+Sigstore bundle; composition verifies the protected workflow identity and the
+exact signed DSSE predicate. Mutable public artifact URLs and unsigned
+checksum-only provenance are not accepted.
+
 Both repositories remain private. Provider candidates use Cosign `v3.0.6`
 keyless signing with the GitHub Actions OIDC identity; the resulting
 `<artifact>.sigstore.json` asset contains the signing certificate,
