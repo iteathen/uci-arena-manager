@@ -80,14 +80,21 @@ jobs:
       - name: Clean build and verify platform installers
         shell: pwsh
         run: |
-          if ('${{ vars.TUF_ROOT_SHA256 }}' -notmatch '^[0-9a-f]{64}$') {
+          $rootSha256 = '${{ vars.TUF_ROOT_SHA256 }}'
+          if ('${{ inputs.publish }}' -eq 'true' -and
+              $rootSha256 -notmatch '^[0-9a-f]{64}$') {
             throw 'TUF_ROOT_SHA256 must pin the exact offline-root metadata'
           }
-          node tools/release/clean-build.mjs `
-            --manager-only `
-            --platform '${{ matrix.target }}' `
-            --version '${{ needs.validate.outputs.version }}' `
-            --tuf-root-sha256 '${{ vars.TUF_ROOT_SHA256 }}'
+          $arguments = @(
+            'tools/release/clean-build.mjs',
+            '--manager-only',
+            '--platform', '${{ matrix.target }}',
+            '--version', '${{ needs.validate.outputs.version }}'
+          )
+          if ($rootSha256 -match '^[0-9a-f]{64}$') {
+            $arguments += @('--tuf-root-sha256', $rootSha256)
+          }
+          node @arguments
       - name: Stage Manager Core
         shell: pwsh
         run: |

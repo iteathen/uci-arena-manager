@@ -326,6 +326,10 @@ packaging:
       - Unsigned local artifacts are development installers, not official
         releases. Signing, stable promotion, and protected acceptance remain
         protected-CI-only operations over the exact accepted bytes.
+      - A non-publishing Suite release run may build and attest development
+        Manager candidates without an offline TUF root configured. A
+        publishing run must provide and embed the exact TUF_ROOT_SHA256 before
+        compilation; an empty or synthetic production trust root is forbidden.
     required_outputs:
       windows-x86_64:
         - UCI-Arena-Setup-<version>-windows-x64-online.exe
