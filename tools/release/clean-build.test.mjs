@@ -125,6 +125,17 @@ test("release workflow delegates platform packaging to the canonical clean build
     /node tools\/release\/clean-build\.mjs --platform '\$\{\{ matrix\.target \}\}'/,
   );
   assert.match(nativeJob, /name: clean-build-\$\{\{ matrix\.target \}\}/);
+  assert.match(
+    nativeJob,
+    /name: native \(\$\{\{ matrix\.os \}\}, \$\{\{ matrix\.preset \}\}\)/,
+  );
+  assert.match(
+    nativeJob,
+    /os: windows-latest\s+preset: windows-release\s+target: windows-x86_64/u,
+  );
+  assert.match(
+    nativeJob,
+    /os: ubuntu-latest\s+preset: linux-release\s+target: linux-x86_64/u,
+  );
   assert.doesNotMatch(nativeJob, /lukka\/run-cmake/);
-  assert.doesNotMatch(nativeJob, /matrix\.preset|preset:/);
 });

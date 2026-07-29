@@ -29,13 +29,16 @@ jobs:
         working-directory: web
 
   native:
+    name: native (${{ matrix.os }}, ${{ matrix.preset }})
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
+            preset: windows-release
             target: windows-x86_64
           - os: ubuntu-latest
+            preset: linux-release
             target: linux-x86_64
     runs-on: ${{ matrix.os }}
     steps:
