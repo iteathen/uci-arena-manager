@@ -1,6 +1,8 @@
 import type {
   ArenaEvent,
   BotCandidates,
+  BotControlAction,
+  BotControlResult,
   BotProbeResult,
   BotProfile,
   BotTokenReferenceResult,
@@ -173,6 +175,51 @@ export async function probeLocalBot(): Promise<BotProbeResult> {
       body.detail ?? 'BOT account verification failed',
       response.status,
       body.code ?? 'bot_probe_failed',
+    )
+  }
+  return body
+}
+
+export async function controlLocalBot(action: BotControlAction): Promise<BotControlResult> {
+  const port = sessionStorage.getItem(pickerPortKey)
+  const token = sessionStorage.getItem(pickerTokenKey)
+  if (!port || !token) {
+    throw new ApiError(
+      'Open UCI Arena Manager from its desktop launcher and keep it open to control BOT startup.',
+      503,
+      'interactive_helper_unavailable',
+    )
+  }
+  let response: Response
+  try {
+    response = await fetch(`http://127.0.0.1:${port}/v1/bot-control`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        schema: 'arena_ui_bot_control_request_v1',
+        action,
+      }),
+    })
+  } catch {
+    throw new ApiError(
+      'The interactive-user helper is no longer running. Reopen UCI Arena Manager and try again.',
+      503,
+      'interactive_helper_unavailable',
+    )
+  }
+  const body = (await response.json()) as BotControlResult & {
+    code?: string
+    detail?: string
+  }
+  if (!response.ok) {
+    throw new ApiError(
+      body.detail ?? 'BOT startup control failed',
+      response.status,
+      body.code ?? 'bot_control_failed',
     )
   }
   return body

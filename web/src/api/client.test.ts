@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { exchangePairingToken, makeCommand, pickLocalPath } from './client'
+import {
+  controlLocalBot,
+  exchangePairingToken,
+  makeCommand,
+  pickLocalPath,
+  probeLocalBot,
+} from './client'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -66,6 +72,63 @@ describe('interactive-user path picker', () => {
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({ Authorization: `Bearer ${'c'.repeat(64)}` }),
+      }),
+    )
+  })
+})
+
+describe('interactive-user BOT account control', () => {
+  it('probes and controls startup only through the bearer-scoped helper', async () => {
+    sessionStorage.setItem('arena.picker.port', '47832')
+    sessionStorage.setItem('arena.picker.token', 'd'.repeat(64))
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            schema: 'arena_bot_probe_result_v1',
+            schema_version: 1,
+            state: 'passed',
+            account_name: 'ArenaBot',
+            is_bot: true,
+            games: 12,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            schema: 'arena_bot_control_result_v1',
+            schema_version: 1,
+            state: 'active',
+            installed: true,
+            active: true,
+            account_name: 'ArenaBot',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+
+    await expect(probeLocalBot()).resolves.toMatchObject({ account_name: 'ArenaBot' })
+    await expect(controlLocalBot('enable_startup')).resolves.toMatchObject({
+      state: 'active',
+      installed: true,
+    })
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:47832/v1/bot-probe',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: `Bearer ${'d'.repeat(64)}` }),
+      }),
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:47832/v1/bot-control',
+      expect.objectContaining({
+        body: JSON.stringify({
+          schema: 'arena_ui_bot_control_request_v1',
+          action: 'enable_startup',
+        }),
       }),
     )
   })

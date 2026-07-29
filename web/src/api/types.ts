@@ -236,6 +236,17 @@ export interface BotProbeResult {
   games: number
 }
 
+export type BotControlAction = 'status' | 'enable_startup' | 'disable_startup'
+
+export interface BotControlResult {
+  schema: 'arena_bot_control_result_v1'
+  schema_version: 1
+  state: 'disabled' | 'enabled' | 'active'
+  installed: boolean
+  active: boolean
+  account_name?: string
+}
+
 export interface BotTokenReferenceResult {
   schema: 'arena_bot_token_reference_result_v1'
   schema_version: 1

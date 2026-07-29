@@ -530,6 +530,29 @@ TEST_CASE("dashboard token reference save persists only path metadata") {
             fs::absolute(token).lexically_normal().string());
     REQUIRE(metadata.dump().find(sentinel) == std::string::npos);
     input.close();
+
+    const fs::path manager_owned_token =
+        paths.data_root / "credentials" / "lichess.token";
+    fs::create_directories(manager_owned_token.parent_path());
+    std::ofstream(manager_owned_token) << "NON_SECRET_FIXTURE_VALUE";
+    const auto require_manager_owned_rejection = [](const auto& operation) {
+        try {
+            operation();
+            FAIL("Manager-owned credential path was accepted");
+        } catch (const std::runtime_error& error) {
+            REQUIRE(
+                std::string(error.what()).find("outside Manager data") !=
+                std::string::npos);
+        }
+    };
+    require_manager_owned_rejection([&] {
+        static_cast<void>(SetupEngine::save_lichess_token_reference(
+            paths.data_root, manager_owned_token));
+    });
+    require_manager_owned_rejection([&] {
+        static_cast<void>(SetupEngine::import_path(
+            paths, "lichess_token_path", manager_owned_token));
+    });
     fs::remove_all(root);
 }
 

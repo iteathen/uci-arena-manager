@@ -350,7 +350,7 @@ json ControlPlane::submit(const json& raw_request, const std::string& actor) {
         if (action == "match.plan" || action == "tournament.plan") {
             return plan_match(request, actor);
         }
-        if (action == "bot.register" || action == "service.register" ||
+        if (action == "service.register" ||
             action == "health_probe.register") {
             return register_generic_resource(request, actor);
         }
@@ -527,9 +527,7 @@ json ControlPlane::plan_match(const json& request, const std::string& actor) {
 json ControlPlane::register_generic_resource(const json& request, const std::string& actor) {
     const std::string action = request.at("action");
     const std::string kind =
-        action == "bot.register"
-            ? "bot"
-            : action == "service.register" ? "managed_service" : "health_probe";
+        action == "service.register" ? "managed_service" : "health_probe";
     const json& parameters = request.at("parameters");
     json data;
     if (kind == "managed_service") {

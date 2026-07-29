@@ -2,7 +2,9 @@
 
 #include <sodium.h>
 
+#include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -126,6 +128,22 @@ bool within(const fs::path& root, const fs::path& candidate) {
         }
     }
     return normalized_candidate != normalized_root;
+}
+
+bool same_or_within(const fs::path& root, const fs::path& candidate) {
+    return fs::absolute(root).lexically_normal() ==
+               fs::absolute(candidate).lexically_normal() ||
+           within(root, candidate);
+}
+
+bool valid_lichess_account_name(const std::string& value) {
+    return !value.empty() && value.size() <= 64 &&
+           std::ranges::all_of(
+               value,
+               [](const unsigned char character) {
+                   return std::isalnum(character) != 0 ||
+                          character == '_' || character == '-';
+               });
 }
 
 std::string sha256_file(const fs::path& path) {
@@ -882,8 +900,9 @@ json ServiceCatalog::bot_profiles() {
             {"adapter_component_id", "lichess.adapter"},
             {"optional", true},
             {"capabilities",
-             {"account_probe", "status", "pause", "resume",
-              "scheduler", "challenge_policy"}},
+             {"account_probe", "startup_status", "enable_startup",
+              "disable_startup",
+               "scheduler", "challenge_policy"}},
         },
     });
 }
@@ -907,6 +926,7 @@ json ServiceCatalog::discover_bot(
     bool adapter_ready = false;
     bool configuration_ready = false;
     bool startup_installed = false;
+    std::optional<fs::path> adapter_root;
     json configuration = json::object();
     try {
         const InstalledComponent adapter =
@@ -915,6 +935,7 @@ json ServiceCatalog::discover_bot(
         candidate["component_version"] =
             adapter.receipt.value("component_version", "");
         static_cast<void>(verified_entrypoint(adapter, "adapter"));
+        adapter_root = adapter.active_root;
         adapter_ready = true;
         const std::string configuration_path =
             adapter.receipt.value("configuration_path", "");
@@ -1107,8 +1128,13 @@ json ServiceCatalog::discover_bot(
         "bot_transport_profile_unavailable",
         "Import a qualified Lichess transport profile.");
 
-    const bool token_ready = saved_locator_reference(
-        manager_data_root, "lichess_token_path").has_value();
+    const auto token_reference = saved_locator_reference(
+        manager_data_root, "lichess_token_path");
+    const bool token_inside_adapter =
+        token_reference.has_value() && adapter_root.has_value() &&
+        same_or_within(*adapter_root, *token_reference);
+    const bool token_ready =
+        token_reference.has_value() && !token_inside_adapter;
     if (token_ready) {
         candidate["token_reference_available"] = true;
     }
@@ -1117,8 +1143,12 @@ json ServiceCatalog::discover_bot(
         issues,
         "token_reference",
         token_ready,
-        "bot_token_reference_missing",
-        "Select a Lichess token-file reference before probing the account.");
+        token_inside_adapter
+            ? "bot_token_reference_not_external"
+            : "bot_token_reference_missing",
+        token_inside_adapter
+            ? "Move the Lichess token file outside the installed adapter and select it again."
+            : "Select a Lichess token-file reference before probing the account.");
     readiness["bot_account_probe"] = "not_verified";
     candidate["readiness"] = readiness;
     candidate["issues"] = issues;
@@ -1134,6 +1164,21 @@ json ServiceCatalog::discover_bot(
 json ServiceCatalog::probe_bot(
     const fs::path& manager_data_root,
     const ProcessSupervisor& process_supervisor) {
+    return probe_bot(
+        manager_data_root,
+        [&process_supervisor](
+            const fs::path& executable,
+            const fs::path& working_directory,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds timeout) {
+            return process_supervisor.run_json(
+                executable, working_directory, arguments, timeout);
+        });
+}
+
+json ServiceCatalog::probe_bot(
+    const fs::path& manager_data_root,
+    const BotCommandRunner& command_runner) {
     const fs::path receipts_root = manager_data_root / "receipts";
     const InstalledComponent adapter =
         installed_component(receipts_root, "lichess.adapter", true);
@@ -1146,6 +1191,10 @@ json ServiceCatalog::probe_bot(
         throw std::runtime_error(
             "a valid Lichess token-file reference is required");
     }
+    if (same_or_within(adapter.active_root, token_path)) {
+        throw std::runtime_error(
+            "the Lichess token file must be outside the installed adapter");
+    }
     const std::string configuration_path =
         adapter.receipt.value("configuration_path", "");
     if (configuration_path.empty() ||
@@ -1156,7 +1205,7 @@ json ServiceCatalog::probe_bot(
     }
     const fs::path adapter_entrypoint =
         verified_entrypoint(adapter, "adapter");
-    const json result = process_supervisor.run_json(
+    const json result = command_runner(
         verified_entrypoint(node, "node"),
         adapter.active_root,
         {
@@ -1170,7 +1219,12 @@ json ServiceCatalog::probe_bot(
         std::chrono::seconds(30));
     if (result.value("status", "") != "ready" ||
         !result.value("is_bot", false) ||
-        result.value("account", "").empty()) {
+        !result.contains("account") ||
+        !result.at("account").is_string() ||
+        !valid_lichess_account_name(
+            result.at("account").get_ref<const std::string&>()) ||
+        (result.contains("games") &&
+         !result.at("games").is_number_unsigned())) {
         throw std::runtime_error(
             "the adapter did not return a valid BOT account identity");
     }
@@ -1182,6 +1236,140 @@ json ServiceCatalog::probe_bot(
         {"is_bot", true},
         {"games", result.value("games", 0ULL)},
     };
+}
+
+json ServiceCatalog::control_bot(
+    const fs::path& manager_data_root,
+    const ProcessSupervisor& process_supervisor,
+    const std::string& action) {
+    return control_bot(
+        manager_data_root,
+        [&process_supervisor](
+            const fs::path& executable,
+            const fs::path& working_directory,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds timeout) {
+            return process_supervisor.run_json(
+                executable, working_directory, arguments, timeout);
+        },
+        action);
+}
+
+json ServiceCatalog::control_bot(
+    const fs::path& manager_data_root,
+    const BotCommandRunner& command_runner,
+    const std::string& action) {
+    if (action != "status" && action != "enable_startup" &&
+        action != "disable_startup") {
+        throw std::invalid_argument("unsupported BOT account-control action");
+    }
+    const fs::path receipts_root = manager_data_root / "receipts";
+    const InstalledComponent adapter =
+        installed_component(receipts_root, "lichess.adapter", true);
+    const InstalledComponent node =
+        installed_component(receipts_root, "node_runtime.private");
+    if (!adapter.receipt.contains("data_paths") ||
+        !adapter.receipt.at("data_paths").is_array() ||
+        adapter.receipt.at("data_paths").empty() ||
+        !adapter.receipt.at("data_paths").at(0).is_string()) {
+        throw std::runtime_error(
+            "the installed Lichess adapter has no managed runtime directory");
+    }
+    const fs::path runtime_directory = fs::absolute(
+        adapter.receipt.at("data_paths").at(0).get<std::string>())
+                                               .lexically_normal();
+    const fs::path adapter_entrypoint =
+        verified_entrypoint(adapter, "adapter");
+    const fs::path node_entrypoint = verified_entrypoint(node, "node");
+
+    std::vector<std::string> arguments{
+        adapter_entrypoint.string(),
+        "startup",
+    };
+    std::optional<std::string> account_name;
+    if (action == "enable_startup") {
+        if (discover_bot(manager_data_root).at("candidates").at(0).at("state") !=
+            "ready_to_probe") {
+            throw std::runtime_error(
+                "every BOT readiness prerequisite is required before startup");
+        }
+        const json probe = probe_bot(manager_data_root, command_runner);
+        account_name = probe.at("account_name").get<std::string>();
+        const std::string configuration_path =
+            adapter.receipt.value("configuration_path", "");
+        const fs::path token_path =
+            saved_locator_reference(manager_data_root, "lichess_token_path")
+                .value_or(fs::path{});
+        if (configuration_path.empty() || token_path.empty()) {
+            throw std::runtime_error(
+                "BOT startup configuration is incomplete");
+        }
+        arguments.insert(
+            arguments.end(),
+            {
+                "install",
+                "--config",
+                configuration_path,
+                "--token-file",
+                token_path.string(),
+                "--expected-account",
+                *account_name,
+                "--runtime-dir",
+                runtime_directory.string(),
+            });
+    } else {
+        arguments.push_back(
+            action == "disable_startup" ? "uninstall" : "status");
+        if (action == "disable_startup") {
+            arguments.insert(
+                arguments.end(),
+                {"--runtime-dir", runtime_directory.string()});
+        }
+    }
+
+    const json result = command_runner(
+        node_entrypoint,
+        adapter.active_root,
+        arguments,
+        action == "enable_startup"
+            ? std::chrono::minutes(5)
+            : std::chrono::seconds(30));
+    if (result.value("status", "") != "ready" ||
+        !result.contains("startup") ||
+        !result.at("startup").is_object() ||
+        !result.at("startup").contains("installed") ||
+        !result.at("startup").at("installed").is_boolean()) {
+        throw std::runtime_error(
+            "the provider returned invalid BOT startup status");
+    }
+    const json& startup = result.at("startup");
+    const bool installed = startup.at("installed").get<bool>();
+    if (action == "enable_startup" && !installed) {
+        throw std::runtime_error(
+            "the provider did not install BOT startup");
+    }
+    if (action == "disable_startup" && installed) {
+        throw std::runtime_error(
+            "the provider did not remove BOT startup");
+    }
+    const std::string provider_active =
+        startup.value("active", std::string{});
+    const std::string task_status =
+        startup.value("taskStatus", std::string{});
+    const bool active =
+        provider_active == "active" ||
+        task_status == "Running";
+    json response{
+        {"schema", "arena_bot_control_result_v1"},
+        {"schema_version", 1},
+        {"state", !installed ? "disabled" : active ? "active" : "enabled"},
+        {"installed", installed},
+        {"active", active},
+    };
+    if (account_name.has_value()) {
+        response["account_name"] = *account_name;
+    }
+    return response;
 }
 
 }  // namespace arena::application

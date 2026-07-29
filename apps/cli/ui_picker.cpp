@@ -500,6 +500,80 @@ void run_ui_picker(
             }
         },
         {drogon::Post, drogon::Options});
+    application.registerHandler(
+        "/v1/bot-control",
+        [bearer_token, dashboard_origin, manager_data_root](
+            const drogon::HttpRequestPtr& request,
+            std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+            if (request->method() == drogon::Options) {
+                if (request->getHeader("Origin") != dashboard_origin) {
+                    callback(json_response(
+                        problem("origin_rejected", "Dashboard origin is not authorized"),
+                        drogon::k403Forbidden,
+                        dashboard_origin));
+                    return;
+                }
+                callback(json_response(
+                    json::object(), drogon::k204NoContent, dashboard_origin));
+                return;
+            }
+            if (request->getHeader("Origin") != dashboard_origin ||
+                request->getHeader("Authorization") !=
+                    "Bearer " + bearer_token) {
+                callback(json_response(
+                    problem(
+                        "picker_unauthorized",
+                        "Interactive-user helper session is unavailable"),
+                    drogon::k401Unauthorized,
+                    dashboard_origin));
+                return;
+            }
+            try {
+                if (request->body().size() > 1024) {
+                    throw std::invalid_argument("helper request is too large");
+                }
+                const json input = json::parse(request->body());
+                if (!input.is_object() || input.size() != 2 ||
+                    input.value("schema", "") !=
+                        "arena_ui_bot_control_request_v1" ||
+                    !input.contains("action") ||
+                    !input.at("action").is_string()) {
+                    throw std::invalid_argument(
+                        "invalid BOT account-control request");
+                }
+                arena::application::ProcessSupervisor process;
+                callback(json_response(
+                    arena::application::ServiceCatalog::control_bot(
+                        manager_data_root,
+                        process,
+                        input.at("action").get<std::string>()),
+                    drogon::k200OK,
+                    dashboard_origin));
+            } catch (const std::invalid_argument&) {
+                callback(json_response(
+                    problem(
+                        "invalid_bot_control_request",
+                        "Interactive BOT account-control request is invalid"),
+                    drogon::k400BadRequest,
+                    dashboard_origin));
+            } catch (const json::exception&) {
+                callback(json_response(
+                    problem(
+                        "invalid_bot_control_request",
+                        "Interactive BOT account-control request is invalid"),
+                    drogon::k400BadRequest,
+                    dashboard_origin));
+            } catch (const std::exception&) {
+                callback(json_response(
+                    problem(
+                        "bot_control_failed",
+                        "The verified adapter could not complete BOT startup control. "
+                        "Refresh status and review the visible readiness blockers."),
+                    drogon::k422UnprocessableEntity,
+                    dashboard_origin));
+            }
+        },
+        {drogon::Post, drogon::Options});
     application.addListener("127.0.0.1", port);
     application.setThreadNum(1);
     application.disableSigtermHandling();
