@@ -137,6 +137,10 @@ test("release workflow delegates platform packaging to the canonical clean build
     path.join(repositoryRoot, ".github", "workflows", "ci.yml"),
     "utf8",
   );
+  assert.match(
+    integrationWorkflow,
+    /concurrency:\s+group: ci-\$\{\{ github\.workflow \}\}-\$\{\{ github\.event\.pull_request\.number \|\| github\.ref \}\}\s+cancel-in-progress: true/u,
+  );
   const nativeJob = integrationWorkflow.match(
     /^  native:[\s\S]*?(?=^  dependency-review:)/mu,
   )?.[0] ?? "";

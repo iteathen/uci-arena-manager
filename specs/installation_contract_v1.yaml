@@ -306,6 +306,10 @@ packaging:
     source_requirement: clean_tracked_worktree
     behavior:
       - Run specification and model/product naming gates before compilation.
+      - Pull-request CI groups runs by workflow and pull-request number and
+        cancels superseded commits. The newest commit still runs the complete
+        Windows and Linux clean-build matrix; release workflow runs are never
+        cancelled merely because another release was requested.
       - Build the dashboard, configure the native release preset, clean native
         outputs before rebuilding, run native tests, and invoke the existing
         CPack deployment generators.
