@@ -230,6 +230,8 @@ if(ARENA_ENABLE_PACKAGING)
       "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/ServicePatch.xml")
   else()
     set(CPACK_GENERATOR "DEB;RPM;TGZ")
+    set(CPACK_PACKAGE_FILE_NAME
+      "uci-arena-manager-${PROJECT_VERSION}-linux-x86_64")
     set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
     set(CPACK_RPM_FILE_NAME
       "uci-arena-manager-${PROJECT_VERSION}-1.x86_64.rpm")

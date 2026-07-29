@@ -8,7 +8,8 @@
     "schema", "component_id", "component_version", "target_triple",
     "artifact_name", "artifact_sha256", "artifact_size_bytes",
     "component_manifest_sha256", "source_repository", "source_commit",
-    "source_tree_sha256", "clean_tree", "workflow_identity",
+    "source_tree_sha256", "clean_tree", "release_authority",
+    "suite_installer_authority", "workflow_identity",
     "toolchain_identity", "dependency_lock_identities", "build_flags",
     "sbom_sha256", "licenses_sha256", "tests"
   ],
@@ -32,6 +33,8 @@
     "source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "source_tree_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "clean_tree": {"const": true},
+    "release_authority": {"const": "provider_component_only"},
+    "suite_installer_authority": {"const": "iteathen/uci-arena-manager"},
     "workflow_identity": {"type": "string"},
     "toolchain_identity": {"type": "object"},
     "dependency_lock_identities": {"type": "object"},

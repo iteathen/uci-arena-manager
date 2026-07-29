@@ -61,26 +61,11 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
         working-directory: web
-      - run: npm test
-        working-directory: web
-      - run: npm run build
-        working-directory: web
       - uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57
         if: runner.os == 'Windows'
       - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
         with:
           vcpkgGitCommitId: cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3
-      - name: Configure, build, and test Manager Core
-        shell: pwsh
-        run: |
-          if ('${{ vars.TUF_ROOT_SHA256 }}' -notmatch '^[0-9a-f]{64}$') {
-            throw 'TUF_ROOT_SHA256 must pin the exact offline-root metadata'
-          }
-          cmake --preset '${{ matrix.preset }}' `
-            "-DARENA_VERSION=${{ needs.validate.outputs.version }}" `
-            "-DARENA_TUF_ROOT_SHA256=${{ vars.TUF_ROOT_SHA256 }}"
-          cmake --build --preset '${{ matrix.preset }}'
-          ctest --preset '${{ matrix.preset }}'
       - name: Install pinned WiX toolset
         if: runner.os == 'Windows'
         run: |
@@ -89,6 +74,16 @@ jobs:
       - name: Install Linux package validators
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y lintian rpm rpmlint
+      - name: Clean build and verify platform installers
+        shell: pwsh
+        run: |
+          if ('${{ vars.TUF_ROOT_SHA256 }}' -notmatch '^[0-9a-f]{64}$') {
+            throw 'TUF_ROOT_SHA256 must pin the exact offline-root metadata'
+          }
+          node tools/release/clean-build.mjs `
+            --platform '${{ matrix.target }}' `
+            --version '${{ needs.validate.outputs.version }}' `
+            --tuf-root-sha256 '${{ vars.TUF_ROOT_SHA256 }}'
       - name: Stage Manager Core
         shell: pwsh
         run: |
@@ -100,28 +95,6 @@ jobs:
             --target '${{ matrix.target }}' `
             --output "dist/uci-arena-manager-${{ needs.validate.outputs.version }}-${{ matrix.target }}.tar.gz" `
             --source-date-epoch "$epoch"
-      - name: Build native packages
-        shell: pwsh
-        run: |
-          Push-Location "build/${{ matrix.preset }}"
-          if ('${{ runner.os }}' -eq 'Windows') {
-            cpack -C Release -G WIX
-            cpack -C Release -G ZIP
-          } else {
-            cpack -G DEB
-            cpack -G RPM
-            cpack -G TGZ
-          }
-          Pop-Location
-          $platformDirectory = if ('${{ runner.os }}' -eq 'Windows') {
-            'dist/windows'
-          } else {
-            'dist/linux'
-          }
-          New-Item -ItemType Directory -Force $platformDirectory | Out-Null
-          Get-ChildItem "build/${{ matrix.preset }}" -File |
-            Where-Object { $_.Extension -in @('.msi','.zip','.deb','.rpm','.gz') } |
-            Copy-Item -Destination $platformDirectory
       - name: Validate Linux native packages
         if: runner.os == 'Linux'
         shell: bash

@@ -253,6 +253,8 @@ export function validateLockedProviderResult(
   const isFileSet =
     (component.artifact_type ?? "archive") === "file_set";
   if (result.schema !== "arena_provider_release_result_v1"
+      || result.release_authority !== "provider_component_only"
+      || result.suite_installer_authority !== "iteathen/uci-arena-manager"
       || result.component_id !== component.component_id
       || result.target_triple !== component.target_triple
       || result.source_commit !== component.source_commit
