@@ -13,9 +13,18 @@ profile:
   authentication: token_file_reference
 
 token_reference:
+  ownership: permanent_operator_external_file
   selection_owner: interactive_user_native_picker
   persistence_owner: manager_locator_store
   rules:
+    - Installers, packages, repositories, release artifacts, tests, and
+      Manager state never contain a Lichess API credential.
+    - Each local installation supplies its own external token file and may
+      replace the saved path reference without modifying installed payloads.
+    - A token path under Manager-owned data or the verified provider component
+      root is rejected; neither location may become credential storage.
+    - Discovery exposes an external-token-path blocker before probe or startup
+      when a legacy locator points into the verified provider component.
     - The dashboard can select and replace the token-file reference without a terminal.
     - The authenticated Manager mutation receives and stores only the normalized path.
     - Manager validation uses filesystem metadata only and never opens, hashes, copies,
@@ -45,6 +54,26 @@ probe:
     - A non-BOT account is rejected.
     - Probe output never includes token material, headers, URLs with credentials,
       raw provider responses, or the token-file path.
+
+account_control:
+  owner: verified_provider_adapter_under_interactive_user_helper
+  transport: authenticated_ephemeral_loopback_helper
+  actions: [status, enable_startup, disable_startup]
+  output_allowlist: [state, installed, active, account_name]
+  rules:
+    - Status and disable resolve only receipt-verified adapter and runtime
+      entrypoints and never require or open the token file.
+    - Enable requires every non-probe readiness dimension and performs a fresh
+      BOT-only account probe before installing provider-owned per-user startup.
+    - The account identity passed to startup comes only from that fresh probe;
+      the dashboard cannot supply or override it.
+    - Provider startup output is reduced to the output allowlist. Raw task,
+      service, path, command, environment, provider response, and credential
+      fields never reach the dashboard.
+    - Helper shutdown removes account-control authority without stopping an
+      already installed provider startup.
+    - A generic bot.register command is forbidden because it could create
+      account state without the verified adapter probe.
 
 options:
   groups:
@@ -81,17 +110,33 @@ readiness:
       - ready_to_probe requires every prerequisite except bot_account_probe.
       - The interactive probe result may project bot_account_probe as verified
         for the current launcher session, but it does not enable startup.
+      - Provider-reported helper status is the live startup authority for the
+        current interactive session. Installer receipt state is only a startup
+        hint and must not overwrite a newer helper observation.
   rule: Missing readiness never appears as active.
 
 lifecycle:
   startup_owner: provider_per_user
-  manager_actions: [status, pause, resume]
-  explicit_user_actions: [register, configure, enable_startup, disable_startup, remove]
+  manager_actions: [status, enable_startup, disable_startup]
+  explicit_user_actions:
+    - select_or_replace_token_reference
+    - verify_account
+    - refresh_startup_status
+    - enable_startup
+    - disable_startup
   duplicate_daemon: forbidden
 
 acceptance:
   - A Complete Arena install shows the adapter as installed but disabled.
   - A token-file reference can be selected without Manager or installer reading it.
   - The account probe discovers one BOT account and rejects a normal account.
+  - Startup enablement performs a fresh probe and cannot accept an
+    account name from the browser.
+  - Startup status, enable, and disable remain available without a terminal
+    while the authenticated desktop helper is running.
+  - A stale installer receipt cannot make active provider startup appear
+    disabled after helper status succeeds.
   - Every missing safety prerequisite is visible before startup.
   - No happy-path bot setup step requires a terminal command.
+  - Automated HTTP integration uses a loopback fake Lichess API with a
+    non-secret fixture token and never requires an operator credential.

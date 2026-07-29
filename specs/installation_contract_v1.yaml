@@ -531,6 +531,9 @@ local_import:
     - Installing Evidence Service projects explicit timing-profile locators through its public profile-list command.
     - Managed-copy opening books reject symbolic links, nested directories, and payloads larger than the declared maximum.
     - Lichess token contents are never opened, hashed, copied, logged, returned, or placed in argv.
+    - A Lichess token locator must reference an operator-owned file outside
+      Manager-owned data and immutable installed component roots. Saving a
+      token file under Manager data is rejected before locator persistence.
     - Book Forge receives an imported Lichess credential only as the saved
       token-file path in its generated provider configuration. The installer
       never opens the referenced file, and a later token-path import

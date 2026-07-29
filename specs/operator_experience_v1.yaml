@@ -126,12 +126,22 @@ bot_experience:
   requirements:
     - Replace the generic bot table with install, detection, account probe,
       readiness, options, and lifecycle views.
-    - Use a token-file path only until broader account management is specified.
+    - Use an operator-owned token-file path permanently. Local installations
+      provide their own credential; repositories, packages, tests, and Manager
+      state never contain one.
     - Detect and reject non-BOT accounts through the verified adapter.
     - Default engine selection to the verified uci_arena.engine component and
       show its model package separately.
     - Show every engine, knowledge, evidence, capacity, transport, credential,
       and startup blocker without claiming the bot is active.
+    - Show provider-owned startup as disabled, enabled, active, or unavailable
+      from the authenticated interactive-user helper; do not infer live state
+      from catalog availability or a stale installer receipt.
+    - Offer typed Refresh status, Enable startup, and Disable startup controls
+      without a terminal. Enablement performs a fresh BOT probe and never lets
+      the browser provide the account identity.
+    - Explain that closing the desktop helper removes account-control
+      authority but does not stop provider-owned startup.
 
 knowledge_asset_setup:
   location: configuration

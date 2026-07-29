@@ -1,13 +1,14 @@
 import { IconRefresh, IconRobot } from '@tabler/icons-react'
 import { Alert, Badge, Button, Code, Group, Paper, SimpleGrid, Stack, Text, ThemeIcon, Title } from '@mantine/core'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { api, probeLocalBot } from '../api/client'
+import { api, controlLocalBot, probeLocalBot } from '../api/client'
 import type { BotCandidate } from '../api/types'
 import { PageHeader } from '../components/PageHeader'
 import { PathPickerInput } from '../components/PathPickerInput'
 
 export function BotsPage() {
+  const queryClient = useQueryClient()
   const profiles = useQuery({ queryKey: ['bot-profiles'], queryFn: api.botProfiles })
   const candidates = useQuery({ queryKey: ['bot-candidates'], queryFn: api.botCandidates })
   const [tokenPath, setTokenPath] = useState('')
@@ -20,9 +21,26 @@ export function BotsPage() {
   })
   const probe = useMutation({ mutationFn: probeLocalBot })
   const candidate = candidates.data?.candidates[0]
+  const startup = useQuery({
+    queryKey: ['bot-startup'],
+    queryFn: () => controlLocalBot('status'),
+    enabled: candidate?.package_state === 'installed',
+    retry: false,
+  })
+  const startupControl = useMutation({
+    mutationFn: controlLocalBot,
+    onSuccess: (result) => {
+      queryClient.setQueryData(['bot-startup'], result)
+    },
+  })
+  const observedStartup = startup.data
+  const startupInstalled = observedStartup?.installed === true
   const readiness: BotCandidate['readiness'] = {
     ...(candidate?.readiness ?? {}),
     ...(probe.data ? { bot_account_probe: 'verified' as const } : {}),
+    ...(observedStartup
+      ? { startup: observedStartup.installed ? 'enabled' as const : 'disabled' as const }
+      : {}),
   }
   const readinessLabels: Record<string, string> = {
     verified_adapter: 'Verified adapter',
@@ -88,7 +106,7 @@ export function BotsPage() {
             </Group>
             <PathPickerInput
               label="Lichess token file"
-              description="Only the path is saved. Manager never opens, copies, hashes, logs, or returns the token."
+              description="Select an operator-owned file outside Manager data and the installed adapter. Only its path is saved."
               placeholder="Select the existing token file"
               value={tokenPath}
               onChange={setTokenPath}
@@ -107,7 +125,14 @@ export function BotsPage() {
             </Group>
             <Group justify="space-between">
               <Text size="sm">Startup</Text>
-              <Code>{candidate?.startup_state ?? 'checking'}</Code>
+              <Code>
+                {observedStartup?.state ??
+                  (startup.isError
+                    ? 'helper unavailable'
+                    : candidate
+                      ? `receipt hint: ${candidate.startup_state}`
+                      : 'checking')}
+              </Code>
             </Group>
             {candidate?.issues.map((issue) => (
               <Alert key={issue.code} color="orange" title={issue.code}>
@@ -122,12 +147,36 @@ export function BotsPage() {
               </Alert>
             )}
             {probe.error && <Alert color="red">{probe.error.message}</Alert>}
+            {startup.error && (
+              <Alert color="blue">
+                Live BOT startup status requires the desktop launcher helper.
+              </Alert>
+            )}
+            {startupControl.error && (
+              <Alert color="red">{startupControl.error.message}</Alert>
+            )}
             {probe.data && (
               <Alert color="green" title="BOT account verified">
                 {probe.data.account_name} · {probe.data.games} games
               </Alert>
             )}
-            <Group justify="flex-end">
+            {startupControl.data?.account_name && (
+              <Alert color="green" title="BOT startup enabled">
+                {startupControl.data.account_name}
+              </Alert>
+            )}
+            <Group justify="space-between">
+              <Button
+                variant="default"
+                loading={startup.isFetching}
+                disabled={candidate?.package_state !== 'installed'}
+                onClick={() => {
+                  startupControl.reset()
+                  void startup.refetch()
+                }}
+              >
+                Refresh startup status
+              </Button>
               <Button
                 loading={probe.isPending}
                 disabled={candidate?.state !== 'ready_to_probe'}
@@ -136,6 +185,32 @@ export function BotsPage() {
                 Verify BOT account
               </Button>
             </Group>
+            <Group justify="flex-end">
+              <Button
+                variant="default"
+                loading={startupControl.isPending}
+                disabled={!observedStartup || !startupInstalled}
+                onClick={() => startupControl.mutate('disable_startup')}
+              >
+                Disable startup
+              </Button>
+              <Button
+                loading={startupControl.isPending}
+                disabled={
+                  !observedStartup ||
+                  candidate?.state !== 'ready_to_probe' ||
+                  startupInstalled
+                }
+                onClick={() => startupControl.mutate('enable_startup')}
+              >
+                Enable startup
+              </Button>
+            </Group>
+            <Text size="xs" c="dimmed">
+              Startup is owned by the verified provider under your desktop session.
+              Closing this Manager window removes control authority but does not stop an
+              enabled bot.
+            </Text>
           </Stack>
         </Paper>
         <Paper withBorder className="panel" p="lg">

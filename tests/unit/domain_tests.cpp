@@ -4,8 +4,12 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <array>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <vector>
 
 namespace {
 
@@ -66,6 +70,94 @@ void write_installed_component(
             {"artifact_sha256", std::string(64, 'a')},
             {"data_paths", std::move(paths)},
         });
+}
+
+void write_ready_bot_fixture(const fs::path& root) {
+    const fs::path data = root / "data";
+    const fs::path install = root / "install";
+    write_installed_component(
+        data, install, "node_runtime.private", "node", "bin/node");
+    write_installed_component(
+        data,
+        install,
+        "uci_arena.engine",
+        "uci",
+        "bin/uci_arena_engine",
+        {},
+        {
+            {"default_model",
+             {
+                 {"model_id", "qualified-model-v1"},
+                 {"display_name", "Qualified Model"},
+                 {"input_adapter_id", "qualified_dense_planes_v1"},
+             }},
+        });
+    write_installed_component(
+        data,
+        install,
+        "opening_book.standard",
+        "book",
+        "opening_books/default.bin");
+    write_installed_component(
+        data,
+        install,
+        "syzygy.wdl.3-4-5",
+        "tablebase",
+        "tablebases/KQvK.rtbw");
+    write_installed_component(
+        data,
+        install,
+        "lichess.adapter",
+        "adapter",
+        "app/adapter.mjs",
+        {root / "workspaces" / "lichess-adapter"});
+
+    const std::array<std::pair<std::string, fs::path>, 5> locators{{
+        {"timing_profile", root / "uci_time_profile_v3.json"},
+        {"lichess_single_game_profile",
+         root / "uci_arena_single_game_profile_v1.json"},
+        {"lichess_capacity_profile",
+         root / "uci_arena_lichess_capacity_profile_v1.json"},
+        {"lichess_transport_profile", root / "transport_profile_v2.json"},
+        {"lichess_token_path", root / "operator-token.txt"},
+    }};
+    for (const auto& [kind, path] : locators) {
+        std::ofstream(path) << "fixture";
+        write_json(
+            data / "locators" / (kind + ".json"),
+            {
+                {"schema", "arena_saved_locator_v1"},
+                {"schema_version", 1},
+                {"kind", kind},
+                {"mode", "in_place_reference"},
+                {"path", path.string()},
+                {"validation", json::object()},
+            });
+    }
+    const fs::path configuration =
+        root / "workspaces" / "lichess-adapter" / "manager-config.json";
+    write_json(
+        configuration,
+        {
+            {"engine",
+             {
+                 {"time_profile", locators.at(0).second.string()},
+                 {"single_game_profile", locators.at(1).second.string()},
+             }},
+            {"capacity",
+             {
+                 {"capacity_profile", locators.at(2).second.string()},
+                 {"total_slots", 1},
+             }},
+            {"timing",
+             {{"transport_profile_path", locators.at(3).second.string()}}},
+            {"challenges", {{"accept", true}}},
+            {"scheduler", {{"enabled", false}}},
+        });
+    json receipt = read_json(data / "receipts" / "lichess.adapter.json");
+    receipt["state"] = "installed_disabled";
+    receipt["configuration_path"] = configuration.string();
+    write_json(data / "receipts" / "lichess.adapter.json", receipt);
 }
 
 }  // namespace
@@ -462,6 +554,141 @@ TEST_CASE("Lichess bot discovery becomes probe-ready only with exact visible pre
     REQUIRE(
         candidate.at("default_model").at("display_name") ==
         "Qualified Model");
+    fs::remove_all(root);
+}
+
+TEST_CASE("Lichess BOT control re-probes identity and returns only sanitized startup state") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-bot-control-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(root);
+    std::vector<std::vector<std::string>> calls;
+    const auto runner =
+        [&calls](
+            const fs::path&,
+            const fs::path&,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds) {
+            calls.push_back(arguments);
+            if (arguments.size() > 1 && arguments.at(1) == "probe") {
+                return json{
+                    {"status", "ready"},
+                    {"account", "VerifiedArenaBot"},
+                    {"is_bot", true},
+                    {"games", 17U},
+                    {"authorization", "MUST_NOT_ESCAPE"},
+                    {"token_path", "MUST_NOT_ESCAPE"},
+                };
+            }
+            return json{
+                {"status", "ready"},
+                {"startup",
+                 {
+                     {"installed", true},
+                     {"started", true},
+                     {"taskStatus", "Running"},
+                     {"command", "MUST_NOT_ESCAPE"},
+                     {"unitPath", "MUST_NOT_ESCAPE"},
+                 }},
+            };
+        };
+
+    const json result = arena::application::ServiceCatalog::control_bot(
+        root / "data", runner, "enable_startup");
+    REQUIRE(result.at("schema") == "arena_bot_control_result_v1");
+    REQUIRE(result.at("state") == "active");
+    REQUIRE(result.at("account_name") == "VerifiedArenaBot");
+    REQUIRE(result.dump().find("MUST_NOT_ESCAPE") == std::string::npos);
+    REQUIRE(calls.size() == 2);
+    REQUIRE(calls.at(0).at(1) == "probe");
+    REQUIRE(calls.at(1).at(1) == "startup");
+    REQUIRE(calls.at(1).at(2) == "install");
+    REQUIRE(
+        std::find(
+            calls.at(1).begin(),
+            calls.at(1).end(),
+            "VerifiedArenaBot") != calls.at(1).end());
+    fs::remove_all(root);
+}
+
+TEST_CASE("Lichess BOT status and disable never require credential arguments") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-bot-disable-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(root);
+    std::vector<std::vector<std::string>> calls;
+    const auto runner =
+        [&calls](
+            const fs::path&,
+            const fs::path&,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds) {
+            calls.push_back(arguments);
+            const bool uninstall =
+                arguments.size() > 2 && arguments.at(2) == "uninstall";
+            return json{
+                {"status", "ready"},
+                {"startup",
+                 {
+                     {"installed", !uninstall},
+                     {"taskStatus", "Ready"},
+                 }},
+            };
+        };
+
+    const json status = arena::application::ServiceCatalog::control_bot(
+        root / "data", runner, "status");
+    const json disabled = arena::application::ServiceCatalog::control_bot(
+        root / "data", runner, "disable_startup");
+    REQUIRE(status.at("state") == "enabled");
+    REQUIRE(status.at("active") == false);
+    REQUIRE(disabled.at("state") == "disabled");
+    REQUIRE(calls.size() == 2);
+    for (const auto& arguments : calls) {
+        REQUIRE(
+            std::find(arguments.begin(), arguments.end(), "--token-file") ==
+            arguments.end());
+        REQUIRE(
+            std::find(
+                arguments.begin(),
+                arguments.end(),
+                "--expected-account") == arguments.end());
+    }
+    REQUIRE_THROWS_AS(
+        arena::application::ServiceCatalog::control_bot(
+            root / "data", runner, "register"),
+        std::invalid_argument);
+    fs::remove_all(root);
+}
+
+TEST_CASE("Lichess BOT discovery rejects a credential inside the installed adapter") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-bot-external-token-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(root);
+    const json adapter_receipt =
+        read_json(root / "data" / "receipts" / "lichess.adapter.json");
+    const fs::path adapter_root =
+        adapter_receipt.at("active_root").get<std::string>();
+    const fs::path legacy_token = adapter_root / "app" / "adapter.mjs";
+    write_json(
+        root / "data" / "locators" / "lichess_token_path.json",
+        {
+            {"schema", "arena_saved_locator_v1"},
+            {"schema_version", 1},
+            {"kind", "lichess_token_path"},
+            {"mode", "in_place_reference"},
+            {"path", legacy_token.string()},
+            {"validation", json::object()},
+        });
+
+    const json discovery =
+        arena::application::ServiceCatalog::discover_bot(root / "data");
+    const json& candidate = discovery.at("candidates").at(0);
+    REQUIRE(candidate.at("state") == "blocked");
+    REQUIRE(candidate.at("token_reference_available") == false);
+    REQUIRE(candidate.at("issues").dump().find(
+                "bot_token_reference_not_external") != std::string::npos);
     fs::remove_all(root);
 }
 

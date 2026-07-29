@@ -87,10 +87,17 @@ bot_contract:
     - observed_state
     - health
   invariants:
+    - Every installation supplies an operator-owned token file outside the
+      repository and installed immutable component roots.
     - Account identity comes from the verified adapter's BOT-only account probe.
     - Credential contents never enter Manager state, APIs, logs, argv, or receipts.
     - Discovery, probing, and installation never register or start a bot.
     - Provider-owned per-user startup cannot be duplicated by Manager.
+    - The bot account is a verified adapter projection, not a generic resource
+      that can be created through bot.register.
+    - Startup enablement is an explicit interactive-user action and repeats
+      the BOT-only account probe before invoking the receipt-verified provider
+      startup adapter.
 
 local_match_planner:
   supported:

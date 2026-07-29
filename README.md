@@ -140,6 +140,15 @@ dashboard. Readiness is projected separately for the adapter runtime, verified
 UCI Arena Engine and default model, opening book, Syzygy, timing, single-game,
 capacity and transport evidence, token reference, account probe, and provider
 startup; a missing dimension is never collapsed into a generic active state.
+Every installation supplies its own operator-owned token file outside the
+repository, Manager data, and installed provider component. Manager stores only
+the normalized external path and rejects a file placed under Manager-owned data.
+The same desktop-helper session provides **Refresh startup status**, **Enable
+startup**, and **Disable startup** controls. Enablement repeats the BOT-only
+account probe and uses that verified identity; the browser cannot provide an
+account name. Status and disable do not open the token file. Closing the
+desktop helper removes control authority but does not stop provider-owned
+startup that is already enabled.
 
 ## Installer and releases
 

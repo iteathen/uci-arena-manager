@@ -210,6 +210,18 @@ bool within(const fs::path& root, const fs::path& candidate) {
     return normalized_candidate != normalized_root;
 }
 
+void require_external_token_path(
+    const fs::path& manager_data_root,
+    const fs::path& token_path) {
+    const fs::path normalized_data_root = normalized_absolute(manager_data_root);
+    const fs::path normalized_token_path = normalized_absolute(token_path);
+    if (normalized_token_path == normalized_data_root ||
+        within(normalized_data_root, normalized_token_path)) {
+        throw std::runtime_error(
+            "Lichess token file must be operator-owned and outside Manager data");
+    }
+}
+
 bool safe_relative_path(const fs::path& path) {
     if (path.empty() || path.is_absolute() || path.has_root_name()) {
         return false;
@@ -2878,6 +2890,9 @@ json SetupEngine::inventory(const SetupPaths& paths, const std::vector<fs::path>
 json SetupEngine::import_path(const SetupPaths& paths, const std::string& kind,
                               const fs::path& path, const bool managed_copy) {
     const fs::path normalized = normalized_absolute(path);
+    if (kind == "lichess_token_path") {
+        require_external_token_path(paths.data_root, normalized);
+    }
     const json validation = validate_import_locator(kind, normalized);
     if (kind == "lichess_single_game_profile") {
         json result = copy_managed_lichess_profile(paths, normalized, validation);
@@ -2958,6 +2973,7 @@ json SetupEngine::save_lichess_token_reference(
     const fs::path& data_root,
     const fs::path& path) {
     const fs::path normalized = normalized_absolute(path);
+    require_external_token_path(data_root, normalized);
     const json validation =
         validate_import_locator("lichess_token_path", normalized);
     write_json_atomic(
