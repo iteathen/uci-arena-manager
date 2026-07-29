@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uci-arena.example/schemas/manager-service-api.schema.json",
+  "title": "uci_arena_manager_service_api_v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "version",
+    "transport",
+    "entrypoint",
+    "arguments",
+    "operations",
+    "output_schema"
+  ],
+  "properties": {
+    "schema": {"const": "uci_arena_manager_service_api_v1"},
+    "version": {"type": "string", "pattern": "^1\\.[0-9]+$"},
+    "transport": {"const": "cli_json"},
+    "entrypoint": {"const": "cli"},
+    "arguments": {
+      "type": "array",
+      "prefixItems": [{"const": "api"}],
+      "minItems": 1,
+      "maxItems": 1
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "describe",
+          "status",
+          "outputs_list",
+          "outputs_inspect",
+          "config_validate"
+        ]
+      },
+      "minItems": 5,
+      "maxItems": 5,
+      "uniqueItems": true
+    },
+    "output_schema": {"const": "uci_arena_service_output_v1"}
+  }
+}

@@ -96,7 +96,9 @@ TEST_CASE("Book Forge and Evidence outputs cross only validated public contracts
         REQUIRE(evidence_data.at("observed_state") == "running");
         const json& dataset =
             evidence_data.at("output_integration").at("datasets").at(0);
-        REQUIRE(dataset.at("id") == "dataset-1");
+        REQUIRE(
+            dataset.at("id") ==
+            "123e4567-e89b-42d3-a456-426614174000");
         REQUIRE(dataset.at("observation_count") == 12);
         REQUIRE(dataset.at("authority").at("password") == "[REDACTED]");
         REQUIRE_FALSE(dataset.contains("observations"));
@@ -116,6 +118,33 @@ TEST_CASE("Book Forge and Evidence outputs cross only validated public contracts
         REQUIRE(
             timing_profile.at("permissions")
                 .at("provider_safety_qualified") == true);
+        REQUIRE(
+            evidence_data.at("manager_api_projection").at("schema") ==
+            "uci_arena_manager_service_api_v1");
+    }
+    fs::remove_all(root);
+}
+
+TEST_CASE("Manager service API rejects an unknown major before output integration") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-service-api-major-" + arena::domain::uuid_v7());
+    fs::create_directories(root);
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(
+            root / "arena.db");
+        arena::application::ControlPlane control_plane(store);
+        control_plane.initialize();
+
+        const json result = register_and_status(
+            control_plane, root, "book_forge", "book-bad-major.mjs");
+        const json& data = result.at("resource").at("data");
+        REQUIRE(data.at("integration_state") == "incompatible");
+        REQUIRE(data.at("observed_state") == "degraded");
+        REQUIRE_FALSE(data.contains("output_integration"));
+        REQUIRE(
+            data.at("health").at("reason") ==
+            "service Manager API envelope is incompatible");
     }
     fs::remove_all(root);
 }

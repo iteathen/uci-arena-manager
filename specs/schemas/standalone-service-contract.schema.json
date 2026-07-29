@@ -24,6 +24,9 @@
     "cli_entrypoint": {"type": "string", "minLength": 1},
     "configuration_schema": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
     "status_schema": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+    "manager_integration_api": {
+      "$ref": "manager-service-api.schema.json"
+    },
     "capabilities": {
       "type": "array",
       "items": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},

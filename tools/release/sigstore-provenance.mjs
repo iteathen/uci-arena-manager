@@ -177,6 +177,7 @@ export function verifyProviderProvenance(
   {
     cosignExecutable = "cosign",
     execute = execFileSync,
+    providerRepository = "iteathen/UCI_Arena",
   } = {},
 ) {
   const actualStatement = readBundleStatement(bundlePath);
@@ -195,7 +196,7 @@ export function verifyProviderProvenance(
     "--certificate-oidc-issuer",
     component.provenance_oidc_issuer,
     "--certificate-github-workflow-repository",
-    "iteathen/UCI_Arena",
+    providerRepository,
     "--certificate-github-workflow-sha",
     component.source_commit,
     "--certificate-github-workflow-name",

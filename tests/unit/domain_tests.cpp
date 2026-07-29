@@ -28,6 +28,23 @@ json read_json(const fs::path& path) {
     return value;
 }
 
+json manager_service_api() {
+    return {
+        {"schema", "uci_arena_manager_service_api_v1"},
+        {"version", "1.0"},
+        {"transport", "cli_json"},
+        {"entrypoint", "cli"},
+        {"arguments", {"api"}},
+        {"operations",
+         {"describe",
+          "status",
+          "outputs_list",
+          "outputs_inspect",
+          "config_validate"}},
+        {"output_schema", "uci_arena_service_output_v1"},
+    };
+}
+
 void write_installed_component(
     const fs::path& data_root,
     const fs::path& install_root,
@@ -288,7 +305,8 @@ TEST_CASE("installed service receipts reconcile exact private runtime entrypoint
         "book_forge.service",
         "cli",
         "src/cli.mjs",
-        {root / "workspaces" / "book-forge"});
+        {root / "workspaces" / "book-forge"},
+        {{"manager_integration_api", manager_service_api()}});
     const fs::path service_receipt =
         data / "receipts" / "book_forge.service.json";
     const fs::path service_config =
@@ -320,6 +338,31 @@ TEST_CASE("installed service receipts reconcile exact private runtime entrypoint
         discovered.at("services").at(0).at("desired_state") == "running");
     REQUIRE(
         discovered.at("services").at(0).at("startup_installed") == true);
+    REQUIRE(
+        discovered.at("services")
+            .at(0)
+            .at("manager_integration_api")
+            .at("schema") ==
+        "uci_arena_manager_service_api_v1");
+    REQUIRE(
+        discovered.at("services")
+            .at(0)
+            .at("manager_integration_api_source") ==
+        "signed_component_manifest");
+
+    const fs::path component_manifest =
+        install / "book_forge.service" / "1.0.0" /
+        "arena-component.json";
+    json missing_api_manifest = read_json(component_manifest);
+    missing_api_manifest.erase("manager_integration_api");
+    write_json(component_manifest, missing_api_manifest);
+    const auto missing_api =
+        arena::application::ServiceCatalog::installed_registrations(data);
+    REQUIRE(missing_api.at("services").empty());
+    REQUIRE(missing_api.at("errors").size() == 1);
+    missing_api_manifest["manager_integration_api"] =
+        manager_service_api();
+    write_json(component_manifest, missing_api_manifest);
 
     std::ofstream(
         install / "book_forge.service" / "1.0.0" / "unlisted.mjs")

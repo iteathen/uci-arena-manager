@@ -13,6 +13,34 @@ common_contract:
   resource_kind: managed_service
   optional_profiles: true
   manager_readiness_without_profiles: fully_operational
+  manager_service_api:
+    schema: uci_arena_manager_service_api_v1
+    compatible_versions: ["1.x"]
+    transport: cli_json
+    manifest_entrypoint: cli
+    manifest_arguments: [api]
+    required_operations:
+      - describe
+      - status
+      - outputs_list
+      - outputs_inspect
+      - config_validate
+    output_schema: uci_arena_service_output_v1
+    discovery:
+      installed: exact_manager_integration_api_from_verified_arena_component_manifest
+      manual: manager_profile_expectation_confirmed_by_api_describe
+    compatibility:
+      - The envelope schema, API major, component id, operation, success state,
+        and payload shape are validated on every invocation.
+      - An installed service envelope must report the exact component version
+        from its verified receipt and component manifest.
+      - API describe must confirm the required operations, transport,
+        invocation prefix, output schema, configuration schema, and status
+        schema before status or output metadata is integrated.
+      - Unknown major versions, component substitution, missing operations,
+        malformed envelopes, oversized projections, and output path escape
+        evidence mark the integration incompatible.
+      - Additive fields and compatible minor versions may be ignored.
   required_fields:
     - profile_id
     - display_name
@@ -41,6 +69,14 @@ common_contract:
     - Native service actions cross the allowlisted broker by manager resource id.
     - HTTP actions must be declared by a versioned capability document.
     - No adapter imports service source, reads a service-owned database, or assumes a repository root.
+    - Current provider components at version 0.3.0 and later expose status and
+      output metadata through the common Manager service API. Manager never
+      scans provider storage, opens provider databases, or infers output
+      identity from filenames.
+    - Installed 0.2.x components retain a bounded public-CLI compatibility
+      adapter for upgrade continuity only. They cannot claim Manager API
+      compatibility, and upgrading them to 0.3.x activates manifest-discovered
+      API integration.
     - Secrets use SecretReference ids and are never copied into managed-service data.
     - Missing optional capabilities produce unavailable actions, not startup failure.
     - Installed services are reconciled only from enabled arena_install_receipt_v1 receipts.
@@ -137,11 +173,13 @@ profiles:
       - redacted_last_error
     output_integration:
       authority: book_forge
-      source: public_cli_only
+      source: versioned_manager_service_api
       contract:
-        - Status channel rows identify the current integration and qualified snapshots.
-        - Manager invokes Book Forge validate for every advertised current snapshot.
-        - Snapshot id, channel, manifest digest, qualification state, and record count are projected without rewriting the snapshot.
+        - API output records identify immutable integration and qualified snapshots.
+        - Book Forge validates every advertised snapshot before producing its typed output record.
+        - Snapshot id, channel, manifest digest, artifact digests,
+          qualification state, and record count are projected without
+          rewriting the snapshot.
         - A digest, identity, channel, or schema mismatch marks the integration incompatible.
     safety:
       - Book Forge remains authority for its workspace, catalog, resource governor, and publication.
@@ -189,6 +227,7 @@ profiles:
       - startup_uninstall
     cli_contract:
       machine_output: json
+      manager_service_api: [api]
       status: [status, --json]
       daemon: [daemon]
       pause: [pause, --reason, uci-arena-manager]
@@ -223,13 +262,15 @@ profiles:
       - sampledAt
     output_integration:
       authority: uci_arena_evidence_service
-      source: public_cli_only
+      source: versioned_manager_service_api
       contract:
-        - Manager validates the status schema and obtains dataset metadata through dataset list.
-        - Manager obtains qualified timing-profile metadata through profile list and never discovers profile files by scanning service storage.
-        - Every dataset must use uci_arena_evidence_dataset_v1 and retain its typed target identity, authority, observation count, and completion state.
+        - Manager validates the API status payload and obtains dataset and
+          qualified timing-profile metadata through api outputs list.
+        - Every output uses uci_arena_service_output_v1 and a declared output
+          kind; service-specific schema and identity remain in the typed
+          compatibility projection.
         - Manager stores only a bounded allowlisted projection of dataset identity, campaign, state, target identity, authority, observation count, and timestamps; unknown fields are discarded and sensitive-looking nested fields are redacted.
-        - Every timing profile must use uci_arena_evidence_profile_v1 and retain its path, digest, exact runtime identity, permissions, publication source, and service-publication metadata.
+        - Every timing-profile output retains its path, digest, exact runtime identity, permissions, publication source, and service-publication metadata.
         - A timing profile is visible but remains non-consumable by an engine whose exact identity does not match; Manager never rewrites profile identity or permissions.
         - Manager never requests or stores raw observations and never reads the service SQLite catalog.
         - Waiting for a target and an empty dataset set remain healthy.
@@ -263,3 +304,10 @@ validation:
   - Arbitrary executable paths cannot cross the privileged broker.
   - A startup-owned provider never exposes process start, stop, or restart and
     a direct request for one of those actions fails before process launch.
+  - Installed service discovery rejects a Manager API declaration that differs
+    between the standalone service contract and arena-component.json.
+  - Service status rejects a substituted component id, installed component
+    version drift, unknown API major, missing required operation, malformed
+    output record, or output kind not owned by that service.
+  - Output integration tests prove that raw Evidence observations and
+    provider-private catalog contents never enter Manager state.

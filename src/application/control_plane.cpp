@@ -7,10 +7,12 @@
 #include "arena/domain/uuid.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <filesystem>
 #include <set>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace arena::application {
@@ -129,6 +131,165 @@ json bounded_redacted_external_value(
             std::string(label) + " exceeds the integration size limit");
     }
     return redact_external_status(value);
+}
+
+bool lowercase_hex(const std::string_view value, const std::size_t size) {
+    return value.size() == size &&
+           std::ranges::all_of(value, [](const unsigned char character) {
+               return std::isdigit(character) != 0 ||
+                      (character >= 'a' && character <= 'f');
+           });
+}
+
+bool compatible_manager_api_version(const std::string_view version) {
+    return version.size() > 2 && version.starts_with("1.") &&
+           std::ranges::all_of(
+               version.substr(2),
+               [](const unsigned char character) {
+                   return std::isdigit(character) != 0;
+               });
+}
+
+bool uuid_v4(const std::string_view value) {
+    if (value.size() != 36 || value[8] != '-' || value[13] != '-' ||
+        value[18] != '-' || value[23] != '-' || value[14] != '4' ||
+        (value[19] != '8' && value[19] != '9' &&
+         value[19] != 'a' && value[19] != 'b')) {
+        return false;
+    }
+    for (std::size_t index = 0; index < value.size(); ++index) {
+        if (index == 8 || index == 13 || index == 18 || index == 23) {
+            continue;
+        }
+        const unsigned char character =
+            static_cast<unsigned char>(value[index]);
+        if (std::isdigit(character) == 0 &&
+            (character < 'a' || character > 'f')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::set<std::string> string_set(
+    const json& object,
+    const char* field,
+    const std::size_t maximum_values) {
+    if (!object.contains(field) || !object.at(field).is_array() ||
+        object.at(field).size() > maximum_values) {
+        throw std::runtime_error(
+            std::string("service API field is not a bounded string array: ") +
+            field);
+    }
+    std::set<std::string> result;
+    for (const auto& value : object.at(field)) {
+        if (!value.is_string() || value.get_ref<const std::string&>().empty() ||
+            value.get_ref<const std::string&>().size() > 128 ||
+            !result.insert(value.get<std::string>()).second) {
+            throw std::runtime_error(
+                std::string("service API string array is malformed: ") +
+                field);
+        }
+    }
+    return result;
+}
+
+json manager_service_api_declaration(const json& data) {
+    if (!data.contains("manager_integration_api") ||
+        !data.at("manager_integration_api").is_object()) {
+        throw std::runtime_error(
+            "service has no compatible Manager API declaration");
+    }
+    const json declaration = data.at("manager_integration_api");
+    if (declaration.value("schema", "") !=
+            "uci_arena_manager_service_api_v1" ||
+        !declaration.contains("version") ||
+        !declaration.at("version").is_string() ||
+        !compatible_manager_api_version(
+            declaration.at("version").get_ref<const std::string&>()) ||
+        declaration.value("transport", "") != "cli_json" ||
+        declaration.value("entrypoint", "") != "cli" ||
+        declaration.value("arguments", json::array()) !=
+            json::array({"api"}) ||
+        declaration.value("output_schema", "") !=
+            "uci_arena_service_output_v1") {
+        throw std::runtime_error(
+            "service Manager API declaration is incompatible");
+    }
+    const std::set<std::string> required{
+        "config_validate",
+        "describe",
+        "outputs_inspect",
+        "outputs_list",
+        "status",
+    };
+    if (string_set(declaration, "operations", 5) != required) {
+        throw std::runtime_error(
+            "service Manager API declaration is missing required operations");
+    }
+    return declaration;
+}
+
+json manager_service_api_payload(
+    const json& response,
+    const std::string_view operation,
+    const std::string_view component_id,
+    const std::string_view component_version) {
+    if (!response.is_object() ||
+        response.value("schema", "") !=
+            "uci_arena_manager_service_api_v1" ||
+        !response.contains("api_version") ||
+        !response.at("api_version").is_string() ||
+        !compatible_manager_api_version(
+            response.at("api_version").get_ref<const std::string&>()) ||
+        !response.contains("component_version") ||
+        !response.at("component_version").is_string() ||
+        response.at("component_version")
+            .get_ref<const std::string&>()
+            .empty() ||
+        response.value("component_id", "") != component_id ||
+        (!component_version.empty() &&
+         response.value("component_version", "") != component_version) ||
+        response.value("operation", "") != operation ||
+        response.value("ok", false) != true ||
+        !response.contains("payload") ||
+        !response.at("payload").is_object()) {
+        throw std::runtime_error(
+            "service Manager API envelope is incompatible");
+    }
+    if (response.dump().size() > 16ULL * 1024ULL * 1024ULL) {
+        throw std::runtime_error(
+            "service Manager API response exceeds the integration size limit");
+    }
+    return response.at("payload");
+}
+
+void validate_service_output_base(
+    const json& output,
+    const std::set<std::string>& allowed_kinds) {
+    if (!output.is_object() ||
+        output.value("schema", "") != "uci_arena_service_output_v1" ||
+        !output.contains("output_id") ||
+        !output.at("output_id").is_string() ||
+        output.at("output_id").get_ref<const std::string&>().empty() ||
+        output.at("output_id").get_ref<const std::string&>().size() > 256 ||
+        !output.contains("output_kind") ||
+        !output.at("output_kind").is_string() ||
+        !allowed_kinds.contains(output.at("output_kind").get<std::string>()) ||
+        !output.contains("created_at") ||
+        !output.at("created_at").is_string() ||
+        !output.contains("state") || !output.at("state").is_object() ||
+        !output.contains("authority") ||
+        !output.at("authority").is_object() ||
+        !output.contains("compatibility") ||
+        !output.at("compatibility").is_object()) {
+        throw std::runtime_error(
+            "service output record violates the common API schema");
+    }
+    if (output.dump().size() > 1024ULL * 1024ULL) {
+        throw std::runtime_error(
+            "service output record exceeds the integration size limit");
+    }
 }
 
 }  // namespace
@@ -531,6 +692,22 @@ json ControlPlane::register_generic_resource(const json& request, const std::str
     const json& parameters = request.at("parameters");
     json data;
     if (kind == "managed_service") {
+        for (const auto* protected_field :
+             {"installed_component_id",
+              "installed_component_version",
+              "installed_artifact_sha256",
+              "runtime_component_id",
+              "runtime_artifact_sha256",
+              "manager_integration_api",
+              "manager_integration_api_source"}) {
+            if (parameters.contains(protected_field)) {
+                throw CommandFailure(
+                    "invalid_parameter",
+                    std::string("installer-owned service field is forbidden: ") +
+                        protected_field,
+                    400);
+            }
+        }
         try {
             data = ServiceCatalog::normalize_registration(parameters);
         } catch (const std::exception& error) {
@@ -710,7 +887,18 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                 "stop the managed service before changing its locator",
                 409);
         }
+        const json previous_data = data;
         json parameters = request.at("parameters");
+        for (const auto* protected_field :
+             {"installed_component_id",
+              "installed_component_version",
+              "installed_artifact_sha256",
+              "runtime_component_id",
+              "runtime_artifact_sha256",
+              "manager_integration_api",
+              "manager_integration_api_source"}) {
+            parameters.erase(protected_field);
+        }
         parameters["profile_id"] = profile;
         parameters["display_name"] =
             parameters.value("display_name", data.value("display_name", profile));
@@ -718,6 +906,18 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
             data = ServiceCatalog::normalize_registration(parameters);
         } catch (const std::exception& error) {
             throw CommandFailure("invalid_service_profile", error.what(), 422);
+        }
+        for (const auto* protected_field :
+             {"installed_component_id",
+              "installed_component_version",
+              "installed_artifact_sha256",
+              "runtime_component_id",
+              "runtime_artifact_sha256",
+              "manager_integration_api",
+              "manager_integration_api_source"}) {
+            if (previous_data.contains(protected_field)) {
+                data[protected_field] = previous_data.at(protected_field);
+            }
         }
         ports::ResourceRecord updated = *existing;
         updated.revision = existing->revision + 1;
@@ -809,6 +1009,561 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
         add_locator_options(arguments);
         arguments.push_back("--json");
         if (!request.at("dry_run").get<bool>()) {
+            if (data.contains("manager_integration_api")) {
+                try {
+                    const json declaration =
+                        manager_service_api_declaration(data);
+                    const std::string expected_component_id =
+                        evidence_service
+                            ? "uci_arena_evidence.service"
+                            : "book_forge.service";
+                    std::string expected_component_version =
+                        data.value("installed_component_version", "");
+                    const auto invoke_api =
+                        [&](const std::vector<std::string>& operation_arguments) {
+                            auto api_arguments = base;
+                            for (const auto& prefix :
+                                 declaration.at("arguments")) {
+                                api_arguments.push_back(
+                                    prefix.get<std::string>());
+                            }
+                            api_arguments.insert(
+                                api_arguments.end(),
+                                operation_arguments.begin(),
+                                operation_arguments.end());
+                            add_locator_options(api_arguments);
+                            return process_supervisor_.run_json(
+                                node, cli.parent_path(), api_arguments);
+                        };
+
+                    const json describe_response =
+                        invoke_api({"describe"});
+                    if (expected_component_version.empty()) {
+                        if (!describe_response.contains(
+                                "component_version") ||
+                            !describe_response.at(
+                                "component_version").is_string() ||
+                            describe_response.at("component_version")
+                                    .get_ref<const std::string&>()
+                                    .empty()) {
+                            throw std::runtime_error(
+                                "service API did not report a component version");
+                        }
+                        expected_component_version =
+                            describe_response.at("component_version")
+                                .get<std::string>();
+                    }
+                    const json describe = manager_service_api_payload(
+                        describe_response,
+                        "describe",
+                        expected_component_id,
+                        expected_component_version);
+                    const std::string expected_status_schema =
+                        evidence_service
+                            ? "uci_arena_evidence_status_v1"
+                            : "uci_arena_book_forge_status_v2";
+                    const std::string expected_configuration_schema =
+                        evidence_service
+                            ? "uci_arena_evidence_service_config_v1"
+                            : "uci_arena_book_forge_config_v1";
+                    const std::set<std::string> required_operations{
+                        "config_validate",
+                        "describe",
+                        "outputs_inspect",
+                        "outputs_list",
+                        "status",
+                    };
+                    const std::set<std::string> allowed_output_kinds =
+                        evidence_service
+                            ? std::set<std::string>{
+                                  "evidence.dataset",
+                                  "timing_profile.qualified"}
+                            : std::set<std::string>{
+                                  "opening_book.snapshot"};
+                    if (describe.value("transport", "") != "cli_json" ||
+                        describe.value("invocation", json::array()) !=
+                            json::array({"api"}) ||
+                        string_set(describe, "operations", 32) !=
+                            required_operations ||
+                        string_set(describe, "output_schemas", 8) !=
+                            std::set<std::string>{
+                                "uci_arena_service_output_v1"} ||
+                        string_set(describe, "output_kinds", 16) !=
+                            allowed_output_kinds ||
+                        describe.value("configuration_schema", "") !=
+                            expected_configuration_schema ||
+                        describe.value("status_schema", "") !=
+                            expected_status_schema) {
+                        throw std::runtime_error(
+                            "service API description is incompatible");
+                    }
+
+                    const json status_payload =
+                        manager_service_api_payload(
+                            invoke_api({"status"}),
+                            "status",
+                            expected_component_id,
+                            expected_component_version)
+                            .at("status");
+                    if (!status_payload.is_object() ||
+                        status_payload.value("schema", "") !=
+                            expected_status_schema) {
+                        throw std::runtime_error(
+                            "service API status schema is incompatible");
+                    }
+
+                    std::vector<std::string> output_arguments{
+                        "outputs", "list"};
+                    const std::string previous_cursor =
+                        data.value("output_cursor", "");
+                    if (!previous_cursor.empty()) {
+                        if (!lowercase_hex(previous_cursor, 64)) {
+                            throw std::runtime_error(
+                                "stored service output cursor is malformed");
+                        }
+                        output_arguments.insert(
+                            output_arguments.end(),
+                            {"--cursor", previous_cursor});
+                    }
+                    const json listed = manager_service_api_payload(
+                        invoke_api(output_arguments),
+                        "outputs_list",
+                        expected_component_id,
+                        expected_component_version);
+                    if (!listed.contains("cursor") ||
+                        !listed.at("cursor").is_string() ||
+                        !lowercase_hex(
+                            listed.at("cursor").get_ref<
+                                const std::string&>(),
+                            64) ||
+                        !listed.contains("unchanged") ||
+                        !listed.at("unchanged").is_boolean() ||
+                        !listed.contains("outputs") ||
+                        !listed.at("outputs").is_array() ||
+                        listed.at("outputs").size() > 10'000) {
+                        throw std::runtime_error(
+                            "service API output listing is malformed");
+                    }
+                    const bool unchanged =
+                        listed.at("unchanged").get<bool>();
+                    if (unchanged &&
+                        (previous_cursor.empty() ||
+                         listed.at("cursor") != previous_cursor ||
+                         !listed.at("outputs").empty() ||
+                         !data.contains("output_integration"))) {
+                        throw std::runtime_error(
+                            "service API unchanged output cursor is inconsistent");
+                    }
+
+                    if (!unchanged) {
+                        if (evidence_service) {
+                            json dataset_projection = json::array();
+                            json profile_projection = json::array();
+                            json selected_profile = nullptr;
+                            for (const auto& output :
+                                 listed.at("outputs")) {
+                                validate_service_output_base(
+                                    output, allowed_output_kinds);
+                                const std::string kind =
+                                    output.at("output_kind")
+                                        .get<std::string>();
+                                const std::string output_id =
+                                    output.at("output_id")
+                                        .get<std::string>();
+                                if (kind == "evidence.dataset") {
+                                    if (!output_id.starts_with("dataset:") ||
+                                        !uuid_v4(
+                                            std::string_view(output_id)
+                                                .substr(8)) ||
+                                        (output.at("state").value(
+                                             "lifecycle", "") !=
+                                             "collecting" &&
+                                         output.at("state").value(
+                                             "lifecycle", "") !=
+                                             "completed") ||
+                                        !output.contains("summary") ||
+                                        !output.at("summary").is_object() ||
+                                        !output.at("summary").contains(
+                                            "observation_count") ||
+                                        !output.at("summary").at(
+                                            "observation_count")
+                                            .is_number_unsigned() ||
+                                        output.at("compatibility")
+                                                .value(
+                                                    "dataset_schema",
+                                                    "") !=
+                                            "uci_arena_evidence_dataset_v1" ||
+                                        !output.at("compatibility")
+                                             .contains(
+                                                 "target_identity") ||
+                                        !output.at("compatibility")
+                                             .at("target_identity")
+                                             .is_object()) {
+                                        throw std::runtime_error(
+                                            "Evidence dataset output is incompatible");
+                                    }
+                                    dataset_projection.push_back(
+                                        {
+                                            {"schema",
+                                             "uci_arena_evidence_dataset_v1"},
+                                            {"id", output_id.substr(8)},
+                                            {"campaign",
+                                             output.at("compatibility")
+                                                 .value(
+                                                     "campaign", "")},
+                                            {"state",
+                                             output.at("state").value(
+                                                 "lifecycle", "")},
+                                            {"target_identity",
+                                             bounded_redacted_external_value(
+                                                 output.at(
+                                                     "compatibility")
+                                                     .at(
+                                                         "target_identity"),
+                                                 64 * 1024,
+                                                 "Evidence target identity")},
+                                            {"authority",
+                                             bounded_redacted_external_value(
+                                                 output.at("authority"),
+                                                 64 * 1024,
+                                                 "Evidence authority")},
+                                            {"observation_count",
+                                             output.at("summary").at(
+                                                 "observation_count")},
+                                            {"created_at",
+                                             output.at("created_at")},
+                                            {"completed_at",
+                                             output.at("state").value(
+                                                 "completed_at",
+                                                 json(nullptr))},
+                                        });
+                                } else {
+                                    if (!output_id.starts_with("profile:") ||
+                                        !lowercase_hex(
+                                            std::string_view(output_id)
+                                                .substr(8),
+                                            64) ||
+                                        !output.contains("artifact") ||
+                                        !output.at("artifact").is_object() ||
+                                        !output.at("artifact").contains(
+                                            "path") ||
+                                        !output.at("artifact").at("path")
+                                             .is_string() ||
+                                        !lowercase_hex(
+                                            output.at("artifact")
+                                                .value("sha256", ""),
+                                            64) ||
+                                        output.at("artifact").value(
+                                            "sha256", "") !=
+                                            output_id.substr(8) ||
+                                        !output.at("compatibility")
+                                             .contains(
+                                                 "target_identity") ||
+                                        !output.at("compatibility")
+                                             .at("target_identity")
+                                             .is_object() ||
+                                        !output.at("authority").value(
+                                            "timing", false)) {
+                                        throw std::runtime_error(
+                                            "Evidence timing-profile output is incompatible");
+                                    }
+                                    json projected{
+                                        {"schema",
+                                         "uci_arena_evidence_profile_v1"},
+                                        {"source",
+                                         output.at("state").value(
+                                             "source", "")},
+                                        {"path",
+                                         output.at("artifact").at(
+                                             "path")},
+                                        {"sha256",
+                                         output.at("artifact").at(
+                                             "sha256")},
+                                        {"profile_schema",
+                                         output.at("compatibility")
+                                             .value(
+                                                 "profile_schema",
+                                                 "")},
+                                        {"qualified", true},
+                                        {"published_at",
+                                         output.at("created_at")},
+                                        {"identity_sha256",
+                                         output.at("compatibility")
+                                             .value(
+                                                 "identity_sha256",
+                                                 "")},
+                                        {"target_identity",
+                                         bounded_redacted_external_value(
+                                             output.at(
+                                                 "compatibility")
+                                                 .at(
+                                                     "target_identity"),
+                                             64 * 1024,
+                                             "Evidence timing-profile target identity")},
+                                        {"permissions",
+                                         bounded_redacted_external_value(
+                                             output.at("authority"),
+                                             64 * 1024,
+                                             "Evidence timing-profile authority")},
+                                        {"service_publication",
+                                         bounded_redacted_external_value(
+                                             output.value(
+                                                 "provenance",
+                                                 json::object())
+                                                 .value(
+                                                     "service_publication",
+                                                     json(nullptr)),
+                                             64 * 1024,
+                                             "Evidence timing-profile publication")},
+                                    };
+                                    profile_projection.push_back(projected);
+                                    if (selected_profile.is_null() ||
+                                        (projected.value(
+                                             "source", "") ==
+                                             "service_live_cache" &&
+                                         selected_profile.value(
+                                             "source", "") !=
+                                             "service_live_cache") ||
+                                        (projected.value(
+                                             "source", "") ==
+                                             selected_profile.value(
+                                                 "source", "") &&
+                                         projected.value(
+                                             "published_at", "") >
+                                             selected_profile.value(
+                                                 "published_at", ""))) {
+                                        selected_profile =
+                                            std::move(projected);
+                                    }
+                                }
+                            }
+                            data["output_integration"] = {
+                                {"authority",
+                                 "uci_arena_evidence_service"},
+                                {"dataset_count",
+                                 dataset_projection.size()},
+                                {"datasets",
+                                 std::move(dataset_projection)},
+                                {"timing_profile_count",
+                                 profile_projection.size()},
+                                {"timing_profiles",
+                                 std::move(profile_projection)},
+                                {"selected_timing_profile",
+                                 std::move(selected_profile)},
+                            };
+                        } else {
+                            json snapshots = json::array();
+                            for (const auto& output :
+                                 listed.at("outputs")) {
+                                validate_service_output_base(
+                                    output, allowed_output_kinds);
+                                const json& state =
+                                    output.at("state");
+                                const json& authority =
+                                    output.at("authority");
+                                const json& artifact =
+                                    output.at("artifact");
+                                const json& compatibility =
+                                    output.at("compatibility");
+                                const std::string channel =
+                                    state.value("channel", "");
+                                const std::string snapshot_id =
+                                    output.at("output_id")
+                                        .get<std::string>();
+                                if ((channel != "integration" &&
+                                     channel != "qualified") ||
+                                    !snapshot_id.starts_with(
+                                        channel + "-") ||
+                                    state.value("immutable", false) !=
+                                        true ||
+                                    compatibility.value(
+                                        "component_id", "") !=
+                                        "opening_book.standard" ||
+                                    compatibility.value(
+                                        "consumer_component_id", "") !=
+                                        "uci_arena.engine" ||
+                                    !output.contains("summary") ||
+                                    !output.at("summary").is_object() ||
+                                    !output.at("summary").contains(
+                                        "record_count") ||
+                                    (!output.at("summary").at(
+                                          "record_count")
+                                          .is_number_unsigned() &&
+                                     !output.at("summary").at(
+                                          "record_count")
+                                          .is_number_integer()) ||
+                                    output.at("summary").at(
+                                        "record_count")
+                                            .get<std::int64_t>() < 0 ||
+                                    !artifact.is_object() ||
+                                    !artifact.contains("root") ||
+                                    !artifact.at("root").is_string() ||
+                                    !artifact.contains(
+                                        "manifest_path") ||
+                                    !artifact.at("manifest_path")
+                                         .is_string() ||
+                                    !lowercase_hex(
+                                        artifact.value(
+                                            "manifest_sha256", ""),
+                                        64) ||
+                                    !artifact.contains("files") ||
+                                    !artifact.at("files").is_array() ||
+                                    artifact.at("files").size() > 64) {
+                                    throw std::runtime_error(
+                                        "Book Forge snapshot output is incompatible");
+                                }
+                                for (const auto& file :
+                                     artifact.at("files")) {
+                                    if (!file.is_object() ||
+                                        !file.contains("name") ||
+                                        !file.at("name").is_string() ||
+                                        file.at("name")
+                                                .get_ref<
+                                                    const std::string&>()
+                                                .size() > 256 ||
+                                        !lowercase_hex(
+                                            file.value("sha256", ""),
+                                            64)) {
+                                        throw std::runtime_error(
+                                            "Book Forge artifact digest list is malformed");
+                                    }
+                                }
+                                const std::filesystem::path artifact_root =
+                                    std::filesystem::path(
+                                        artifact.at("root")
+                                            .get<std::string>())
+                                        .lexically_normal();
+                                const std::filesystem::path manifest_path =
+                                    std::filesystem::path(
+                                        artifact.at("manifest_path")
+                                            .get<std::string>())
+                                        .lexically_normal();
+                                const std::filesystem::path relative_manifest =
+                                    manifest_path.lexically_relative(
+                                        artifact_root);
+                                if (!artifact_root.is_absolute() ||
+                                    !manifest_path.is_absolute() ||
+                                    relative_manifest.empty() ||
+                                    relative_manifest.is_absolute() ||
+                                    *relative_manifest.begin() == "..") {
+                                    throw std::runtime_error(
+                                        "Book Forge artifact path escapes its declared root");
+                                }
+                                snapshots.push_back(
+                                    {
+                                        {"snapshot_id",
+                                         snapshot_id},
+                                        {"channel", channel},
+                                        {"manifest_sha256",
+                                         artifact.at(
+                                             "manifest_sha256")},
+                                        {"artifact_files",
+                                         artifact.at("files")},
+                                        {"record_count",
+                                         output.value(
+                                             "summary",
+                                             json::object())
+                                             .value(
+                                                 "record_count", 0)},
+                                        {"qualified",
+                                         authority.value(
+                                             "strength_qualified",
+                                             false)},
+                                        {"includes_fixture",
+                                         authority.value(
+                                             "includes_fixture",
+                                             false)},
+                                        {"current",
+                                         state.value(
+                                             "current", false)},
+                                        {"published_at",
+                                         output.at("created_at")},
+                                    });
+                            }
+                            data["output_integration"] = {
+                                {"authority", "book_forge"},
+                                {"snapshots", std::move(snapshots)},
+                            };
+                        }
+                        data["output_cursor"] =
+                            listed.at("cursor");
+                    }
+
+                    const json control =
+                        status_payload.value(
+                            "control", json::object());
+                    const json daemon =
+                        status_payload.value(
+                            "daemon", json::object());
+                    const bool paused =
+                        control.value("paused", false);
+                    const std::string daemon_phase =
+                        daemon.value("phase", "stopped");
+                    const std::string last_error =
+                        daemon.value(
+                            "lastError",
+                            daemon.value("last_error", ""));
+                    const bool daemon_active =
+                        process_supervisor_.running(id) ||
+                        (!daemon.value("stale", false) &&
+                         daemon_phase != "stopped" &&
+                         daemon_phase != "failed" &&
+                         !daemon_phase.empty());
+                    const bool degraded =
+                        daemon_phase == "failed" ||
+                        !last_error.empty();
+                    data["integration_state"] = "available";
+                    data["observed_state"] =
+                        degraded ? "degraded" :
+                        paused ? "paused" :
+                        daemon_active ? "running" : "stopped";
+                    data["health"] = {
+                        {"state",
+                         degraded ? "degraded" : "healthy"},
+                        {"reason",
+                         degraded
+                             ? (last_error.empty()
+                                    ? "service daemon failed"
+                                    : last_error)
+                             : "Manager service API contracts validated"},
+                        {"observed_at", domain::utc_now()},
+                    };
+                    data["manager_api_projection"] = {
+                        {"schema",
+                         declaration.at("schema")},
+                        {"api_version",
+                         describe_response.at("api_version")},
+                        {"component_id",
+                         expected_component_id},
+                        {"component_version",
+                         expected_component_version},
+                        {"source",
+                         data.value(
+                             "manager_integration_api_source",
+                             "unknown")},
+                        {"operations",
+                         describe.at("operations")},
+                        {"output_kinds",
+                         describe.at("output_kinds")},
+                    };
+                    data["status_projection"] =
+                        bounded_redacted_external_value(
+                            status_payload,
+                            1024 * 1024,
+                            "External service status");
+                } catch (const std::exception& error) {
+                    data["integration_state"] = "incompatible";
+                    data["observed_state"] = "degraded";
+                    data["health"] = {
+                        {"state", "degraded"},
+                        {"reason", error.what()},
+                        {"observed_at", domain::utc_now()},
+                    };
+                    data.erase("output_integration");
+                    data.erase("output_cursor");
+                    data.erase("manager_api_projection");
+                }
+            } else {
             const json status = process_supervisor_.run_json(
                 node, cli.parent_path(), arguments);
             json status_payload =
@@ -1144,6 +1899,7 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                     };
                     data.erase("output_integration");
                 }
+            }
             }
         }
     } else {
