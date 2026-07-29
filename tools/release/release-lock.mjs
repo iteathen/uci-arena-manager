@@ -85,6 +85,27 @@ function providerFor(lock, component, errors = []) {
   return provider;
 }
 
+export function resolveProviderAssetSource(lock, component) {
+  const provider = providerFor(lock, component);
+  if (!provider) {
+    throw new Error(`component ${component.component_id} has no trusted provider`);
+  }
+  if (lock.schema === "arena_suite_release_lock_v2") {
+    return {
+      repository: lock.provider_asset_mirror?.repository,
+      releaseTag: lock.provider_asset_mirror?.release_tag,
+      tokenKind: "manager",
+      providerRepository: provider.repository,
+    };
+  }
+  return {
+    repository: provider.repository,
+    releaseTag: component.provider_release_tag,
+    tokenKind: "provider",
+    providerRepository: provider.repository,
+  };
+}
+
 export function validateReleaseLock(lock, { requireReady = true } = {}) {
   const errors = [];
   if (![
@@ -114,6 +135,16 @@ export function validateReleaseLock(lock, { requireReady = true } = {}) {
     if (JSON.stringify(actualIds) !== JSON.stringify(expectedIds)) {
       errors.push("providers must exactly match the trusted registry");
     }
+    if (lock.provider_asset_mirror?.repository
+          !== "iteathen/uci-arena-manager"
+        || lock.provider_asset_mirror?.release_tag
+          !== `provider-mirror/v${lock.suite_version}`
+        || lock.provider_asset_mirror?.authority
+          !== "digest_pinned_transport_only") {
+      errors.push(
+        "provider_asset_mirror must be the exact private Manager transport release",
+      );
+    }
   }
   if (lock.managed_repository !== "iteathen/uci-arena-manager") {
     errors.push("managed_repository must be iteathen/uci-arena-manager");
@@ -124,6 +155,7 @@ export function validateReleaseLock(lock, { requireReady = true } = {}) {
     errors.push("managed_components must be an array");
   }
   const identities = new Set();
+  const providerMirrorAssetNames = new Set();
   const coverage = new Map([...TARGETS].map((target) => [target, new Set()]));
   const portableProviderCoverage = new Set();
   for (const component of lock.components ?? []) {
@@ -186,6 +218,13 @@ export function validateReleaseLock(lock, { requireReady = true } = {}) {
     ]) {
       if (!component[key] || path.basename(component[key]) !== component[key]) {
         errors.push(`${identity} has unsafe ${key}`);
+      } else if (
+        lock.schema === "arena_suite_release_lock_v2"
+        && providerMirrorAssetNames.has(component[key])
+      ) {
+        errors.push(`${identity} reuses provider mirror asset ${component[key]}`);
+      } else if (lock.schema === "arena_suite_release_lock_v2") {
+        providerMirrorAssetNames.add(component[key]);
       }
     }
     if (component.provenance_bundle_name
@@ -497,7 +536,9 @@ export async function fetchLockedComponents(
 ) {
   const validation = validateReleaseLock(lock);
   if (!validation.ok) throw new Error(validation.errors.join("\n"));
-  if (!providerToken) throw new Error("a short-lived provider read token is required");
+  if (lock.schema !== "arena_suite_release_lock_v2" && !providerToken) {
+    throw new Error("a short-lived provider read token is required");
+  }
   if (!managerToken) throw new Error("a short-lived Manager read token is required");
   mkdirSync(outputDirectory, { recursive: true });
   const rows = [];
@@ -506,6 +547,10 @@ export async function fetchLockedComponents(
     if (!provider) {
       throw new Error(`component ${component.component_id} has no trusted provider`);
     }
+    const assetSource = resolveProviderAssetSource(lock, component);
+    const assetToken = assetSource.tokenKind === "manager"
+      ? managerToken
+      : providerToken;
     const artifactPath = path.join(outputDirectory, component.artifact_name);
     const resultPath = path.join(outputDirectory, component.provider_result_name);
     const bundlePath = path.join(outputDirectory, component.provenance_bundle_name);
@@ -513,24 +558,24 @@ export async function fetchLockedComponents(
       throw new Error(`refusing to overwrite provider assets for ${component.component_id}`);
     }
     await downloadAsset(
-      provider.repository,
-      component.provider_release_tag,
+      assetSource.repository,
+      assetSource.releaseTag,
       component.artifact_name,
-      providerToken,
+      assetToken,
       artifactPath,
     );
     await downloadAsset(
-      provider.repository,
-      component.provider_release_tag,
+      assetSource.repository,
+      assetSource.releaseTag,
       component.provider_result_name,
-      providerToken,
+      assetToken,
       resultPath,
     );
     await downloadAsset(
-      provider.repository,
-      component.provider_release_tag,
+      assetSource.repository,
+      assetSource.releaseTag,
       component.provenance_bundle_name,
-      providerToken,
+      assetToken,
       bundlePath,
     );
     if (sha256File(artifactPath) !== component.artifact_sha256

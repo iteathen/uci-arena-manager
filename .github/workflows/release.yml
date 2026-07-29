@@ -194,19 +194,8 @@ jobs:
           pattern: manager-*
           path: dist/manager
           merge-multiple: true
-      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
-        id: provider-token
-        with:
-          app-id: ${{ vars.COMPONENT_READER_APP_ID }}
-          private-key: ${{ secrets.COMPONENT_READER_PRIVATE_KEY }}
-          owner: iteathen
-          repositories: |
-            UCI_Arena
-            uci-arena-book-forge
-            uci-arena-evidence-service
       - name: Fetch exact private component candidates
         env:
-          GH_PROVIDER_TOKEN: ${{ steps.provider-token.outputs.token }}
           GH_MANAGER_TOKEN: ${{ github.token }}
         run: node tools/release/fetch-components.mjs release/catalog.lock.json dist/provider
       - name: Assemble immutable suite catalog

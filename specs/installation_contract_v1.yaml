@@ -34,10 +34,10 @@ authority:
   rules:
     - Provider automation may publish only immutable, attested component candidates.
     - Suite composition pins exact provider, commit, manifest, provenance, and artifact digests.
-    - The candidate-fetch GitHub App token is repository-scoped to every
-      trusted provider in component_candidate_repositories and no other
-      repository. Adding a provider is incomplete until this exact workflow
-      scope and its regression test are updated.
+    - A release steward mirrors only the exact lock-pinned provider artifact,
+      result, and Sigstore bundle bytes into a private Manager prerelease.
+      The mirror is transport-only, requires no GitHub App key, and never
+      replaces original-provider identity or attestation verification.
     - Stable promotion republishes the exact tested candidate bytes and never rebuilds.
     - Build identities never receive private signing keys.
     - Private-repository CI always runs the lockfile-backed npm audit. GitHub
@@ -77,8 +77,13 @@ signed_provenance:
       - provenance_workflow_ref
       - provenance_workflow_trigger
     verification:
-      - Download the exact lock-pinned artifact, provider result, and Sigstore
-        bundle from the same immutable private provider release.
+      - Mirror the exact lock-pinned artifact, provider result, and Sigstore
+        bundle from the same immutable private provider release into the
+        lock-declared private Manager transport release.
+      - Suite CI downloads only those mirrored bytes with its repository
+        token, verifies every lock-pinned digest, then verifies the original
+        provider identity and attestation. Mirror repository identity grants
+        no component authority.
       - Verify all three asset SHA-256 values before interpreting them.
       - Cosign verification pins the exact certificate identity, OIDC issuer,
         provider repository, source commit, workflow name, workflow ref,
@@ -91,6 +96,22 @@ signed_provenance:
         to the separately digest-pinned arena_provider_release_result_v1.
       - The signed provider result workflow_identity must name the trusted
         workflow at the lock-pinned ref and one exact run id and attempt.
+  private_provider_asset_mirror:
+    repository: iteathen/uci-arena-manager
+    release_tag: provider-mirror/v<suite_version>
+    authority: digest_pinned_transport_only
+    creation: node tools/release/mirror-provider-assets.mjs release/catalog.lock.json
+    rules:
+      - The release remains private and prerelease.
+      - Every provider artifact, result, and Sigstore bundle name is globally
+        unique within the lock and appears exactly once in the mirror.
+      - Mirroring verifies the exact source-release bytes against the reviewed
+        lock before upload and never alters, resigns, or repackages them.
+      - Suite composition needs only github.token for the Manager repository;
+        no cross-repository token, long-lived PAT, App private key, or public
+        repository visibility is permitted.
+      - A missing, substituted, or mutable mirror asset fails the same digest
+        and original-provider provenance gates as direct provider transport.
   managed_candidates:
     predicate_type: https://uci-arena.example/attestations/managed-component-release-result/v1
     trusted_repository: iteathen/uci-arena-manager

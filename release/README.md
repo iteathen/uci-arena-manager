@@ -24,18 +24,27 @@ Sigstore bundle; composition verifies the protected workflow identity and the
 exact signed DSSE predicate. Mutable public artifact URLs and unsigned
 checksum-only provenance are not accepted.
 
-Both repositories remain private. Provider candidates use Cosign `v3.0.6`
+All provider repositories remain private. Provider candidates use Cosign `v3.0.6`
 keyless signing with the GitHub Actions OIDC identity; the resulting
 `<artifact>.sigstore.json` asset contains the signing certificate,
 transparency-log inclusion proof, and an in-toto statement whose sole subject
 is the exact artifact digest and whose predicate is the exact provider result.
 Each provider lock row pins that bundle's asset name and SHA-256 plus the exact
 certificate identity, issuer, workflow name, `refs/heads/main` ref, and
-`workflow_dispatch` trigger. Suite composition downloads the artifact, provider
-result, and bundle from the same private release, verifies all three digests,
-then runs Cosign with the lock-pinned identity and source commit before it
-accepts or copies the candidate. The signed provider result and bundle are
-retained under the candidate's `provenance` directory.
+`workflow_dispatch` trigger. A release steward copies those exact bytes into
+the lock-declared private Manager transport prerelease with:
+
+```powershell
+node tools/release/mirror-provider-assets.mjs release/catalog.lock.json
+```
+
+The tool downloads each asset from its original private provider release,
+verifies the reviewed digest before upload, and neither alters nor resigns it.
+Suite CI downloads the mirror with its built-in repository token, verifies all
+three digests, then runs Cosign with the original provider identity and source
+commit before accepting the candidate. The mirror grants no release authority.
+The signed provider result and bundle are retained under the candidate's
+`provenance` directory.
 
 The protected release workflow uses the same mechanism for Manager outputs. It
 creates one signed multi-subject statement for each platform Manager build and
@@ -53,8 +62,6 @@ production run:
   CODEOWNERS review.
 - Create the `production-release` environment with `@iteathen` as required
   reviewer and prevent self-review.
-- Configure the read-only component GitHub App as
-  `COMPONENT_READER_APP_ID` / `COMPONENT_READER_PRIVATE_KEY`.
 - After GitHub Advanced Security and the dependency graph are enabled for this
   private repository, set `DEPENDENCY_REVIEW_ENABLED=true`. Until then, CI
   keeps the lockfile-backed `npm audit --omit=dev` gate and skips the

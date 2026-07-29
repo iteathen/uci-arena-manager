@@ -19,6 +19,11 @@
       "workflow_name": "Evidence Service component candidate"
     }
   },
+  "provider_asset_mirror": {
+    "repository": "iteathen/uci-arena-manager",
+    "release_tag": "provider-mirror/v0.3.0",
+    "authority": "digest_pinned_transport_only"
+  },
   "managed_repository": "iteathen/uci-arena-manager",
   "components": [
     {

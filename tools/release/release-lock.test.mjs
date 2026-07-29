@@ -4,6 +4,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   assembleCatalog,
+  resolveProviderAssetSource,
   validateLockedManagedResult,
   validateLockedProviderResult,
   validateReleaseLock,
@@ -35,34 +36,39 @@ const V2_PROVIDERS = Object.freeze(Object.fromEntries(
   ]),
 ));
 
-test("suite composition token is scoped to every trusted provider", () => {
+const V2_MIRROR = Object.freeze({
+  repository: "iteathen/uci-arena-manager",
+  release_tag: "provider-mirror/v1.1.0",
+  authority: "digest_pinned_transport_only",
+});
+
+test("suite composition uses the private Manager mirror without an App key", () => {
   const workflow = readFileSync(
     fileURLToPath(
       new URL("../../.github/workflows/release.yml", import.meta.url),
     ),
     "utf8",
   );
-  const tokenStepStart = workflow.indexOf(
-    "uses: actions/create-github-app-token@",
+  assert.doesNotMatch(workflow, /COMPONENT_READER|create-github-app-token/u);
+  assert.match(workflow, /GH_MANAGER_TOKEN:\s*\$\{\{\s*github\.token\s*\}\}/u);
+
+  const lock = JSON.parse(readFileSync(
+    fileURLToPath(
+      new URL("../../release/catalog.lock.json", import.meta.url),
+    ),
+    "utf8",
+  ));
+  const component = lock.components.find((candidate) =>
+    candidate.provider_id === "book_forge");
+  assert.deepEqual(
+    resolveProviderAssetSource(lock, component),
+    {
+      repository: "iteathen/uci-arena-manager",
+      releaseTag: "provider-mirror/v0.3.0",
+      tokenKind: "manager",
+      providerRepository: "iteathen/uci-arena-book-forge",
+    },
   );
-  const fetchStepStart = workflow.indexOf(
-    "- name: Fetch exact private component candidates",
-    tokenStepStart,
-  );
-  assert.ok(tokenStepStart >= 0 && fetchStepStart > tokenStepStart);
-  const tokenStep = workflow.slice(tokenStepStart, fetchStepStart);
-  assert.match(tokenStep, /repositories:\s*\|/u);
-  const scopedRepositories = tokenStep
-    .split(/repositories:\s*\|/u, 2)
-    .at(1)
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .sort();
-  const trustedRepositories = Object.values(PROVIDERS)
-    .map((provider) => provider.repository.split("/").at(-1))
-    .sort();
-  assert.deepEqual(scopedRepositories, trustedRepositories);
 });
 
 function row(component, target, options = {}) {
@@ -197,6 +203,7 @@ test("v2 release lock requires the exact provider registry and ownership map", (
     suite_version: "1.1.0",
     release_ready: true,
     providers: V2_PROVIDERS,
+    provider_asset_mirror: V2_MIRROR,
     managed_repository: "iteathen/uci-arena-manager",
     components,
     managed_components: managedComponents,
@@ -224,6 +231,7 @@ test("v2 release lock rejects provider and workflow substitution", () => {
     suite_version: "1.1.0",
     release_ready: false,
     providers,
+    provider_asset_mirror: V2_MIRROR,
     managed_repository: "iteathen/uci-arena-manager",
     components: [wrongOwner, substitutedWorkflow],
     managed_components: [],
