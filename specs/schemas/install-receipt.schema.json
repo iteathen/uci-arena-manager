@@ -21,6 +21,24 @@
     },
     "data_paths": {"type": "array", "items": {"type": "string"}},
     "configuration_path": {"type": "string"},
+    "service_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "path",
+        "sha256",
+        "configuration_schema",
+        "status_schema"
+      ],
+      "properties": {
+        "schema": {"const": "uci_arena_standalone_service_contract_v1"},
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "configuration_schema": {"type": "string", "minLength": 1},
+        "status_schema": {"type": "string", "minLength": 1}
+      }
+    },
     "startup": {
       "type": "object",
       "additionalProperties": true,

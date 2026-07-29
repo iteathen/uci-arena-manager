@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uci-arena.example/schemas/standalone-service-contract.schema.json",
+  "title": "uci_arena_standalone_service_contract_v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "component_id",
+    "component_version",
+    "cli_entrypoint",
+    "configuration_schema",
+    "status_schema",
+    "capabilities",
+    "data_paths",
+    "startup",
+    "health_smoke",
+    "outputs",
+    "persistence"
+  ],
+  "properties": {
+    "schema": {"const": "uci_arena_standalone_service_contract_v1"},
+    "component_id": {"enum": ["book_forge.service", "uci_arena_evidence.service"]},
+    "component_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "cli_entrypoint": {"type": "string", "minLength": 1},
+    "configuration_schema": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+    "status_schema": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+    "capabilities": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "data_paths": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "startup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["windows", "linux"],
+      "properties": {
+        "windows": {"const": "per_user_task_scheduler"},
+        "linux": {"const": "per_user_systemd"}
+      }
+    },
+    "health_smoke": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "success"],
+      "properties": {
+        "command": {"const": "status"},
+        "success": {"const": "exit_zero_and_status_schema"}
+      }
+    },
+    "outputs": {"type": "object"},
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["upgrade", "repair", "uninstall_default"],
+      "properties": {
+        "upgrade": {"const": "preserve_and_migrate"},
+        "repair": {"const": "preserve"},
+        "uninstall_default": {"const": "preserve"}
+      }
+    }
+  }
+}

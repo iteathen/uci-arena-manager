@@ -12,6 +12,7 @@
     "component_version": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
     "target_triple": {"type": "string"},
     "entrypoints": {"type": "object"},
+    "contract_manifest": {"type": "string", "minLength": 1},
     "capabilities": {"type": "array", "items": {"type": "string"}},
     "startup": {"type": "object"},
     "data_paths": {"type": "array", "items": {"type": "string"}},
