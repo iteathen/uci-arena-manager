@@ -574,7 +574,7 @@ TEST_CASE("Lichess token path imports refresh installed Book Forge configuration
     write_receipt("book_forge.service", book_forge_root, book_forge_config.string());
     std::ofstream(book_forge_config)
         << json{
-               {"schema", "flashfork_book_forge_config_v1"},
+               {"schema", "uci_arena_book_forge_config_v1"},
                {"stockfish", stockfish.string()},
            }
                .dump(2);
