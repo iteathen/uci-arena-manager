@@ -39,6 +39,12 @@ secrets:
 local_security:
   bind: loopback_only
   browser_session: one_time_pairing_to_http_only_same_site_strict_cookie
+  cli_bearer_key:
+    authority: manager_data_root_client_key_file
+    rotation: >
+      The service reloads a structurally valid on-disk key after an in-memory
+      mismatch so installer-preserved state, repair, and restore cannot strand
+      the installed CLI or browser pairing flow on an obsolete key.
   required:
     - origin_validation
     - csrf_protection

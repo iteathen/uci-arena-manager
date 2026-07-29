@@ -2,14 +2,23 @@
 <?ifndef ProductVersion ?>
   <?define ProductVersion="0.1.0" ?>
 <?endif?>
-<?ifndef ProductName ?>
-  <?define ProductName="UCI Arena Suite Setup" ?>
+<?ifndef SetupTrustArguments ?>
+  <?define SetupTrustArguments="--metadata-dir &quot;[WixBundleExecutePackageCacheFolder]release\tuf&quot;" ?>
+<?endif?>
+<?ifndef SetupRepairArguments ?>
+  <?define SetupRepairArguments="" ?>
+<?endif?>
+<?ifndef SetupUninstallArguments ?>
+  <?define SetupUninstallArguments="" ?>
+<?endif?>
+<?ifndef ArenaDataRoot ?>
+  <?define ArenaDataRoot="[CommonAppDataFolder]UCI Arena Manager" ?>
 <?endif?>
 <Wix
   xmlns="http://wixtoolset.org/schemas/v4/wxs"
   xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
   <Bundle
-    Name="$(var.ProductName)"
+    Name="UCI Arena Suite Setup"
     Manufacturer="UCI Arena Manager contributors"
     Version="$(var.ProductVersion)"
     UpgradeCode="8E2B374D-B0B2-4998-BEEA-AFCBCFB9406C">
@@ -20,21 +29,28 @@
         SuppressOptionsUI="no" />
     </BootstrapperApplication>
     <Chain>
-      <ExePackage
-        Id="SuiteComponents"
-        SourceFile="$(var.SuiteSetup)"
-        InstallArguments="$(var.SetupArguments)"
-        PerMachine="yes"
-        Permanent="yes"
-        Vital="yes">
-        <PayloadGroupRef Id="SuiteMediaPayloads" />
-      </ExePackage>
       <MsiPackage
         Id="ManagerCore"
         SourceFile="$(var.ManagerMsi)"
-        DisplayInternalUI="no"
-        Visible="yes"
-        Vital="yes" />
+        Visible="no"
+        Vital="yes">
+        <MsiProperty
+          Name="ARENA_DATA_ROOT"
+          Value="$(var.ArenaDataRoot)" />
+      </MsiPackage>
+      <ExePackage
+        Id="SuiteComponents"
+        SourceFile="$(var.SuiteSetup)"
+        InstallArguments="--bundle-owner &quot;[WixBundleProviderKey]&quot; --data-root &quot;$(var.ArenaDataRoot)&quot; --restart-manager-service --catalog &quot;[WixBundleExecutePackageCacheFolder]release\catalog.json&quot; $(var.SetupTrustArguments) $(var.SetupArguments)"
+        RepairArguments="--bundle-owner &quot;[WixBundleProviderKey]&quot; --data-root &quot;$(var.ArenaDataRoot)&quot; --restart-manager-service --catalog &quot;[WixBundleExecutePackageCacheFolder]release\catalog.json&quot; $(var.SetupTrustArguments) $(var.SetupRepairArguments)"
+        UninstallArguments="--bundle-owner &quot;[WixBundleProviderKey]&quot; --data-root &quot;$(var.ArenaDataRoot)&quot; --catalog &quot;[WixBundleExecutePackageCacheFolder]release\catalog.json&quot; $(var.SetupTrustArguments) $(var.SetupUninstallArguments)"
+        DetectCondition="WixBundleInstalled"
+        Protocol="none"
+        PerMachine="yes"
+        Permanent="no"
+        Vital="yes">
+        <PayloadGroupRef Id="SuiteMediaPayloads" />
+      </ExePackage>
     </Chain>
   </Bundle>
 </Wix>

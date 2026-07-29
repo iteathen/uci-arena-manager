@@ -49,6 +49,46 @@ packaging:
   linux_sources: packaging/linux
   windows_outputs: dist/windows
   linux_outputs: dist/linux
+  windows_manager_msi:
+    payload_source: complete_cmake_install_tree
+    service_registration: cpack_wix_component_patch
+    required_payloads:
+      - manager_binaries
+      - native_runtime_dependencies
+      - dashboard_assets
+      - installed_contract_schemas
+    rules:
+      - The MSI service executable and every required native DLL are installed
+        into the same private binary directory before the service is started.
+      - The bundle embeds arena-setup with its complete adjacent private
+        runtime directory; extracting a lone executable is forbidden.
+      - The arena-setup executable package uses no Burn console-redirection
+        protocol so inherited standard handles cannot keep the bootstrapper
+        blocked after arena-setup exits.
+      - Install, repair, and uninstall resolve the embedded catalog and TUF
+        metadata from the currently executing Burn package cache directory.
+        They never depend on the bootstrapper launch directory or a retained
+        source-media working directory.
+      - The visible bundle and Programs and Features name is exactly
+        UCI Arena Suite Setup. Online, offline, acceptance, commit, and build
+        identifiers remain in artifact names and logs; the visible version is
+        only the suite semantic version.
+      - The service uses the packaged dashboard path and never a source checkout.
+      - The bundle resolves one Manager data root and passes that exact path to
+        both the Manager MSI service arguments and every arena-setup operation.
+        The installed Manager CLI defaults to the same platform data root.
+      - After component receipts and generated configurations commit, the
+        Windows bundle requires arena-setup to restart the installed Manager
+        service so its first active projection reads the new receipt set.
+      - On that restart, Manager refreshes every installed optional service
+        through its public status contract even when its immutable component
+        digest is unchanged.
+      - The suite bundle is the only visible Programs and Features entry.
+      - Bundle uninstall invokes arena-setup suite uninstall before removing
+        the Manager MSI so provider startup registrations cannot be stranded.
+      - MSI major upgrades require a strictly greater three-field product
+        version. Rebuilding different bytes under the same product version is
+        not an upgrade path; use the explicit repair lifecycle instead.
   artifact_names:
     - UCI-Arena-Setup-<version>-windows-x64-online.exe
     - UCI-Arena-Setup-<version>-windows-x64-offline.exe
@@ -59,7 +99,7 @@ packaging:
     - uci-arena-setup-<version>-linux-x86_64-offline.run
   suite_media:
     source: accepted_immutable_candidate_plus_signed_tuf_metadata
-    windows_chain: arena_setup_complete_then_manager_msi_service_registration
+    windows_chain: manager_msi_then_arena_setup_complete_with_transactional_rollback
     online_behavior: >
       Carries the accepted core component digest set and permits explicit
       network acquisition of selected external file sets.
@@ -86,12 +126,15 @@ components:
   complete_arena:
     - manager.core
     - uci_arena.engine
-    - uci_arena.model.default
     - node_runtime.private
     - stockfish.engine
     - book_forge.service
     - opening_book.standard
     - uci_arena_evidence.service
+  composition_rules:
+    - The validated default model is an immutable runtime asset inside the
+      uci_arena.engine provider component and is not selected as a nonexistent
+      independent catalog component.
   optional:
     - lichess.adapter
     - opening_book.standard
@@ -153,10 +196,19 @@ knowledge_assets:
       when an installed-managed receipt owns activation files that still exist
       under the configured knowledge root with their recorded sizes. Full
       content integrity remains the verify command's responsibility.
+    - Inventory projects a validated saved or bounded-discovery opening-book or
+      Syzygy locator into the knowledge summary as detected_unmanaged when no
+      installed-managed activation is present. Syzygy counts and bytes cover
+      only regular .rtbw and .rtbz files directly inside the selected directory;
+      the projection never recurses, follows links, copies, or modifies files.
     - Dedicated opening_book.* and syzygy.* component identities alone own
       knowledge-file activation; an engine capability named opening_book or
       syzygy describes consumption support and never makes the engine payload
       an activation source.
+    - When a signed opening_book.* or syzygy.* component activates and no
+      explicit saved locator exists, arena-setup transactionally saves the
+      verified activation directory as the selected locator before generating
+      consumer configuration. An explicit imported locator always wins.
 
 discovery:
   interface: arena_setup_discovery_v1
@@ -168,6 +220,9 @@ discovery:
     - book_forge
     - evidence_service
     - timing_profile
+    - lichess_single_game_profile
+    - lichess_capacity_profile
+    - lichess_transport_profile
     - lichess_token_path
     - restaurant
   precedence:
@@ -223,13 +278,15 @@ discovery:
 
 local_import:
   interface: arena_setup_import_result_v1
-  command: arena-setup import --kind KIND --path PATH --json
+  command: arena-setup --json import --kind KIND --path PATH
   default_mode: in_place_reference
   saved_location: manager_data_root/locators
   managed_copy:
-    allowed_kinds: [opening_book]
-    maximum_bytes: 268435456
-    maximum_files: 64
+    allowed_kinds: [opening_book, lichess_single_game_profile]
+    opening_book_maximum_bytes: 268435456
+    opening_book_maximum_files: 64
+    lichess_profile_closure_maximum_bytes: 67108864
+    lichess_profile_closure_maximum_files: 16
     staging: immutable_then_atomic_activation
     receipt: arena_install_receipt_v1
   validation:
@@ -239,6 +296,10 @@ local_import:
     book_forge: provider_root_or_regular_cli_entrypoint
     evidence_service: provider_root_or_regular_cli_entrypoint
     timing_profile: qualified_uci_time_profile_v3_regular_file
+    lichess_single_game_profile: >
+      qualified_uci_arena_single_game_profile_v1_with_complete_hash_verified_evidence_closure
+    lichess_capacity_profile: qualified_uci_arena_lichess_capacity_profile_v1_regular_file
+    lichess_transport_profile: qualified_uci_arena_lichess_transport_profile_v2_regular_file
     lichess_token_path: path_reference_only_never_read
     restaurant: detect_only_import_forbidden
   rules:
@@ -246,9 +307,35 @@ local_import:
     - In-place imports save only normalized locators and never copy provider-owned data.
     - Syzygy tablebases are always referenced in place.
     - Timing profiles remain identity-bound in-place references and are never copied or rewritten.
+    - A Lichess single-game profile is copied without rewriting into immutable
+      Manager-owned storage together with its bounded, hash-verified evidence
+      closure. Relative evidence paths are resolved only against the profile
+      directory and bounded ancestors of the explicitly selected profile; an
+      unsafe, ambiguous, missing, oversized, or hash-mismatched closure is
+      rejected before activation.
+    - Lichess capacity and transport profiles remain qualified in-place
+      references and are never copied or rewritten. The capacity profile must
+      bind the exact selected single-game profile digest.
+    - Consumer activation verifies timing and single-game profile executable,
+      model, provider, and hardware identity against the exact installed
+      engine and model. An incompatible profile remains discoverable evidence
+      but is never presented as applied.
+    - A successful import transaction regenerates and verifies every installed
+      consumer configuration and active-model pointer affected by that locator
+      before committing the locator. Failure restores the previous locator,
+      configurations, and pointers.
+    - Managed-copy opening books publish the activated immutable directory as
+      the saved opening-book locator in the same transaction.
     - Installing Evidence Service projects explicit timing-profile locators through its public profile-list command.
     - Managed-copy opening books reject symbolic links, nested directories, and payloads larger than the declared maximum.
     - Lichess token contents are never opened, hashed, copied, logged, returned, or placed in argv.
+    - Book Forge receives an imported Lichess credential only as the saved
+      token-file path in its generated provider configuration. The installer
+      never opens the referenced file, and a later token-path import
+      transaction regenerates the installed Book Forge configuration and
+      invokes Book Forge's bounded public acquisition retry-auth operation.
+      The provider response must confirm a ready credential configuration;
+      failure rolls back the locator and generated configuration.
     - Restaurant remains visible as detect-only and is never registered, copied, installed, started, or controlled.
 
 vm_mounts:
@@ -326,6 +413,50 @@ transaction:
   backup: before_replacement_or_migration
   failure: restore_previous_activation_and_service_state
   normal_uninstall: preserve_user_data
+  manager_data_root_retention:
+    windows_default: "C:\\ProgramData\\UCI Arena Manager"
+    purpose: >
+      Normal uninstall removes executable authority and managed component
+      receipts while preserving operator state required for reinstall,
+      recovery, audit, and large-asset reuse. Retention is deliberate and must
+      not be inferred from an implementation-wide decision to leave a
+      directory behind.
+    preserved_on_normal_uninstall:
+      - path: arena.db
+        reason: canonical Manager resources, operations, audit records, and history
+      - path: client.key
+        reason: local CLI and browser-pairing continuity after reinstall
+        security: preserve file ACLs and never print or export the key
+      - path: knowledge/
+        reason: imported or downloaded opening books and tablebases may be large or user-owned
+      - path: locators/
+        reason: validated path-only references and qualified profile selections
+      - path: release/
+        reason: verified current-platform catalog, TUF metadata, and payloads used by repair
+      - path: trust/
+        reason: highest verified TUF versions required for rollback protection
+      - path: cache/
+        reason: content-addressed verified downloads that avoid unnecessary reacquisition
+        authority: non_authoritative_until_digest_reverified
+      - path: transactions/
+        reason: recovery and audit evidence for completed or interrupted installer operations
+      - path: workspaces_outside_data_root
+        reason: provider-owned operational data is not installer payload
+    removed_on_normal_uninstall:
+      - every receipt-selected immutable component root
+      - every provider startup registration owned by an installed receipt
+      - every component receipt JSON document
+      - the Manager Windows service and MSI-owned program files
+    rules:
+      - The receipts directory may remain empty; no installed component
+        authority survives merely because the directory exists.
+      - Interrupted staging or rollback paths remain recovery evidence until a
+        later verified operation resolves them; they are never silently
+        activated.
+      - Normal uninstall does not promise secure erasure. Purge is a separate,
+        explicit, previewed operation and may remove only declared paths.
+      - Reinstall revalidates retained locators, release media, cache entries,
+        trust state, and qualified profiles before consuming them.
   suite_uninstall:
     command: arena-setup uninstall --all --yes
     ordering: startup_capable_consumers_before_runtimes_and_dependencies
@@ -341,14 +472,23 @@ transaction:
       - Removing a shared runtime by itself is rejected while an installed
         startup-capable provider still depends on it.
       - Normal suite uninstall removes every managed receipt and immutable
-        component root while preserving workspaces, locators, imported
-        in-place assets, and retained release media.
+        component root, including an empty per-component parent directory,
+        while preserving workspaces, locators, imported in-place assets, and
+        retained release media.
+      - A Windows bundle stamps its immutable Burn provider key as bundle_owner
+        on every selected component receipt before related-bundle removal.
+      - Bundle-driven uninstall removes only receipts whose bundle_owner exactly
+        matches the calling bundle. A related older bundle treats an empty
+        owner-scoped selection as a successful no-op and cannot remove receipts
+        adopted by the newly installed bundle.
   purge: preview_confirm_optional_export
   generated_service_configuration:
     owner: arena_setup
     location: selected_service_workspace
     inputs: exact_receipt_verified_dependency_entrypoints
-    book_forge: [stockfish]
+    book_forge:
+      - stockfish
+      - saved_lichess_token_path_reference_when_available
     evidence_service:
       - uci_arena_engine
       - installed_model_root
@@ -357,14 +497,38 @@ transaction:
       - manager_owned_runtime_models_root
       - manager_owned_active_model_pointer
       - explicit_timing_profile_imports
+      - exact_installed_engine_digest
     lichess_adapter:
       - uci_arena_engine
       - installed_model_root
       - selected_qualified_timing_profile
+      - selected_qualified_single_game_profile
+      - selected_qualified_capacity_profile
+      - selected_qualified_transport_profile
       - selected_opening_book_and_sidecars
       - selected_syzygy_directory
       - token_path_excluded
     rollback: restore_previous_configuration
+  provider_startup:
+    owner: provider_public_adapter_invoked_by_arena_setup
+    install_trigger: enabled_non_credential_gated_component_apply_repair_or_upgrade
+    receipt_field: startup
+    rules:
+      - An enabled component declaring startup_install is not committed until
+        its verified installed entrypoint reports installed true.
+      - Credential-gated Lichess startup is never installed merely because its
+        component and token-file locator exist. Its verified adapter entrypoint
+        remains available for explicit startup, status, and uninstall, and
+        suite uninstall removes any provider-owned startup registration before
+        payload removal.
+      - When a provider reports matchesCurrentConfiguration, it must be true.
+        Manager never reinterprets or substitutes a provider health contract.
+      - Verify invokes the provider's public startup status operation and fails
+        when an installed startup receipt no longer reports installed true or
+        reports matchesCurrentConfiguration false.
+      - Transaction rollback invokes startup_uninstall before restoring or
+        removing the provider payload.
+      - Disabled component binaries are installed without startup registration.
   installed_engine_handoff:
     owner: arena_setup
     rules:
@@ -383,14 +547,29 @@ transaction:
       - When an exact qualified timing profile is selected, arena-setup writes
         and transactionally verifies an Evidence-compatible active-model
         pointer bound to the installed engine, model root, provider, options,
-        and executable digest. It never points the service at its own
+        and the executable digest computed from the verified installed
+        entrypoint. A profile digest is never substituted for the installed
+        executable digest. It never points the service at its own
         configuration file.
+      - Lichess activation fails closed before credential access when timing,
+        single-game, capacity, or transport evidence is missing, incomplete,
+        or incompatible with the exact installed engine/model identity.
       - Runtime verification requires opening_book_active and syzygy_active,
         not merely the presence of saved locators.
       - Protected live acceptance requires the selected timing profile to be
         accepted, applied, exact-identity-bound, and provider-safety-qualified
         with a positive reserve after installer-owned knowledge locators are
         applied.
+  repair:
+    rules:
+      - Repair restages every selected component from verified release media
+        even when the installed version is already current.
+      - Repair regenerates and verifies installer-owned consumer
+        configurations and active-model pointers from current saved locators.
+  upgrade:
+    rules:
+      - Upgrade restages every selected component so the new bundle atomically
+        adopts all selected receipts before Burn removes a related older bundle.
 
 trust:
   metadata: tuf
@@ -408,6 +587,11 @@ acceptance:
   - Manager-only install works without Node.js.
   - Windows bootstrap and Manager binaries launch on a clean supported Windows
     image without a preinstalled Visual C++ redistributable.
+  - Windows GUI acceptance installs from the visible bootstrapper, proves the
+    packaged Manager service starts with its native DLLs and dashboard assets,
+    verifies the complete receipt-selected suite, and uninstalls through the
+    same bundle with no Manager service, provider startup registration,
+    immutable component root, or receipt left behind.
   - Complete Arena installs Manager, UCI Arena, Book Forge, and Evidence Service without a source checkout.
   - The Windows Complete acceptance launches installed entrypoints from their
     receipts, loads the bundled model, builds and validates a Book Forge

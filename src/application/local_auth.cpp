@@ -2,8 +2,11 @@
 
 #include <sodium.h>
 
+#include <algorithm>
 #include <array>
+#include <cctype>
 #include <fstream>
+#include <ranges>
 #include <stdexcept>
 
 namespace arena::application {
@@ -58,12 +61,35 @@ const std::filesystem::path& LocalAuth::client_key_path() const { return client_
 
 bool LocalAuth::authenticate_bearer(const std::string& authorization) const {
     constexpr std::string_view prefix = "Bearer ";
-    return authorization.starts_with(prefix) &&
-           sodium_memcmp(
-               authorization.data() + prefix.size(),
-               client_key_.data(),
-               std::min(authorization.size() - prefix.size(), client_key_.size())) == 0 &&
-           authorization.size() - prefix.size() == client_key_.size();
+    if (!authorization.starts_with(prefix)) {
+        return false;
+    }
+    const std::string_view presented{
+        authorization.data() + prefix.size(),
+        authorization.size() - prefix.size(),
+    };
+    const auto matches = [&presented](const std::string& key) {
+        return presented.size() == key.size() &&
+               sodium_memcmp(presented.data(), key.data(), key.size()) == 0;
+    };
+
+    std::scoped_lock lock(mutex_);
+    if (matches(client_key_)) {
+        return true;
+    }
+
+    std::ifstream input(client_key_path_, std::ios::binary);
+    std::string persisted;
+    std::getline(input, persisted);
+    if (persisted.size() != 64 ||
+        !std::ranges::all_of(persisted, [](const unsigned char character) {
+            return std::isdigit(character) != 0 ||
+                   (character >= 'a' && character <= 'f');
+        })) {
+        return false;
+    }
+    client_key_ = std::move(persisted);
+    return matches(client_key_);
 }
 
 void LocalAuth::prune_expired() {

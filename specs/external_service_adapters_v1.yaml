@@ -46,6 +46,20 @@ common_contract:
     - Installed services are reconciled only from enabled arena_install_receipt_v1 receipts.
     - Reconciliation verifies the complete immutable private runtime and provider component file sets by exact size and SHA-256, rejects symbolic links and unlisted files, and never launches an unverifiable component.
     - Installer-generated provider configuration may reference only exact dependency entrypoints from verified receipts and must remain inside the declared provider workspace.
+    - An installed receipt whose provider startup result reports installed true
+      reconciles with desired_state running.
+    - Manager startup invokes each reconciled installed provider's public status
+      contract even when component digests are unchanged, so output
+      integrations and observed state cannot remain stale across an installer
+      restart.
+    - A provider daemon reported active and non-stale by its public status
+      contract is observed as running even when the Manager process supervisor
+      did not launch that per-user startup instance.
+    - Per-user provider startup registrations remain provider-owned. Manager
+      never starts a duplicate daemon when startup_installed is true; status,
+      pause, and resume remain available, while process start/stop/restart are
+      omitted until an authenticated per-user startup-control transport is
+      present.
 
 profiles:
   book_forge:
@@ -124,6 +138,9 @@ profiles:
       - Authentication tokens remain owned by Book Forge and are never accepted by this adapter.
       - Pausing and resuming use Book Forge durable controls.
       - The manager does not replace Book Forge single-instance enforcement or startup registration.
+      - Installer activation and token-path refresh may invoke only Book
+        Forge's public acquisition retry-auth operation, validate its bounded
+        response, and never read or forward credential contents.
 
   uci_arena_evidence:
     display_name: UCI Arena Evidence Service
@@ -233,3 +250,5 @@ validation:
   - Evidence Service paths containing spaces remain separate argv values.
   - Unsupported actions are rejected before any process, broker, or HTTP call.
   - Arbitrary executable paths cannot cross the privileged broker.
+  - A startup-owned provider never exposes process start, stop, or restart and
+    a direct request for one of those actions fails before process launch.

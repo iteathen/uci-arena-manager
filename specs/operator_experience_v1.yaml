@@ -63,6 +63,10 @@ managed_service_experience:
     - Preview capabilities and ownership boundaries.
     - Never request external-service secrets that are not manager-owned.
     - Explain unavailable actions without presenting them as failures.
+    - For provider-owned per-user startup registrations, show Probe plus
+      Pause/Resume controls and a startup-owned status hint; do not show
+      process Start, Stop, or Restart controls that would create a duplicate
+      daemon.
     - Do not show an unconfigured optional service as an unhealthy manager resource.
 
 local_path_picker:
@@ -89,9 +93,17 @@ knowledge_asset_setup:
   requirements:
     - Offer browse-assisted opening-book, Syzygy directory, and Lichess
       token-file-reference selection with format-specific hints and filters.
+    - Offer browse-assisted qualified timing, Lichess single-game, Lichess
+      capacity, and Lichess transport profile selection with schema-specific
+      filenames, identity guidance, and filters.
+    - Explain that importing a Lichess single-game profile creates a bounded
+      immutable managed copy of the profile and its hash-verified evidence
+      closure; timing, capacity, transport, and Syzygy assets remain in place.
     - Offer copyable arena-setup commands for importing the selected existing
       paths and for downloading the exact signed missing-book or bounded
       tablebase components.
+    - Generated commands place global arena-setup options before the selected
+      subcommand so the copied command is directly executable.
     - The dashboard and Manager service never execute arena-setup or acquire
       package-execution authority; the foreground operator reviews and invokes
       the command explicitly.

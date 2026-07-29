@@ -20,6 +20,11 @@ TEST_CASE("pairing tokens are one-time and browser sessions require CSRF") {
     input.close();
     REQUIRE(auth.authenticate_bearer("Bearer " + key));
     REQUIRE_FALSE(auth.authenticate_bearer("Bearer wrong"));
+    const std::string rotated_key(64, 'a');
+    std::ofstream(auth.client_key_path(), std::ios::binary | std::ios::trunc)
+        << rotated_key << '\n';
+    REQUIRE(auth.authenticate_bearer("Bearer " + rotated_key));
+    REQUIRE_FALSE(auth.authenticate_bearer("Bearer " + key));
 
     const std::string token = auth.issue_pairing_token();
     const auto session = auth.exchange_pairing_token(token);

@@ -13,8 +13,23 @@
     "active_root": {"type": "string"},
     "artifact_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "installed_at": {"type": "string"},
+    "bundle_owner": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._{}-]+$"
+    },
     "data_paths": {"type": "array", "items": {"type": "string"}},
     "configuration_path": {"type": "string"},
+    "startup": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["installed"],
+      "properties": {
+        "installed": {"type": "boolean"},
+        "matchesCurrentConfiguration": {"type": "boolean"}
+      }
+    },
     "dependencies": {
       "type": "array",
       "items": {"type": "string"},

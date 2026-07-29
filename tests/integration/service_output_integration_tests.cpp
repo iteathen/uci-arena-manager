@@ -75,6 +75,7 @@ TEST_CASE("Book Forge and Evidence outputs cross only validated public contracts
             control_plane, root, "book_forge", "book-cli.mjs");
         const json& book_data = book.at("resource").at("data");
         REQUIRE(book_data.at("integration_state") == "available");
+        REQUIRE(book_data.at("observed_state") == "running");
         REQUIRE(
             book_data.at("output_integration").at("authority") ==
             "book_forge");
@@ -92,6 +93,7 @@ TEST_CASE("Book Forge and Evidence outputs cross only validated public contracts
             "evidence-cli.mjs");
         const json& evidence_data = evidence.at("resource").at("data");
         REQUIRE(evidence_data.at("integration_state") == "available");
+        REQUIRE(evidence_data.at("observed_state") == "running");
         const json& dataset =
             evidence_data.at("output_integration").at("datasets").at(0);
         REQUIRE(dataset.at("id") == "dataset-1");

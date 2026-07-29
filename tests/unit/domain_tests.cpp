@@ -208,6 +208,7 @@ TEST_CASE("installed service receipts reconcile exact private runtime entrypoint
         });
     json receipt = read_json(service_receipt);
     receipt["configuration_path"] = service_config.string();
+    receipt["startup"] = {{"installed", true}};
     write_json(service_receipt, receipt);
 
     const auto discovered =
@@ -222,6 +223,10 @@ TEST_CASE("installed service receipts reconcile exact private runtime entrypoint
     REQUIRE(
         discovered.at("services").at(0).at("config_path") ==
         fs::absolute(service_config).string());
+    REQUIRE(
+        discovered.at("services").at(0).at("desired_state") == "running");
+    REQUIRE(
+        discovered.at("services").at(0).at("startup_installed") == true);
 
     std::ofstream(
         install / "book_forge.service" / "1.0.0" / "unlisted.mjs")

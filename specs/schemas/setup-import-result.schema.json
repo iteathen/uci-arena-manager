@@ -24,6 +24,9 @@
         "book_forge",
         "evidence_service",
         "timing_profile",
+        "lichess_single_game_profile",
+        "lichess_capacity_profile",
+        "lichess_transport_profile",
         "lichess_token_path"
       ]
     },
