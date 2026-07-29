@@ -60,3 +60,11 @@ specs:
       - src/application/control_plane.cpp
       - apps/cli
       - web/src/pages/ServicesPage.tsx
+  - spec_id: arena_bot_onboarding_v1
+    path: specs/bot_onboarding_v1.yaml
+    owner: bot_adapters
+    applies_to:
+      - include/arena/application/bot_catalog.hpp
+      - src/application/bot_catalog.cpp
+      - src/application/control_plane.cpp
+      - web/src/pages/BotsPage.tsx

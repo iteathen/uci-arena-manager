@@ -36,6 +36,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { ApiError, api, connectEvents, exchangePairingToken } from './api/client'
 import { ConfigurationPage } from './pages/ConfigurationPage'
+import { BotsPage } from './pages/BotsPage'
 import { EnginesPage } from './pages/EnginesPage'
 import { LogsPage } from './pages/LogsPage'
 import { MatchPlannerPage } from './pages/MatchPlannerPage'
@@ -126,13 +127,7 @@ export default function App() {
       case 'planner':
         return <MatchPlannerPage />
       case 'bots':
-        return (
-          <ResourcePage
-            title="Bots"
-            description="Managed workloads with declared capabilities and health."
-            kind="bot"
-          />
-        )
+        return <BotsPage />
       case 'live':
         return (
           <ResourcePage

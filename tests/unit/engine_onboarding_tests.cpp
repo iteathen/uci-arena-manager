@@ -86,6 +86,52 @@ TEST_CASE("installed engine receipts resolve provider-declared UCI entrypoints")
     fs::remove_all(root);
 }
 
+TEST_CASE("verified UCI Arena receipt is recommended without turning its model into the product") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-engine-recommended-" + arena::domain::uuid_v7());
+    const fs::path data_root = root / "data";
+    const fs::path active_root = root / "components" / "uci_arena.engine" / "1.2.3";
+    const fs::path executable = executable_path(active_root / "bin", "uci-arena");
+    write_executable(executable);
+    fs::create_directories(data_root / "receipts");
+    std::ofstream(active_root / "arena-component.json")
+        << json{
+               {"schema", "arena_install_component_v1"},
+               {"schema_version", 1},
+               {"component_id", "uci_arena.engine"},
+               {"component_version", "1.2.3"},
+               {"display_name", "UCI Arena Engine"},
+               {"entrypoints", {{"uci", fs::relative(executable, active_root).generic_string()}}},
+               {"default_model",
+                {{"model_id", "example_model_v1"},
+                 {"display_name", "Example Model"},
+                 {"input_adapter_id", "example_dense_planes_v1"}}},
+               {"files", json::array()},
+           }
+               .dump(2);
+    std::ofstream(data_root / "receipts" / "uci_arena.engine.json")
+        << json{
+               {"schema", "arena_install_receipt_v1"},
+               {"schema_version", 1},
+               {"component_id", "uci_arena.engine"},
+               {"component_version", "1.2.3"},
+               {"state", "installed_managed"},
+               {"active_root", active_root.string()},
+               {"artifact_sha256", std::string(64, 'a')},
+           }
+               .dump(2);
+
+    const json discovered = arena::application::EngineOnboarding::discover(data_root, {}, false);
+    REQUIRE(discovered.at("candidates").size() == 1);
+    const json& candidate = discovered.at("candidates").at(0);
+    REQUIRE(candidate.at("recommended") == true);
+    REQUIRE(candidate.at("display_name") == "UCI Arena Engine");
+    REQUIRE(candidate.at("default_model").at("display_name") == "Example Model");
+    REQUIRE(candidate.at("display_name") != candidate.at("default_model").at("display_name"));
+    fs::remove_all(root);
+}
+
 TEST_CASE("explicit bounded roots discover renamed engine executables") {
     const fs::path root =
         fs::temp_directory_path() /

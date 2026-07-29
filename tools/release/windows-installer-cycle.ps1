@@ -500,6 +500,7 @@ if ($Action -eq "smoke") {
     $service = Get-CimInstance Win32_Service -Filter "Name='UCIArenaManager'" -ErrorAction Stop
     $requiredFiles = @(
         (Join-Path $cycle.paths.install_root "bin\arena.exe"),
+        (Join-Path $cycle.paths.install_root "bin\uci-arena-manager.exe"),
         (Join-Path $cycle.paths.install_root "bin\arena-service.exe"),
         (Join-Path $cycle.paths.install_root "bin\arena-setup.exe"),
         (Join-Path $cycle.paths.install_root "share\uci-arena\web\index.html")
@@ -508,6 +509,18 @@ if ($Action -eq "smoke") {
     if ($service.State -ne "Running" -or $service.StartMode -ne "Auto" -or
         $service.StartName -ne "NT AUTHORITY\LocalService" -or $missing.Count -ne 0) {
         throw "Installed service or required package tree is invalid"
+    }
+    $installedBin = (Join-Path $cycle.paths.install_root "bin").TrimEnd("\")
+    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    $machinePathEntries = @(
+        $machinePath.Split(";", [StringSplitOptions]::RemoveEmptyEntries) |
+        ForEach-Object { $_.Trim().TrimEnd("\") }
+    )
+    $shortcut = Join-Path $env:ProgramData `
+        "Microsoft\Windows\Start Menu\Programs\UCI Arena Manager.lnk"
+    if ($installedBin -notin $machinePathEntries -or
+        -not (Test-Path -LiteralPath $shortcut -PathType Leaf)) {
+        throw "Installed CLI PATH entry or Start Menu launcher is unavailable"
     }
     $arena = Join-Path $cycle.paths.install_root "bin\arena.exe"
     $setup = Join-Path $cycle.paths.install_root "bin\arena-setup.exe"
@@ -529,7 +542,8 @@ if ($Action -eq "smoke") {
     }
     foreach ($path in @(
         "system/status", "engines", "match-plans", "tournaments",
-        "engine-candidates", "resources/engine", "service-profiles", "events/snapshot"
+        "engine-candidates", "resources/engine", "service-profiles",
+        "components", "bot-profiles", "bot-candidates", "events/snapshot"
     )) {
         $apiCodes[$path.Replace("/", "_")] = Get-HttpStatusCode "$base/$path" $authorization
     }

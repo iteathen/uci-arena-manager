@@ -36,6 +36,10 @@ test("Windows installer cycle makes MSI invocation single-shot and resumable", (
   assert.match(runner, /RequirePlanningEvidence/);
   assert.match(runner, /suppliedPath\.Split\(",", \[StringSplitOptions\]::RemoveEmptyEntries\)/);
   assert.match(runner, /Probe engine path is unavailable/);
+  assert.match(runner, /bin\\uci-arena-manager\.exe/);
+  assert.match(runner, /GetEnvironmentVariable\("Path", "Machine"\)/);
+  assert.match(runner, /Start Menu\\Programs\\UCI Arena Manager\.lnk/);
+  assert.match(runner, /"components", "bot-profiles", "bot-candidates"/);
   assert.doesNotMatch(runner, /Remove-Item/);
 });
 

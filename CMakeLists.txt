@@ -131,22 +131,36 @@ target_link_libraries(arena-broker PRIVATE arena_core CLI11::CLI11)
 add_executable(arena-setup apps/setup/main.cpp)
 target_link_libraries(arena-setup PRIVATE arena_core CLI11::CLI11 CURL::libcurl)
 
+if(WIN32)
+  add_executable(
+    uci-arena-manager
+    WIN32
+    apps/launcher/main.cpp
+    apps/launcher/resources.rc
+  )
+  target_link_libraries(uci-arena-manager PRIVATE shell32)
+else()
+  add_executable(uci-arena-manager apps/launcher/main.cpp)
+endif()
+
 if(MSVC)
   target_compile_options(arena_core PRIVATE /W4 /permissive- /EHsc)
   target_compile_options(arena-service PRIVATE /W4 /permissive- /EHsc)
   target_compile_options(arena PRIVATE /W4 /permissive- /EHsc)
   target_compile_options(arena-broker PRIVATE /W4 /permissive- /EHsc)
   target_compile_options(arena-setup PRIVATE /W4 /permissive- /EHsc)
+  target_compile_options(uci-arena-manager PRIVATE /W4 /permissive- /EHsc)
 else()
   target_compile_options(arena_core PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(arena-service PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(arena PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(arena-broker PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(arena-setup PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(uci-arena-manager PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 if(WIN32)
-  install(TARGETS arena-service arena arena-broker arena-setup RUNTIME DESTINATION bin)
+  install(TARGETS arena-service arena arena-broker arena-setup uci-arena-manager RUNTIME DESTINATION bin)
   install(
     DIRECTORY
       "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/"
@@ -168,14 +182,19 @@ if(WIN32)
     FILES_MATCHING PATTERN "copyright"
   )
 else()
-  install(TARGETS arena-service arena arena-broker arena-setup RUNTIME DESTINATION bin)
+  install(TARGETS arena-service arena arena-broker arena-setup uci-arena-manager RUNTIME DESTINATION bin)
 endif()
 install(DIRECTORY web/dist/ DESTINATION share/uci-arena/web)
 install(DIRECTORY specs/ DESTINATION share/uci-arena/specs)
 if(NOT WIN32)
   install(FILES packaging/linux/uci-arena-manager.service DESTINATION lib/systemd/system)
   install(FILES packaging/linux/uci-arena-broker.service DESTINATION lib/systemd/system)
+  install(FILES packaging/linux/uci-arena-manager.desktop DESTINATION share/applications)
+  install(FILES packaging/icons/uci-arena-manager.svg DESTINATION share/icons/hicolor/scalable/apps)
+  install(FILES packaging/icons/uci-arena-manager.png DESTINATION share/icons/hicolor/256x256/apps)
+  install(FILES docs/arena.1 docs/arena-setup.1 DESTINATION share/man/man1)
 endif()
+install(FILES docs/cli.md DESTINATION share/doc/uci-arena-manager)
 
 if(ARENA_BUILD_TESTS)
   enable_testing()
@@ -224,6 +243,8 @@ if(ARENA_ENABLE_PACKAGING)
     set(CPACK_PACKAGE_INSTALL_DIRECTORY "UCI Arena Manager")
     set(CPACK_WIX_VERSION 4)
     set(CPACK_WIX_UPGRADE_GUID "930B856A-66FB-4A34-B998-8A61684EA345")
+    set(CPACK_WIX_PRODUCT_ICON
+      "${CMAKE_CURRENT_SOURCE_DIR}/packaging/icons/uci-arena-manager.ico")
     set(CPACK_WIX_TEMPLATE
       "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/Package.wxs.in")
     set(CPACK_WIX_PATCH_FILE

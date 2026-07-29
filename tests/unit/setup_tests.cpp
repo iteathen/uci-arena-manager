@@ -504,6 +504,35 @@ TEST_CASE("local imports validate UCI and never return Lichess token contents") 
     fs::remove_all(root);
 }
 
+TEST_CASE("dashboard token reference save persists only path metadata") {
+    const fs::path root = temporary_directory();
+    const SetupPaths paths = paths_under(root);
+    const fs::path token = root / "operator-token.txt";
+    const std::string sentinel = "TOKEN_VALUE_MUST_NOT_ESCAPE";
+    std::ofstream(token) << sentinel;
+
+    const json result =
+        SetupEngine::save_lichess_token_reference(paths.data_root, token);
+    REQUIRE(result.at("schema") ==
+            "arena_bot_token_reference_result_v1");
+    REQUIRE(result.at("state") == "saved");
+    REQUIRE(result.dump().find(sentinel) == std::string::npos);
+    REQUIRE(result.dump().find(token.string()) == std::string::npos);
+
+    const fs::path locator =
+        paths.data_root / "locators" / "lichess_token_path.json";
+    REQUIRE(fs::is_regular_file(locator));
+    std::ifstream input(locator);
+    const json metadata = json::parse(input);
+    REQUIRE(metadata.at("validation").at("validation") ==
+            "path_reference_only");
+    REQUIRE(metadata.at("path") ==
+            fs::absolute(token).lexically_normal().string());
+    REQUIRE(metadata.dump().find(sentinel) == std::string::npos);
+    input.close();
+    fs::remove_all(root);
+}
+
 TEST_CASE("Lichess token path imports refresh installed Book Forge configuration") {
     const fs::path root = temporary_directory();
     const SetupPaths paths = paths_under(root);
@@ -592,6 +621,149 @@ TEST_CASE("Lichess token path imports refresh installed Book Forge configuration
     REQUIRE(generated.at("stockfish") == fs::absolute(stockfish).lexically_normal().string());
     REQUIRE(generated.dump().find(token_contents) == std::string::npos);
     generated_input.close();
+    fs::remove_all(root);
+}
+
+TEST_CASE("profile imports refresh a safely disabled installed Lichess adapter") {
+    const fs::path root = temporary_directory();
+    const SetupPaths paths = paths_under(root);
+    const fs::path receipts = paths.data_root / "receipts";
+    const fs::path engine_root =
+        paths.install_root / "components" / "uci_arena.engine" / "1.0.0";
+    const fs::path adapter_root =
+        paths.install_root / "components" / "lichess.adapter" / "1.0.0";
+    const fs::path engine = engine_root / "bin" / "uci_arena_engine";
+    const fs::path checkpoint =
+        engine_root / "models" / "default" / "checkpoint_manifest.json";
+    const fs::path adapter = adapter_root / "app" / "adapter.mjs";
+    const fs::path adapter_template =
+        adapter_root / "deploy" / "lichess" /
+        "config.uci_arena.template.yml";
+    const fs::path configuration =
+        paths.workspace_root / "lichess-adapter" / "manager-config.json";
+    fs::create_directories(engine.parent_path());
+    fs::create_directories(checkpoint.parent_path());
+    fs::create_directories(adapter.parent_path());
+    fs::create_directories(adapter_template.parent_path());
+    fs::create_directories(configuration.parent_path());
+    fs::create_directories(receipts);
+    std::ofstream(engine, std::ios::binary) << "fixture";
+    std::ofstream(checkpoint, std::ios::binary)
+        << R"({"checkpoint_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","model_id":"model-1"})";
+    std::ofstream(adapter, std::ios::binary) << "fixture";
+    std::ofstream(adapter_template, std::ios::binary)
+        << R"({"schema":"uci_arena_lichess_adapter_v6","engine":{"uci_options":{}},"capacity":{"total_slots":1,"bot":{"target_active":0}},"scheduler":{"enabled":false},"timing":{}})";
+    std::ofstream(engine_root / "arena-component.json")
+        << json{
+               {"schema", "arena_install_component_v1"},
+               {"schema_version", 1},
+               {"component_id", "uci_arena.engine"},
+               {"component_version", "1.0.0"},
+               {"entrypoints", {{"uci", "bin/uci_arena_engine"}}},
+               {"files",
+                json::array({
+                    {
+                        {"path", "bin/uci_arena_engine"},
+                        {"size_bytes", 7},
+                        {"sha256",
+                         "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d"},
+                    },
+                    {
+                        {"path", "models/default/checkpoint_manifest.json"},
+                        {"size_bytes", 107},
+                        {"sha256",
+                         "63d67d4aa35ea116824e4b267866f5a3e3a797f1a94ebb2e34eded84d479a511"},
+                    },
+                })},
+           }
+               .dump(2);
+    std::ofstream(adapter_root / "arena-component.json")
+        << json{
+               {"schema", "arena_install_component_v1"},
+               {"schema_version", 1},
+               {"component_id", "lichess.adapter"},
+               {"component_version", "1.0.0"},
+               {"entrypoints", {{"adapter", "app/adapter.mjs"}}},
+               {"files",
+                json::array({
+                    {
+                        {"path", "app/adapter.mjs"},
+                        {"size_bytes", 7},
+                        {"sha256",
+                         "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d"},
+                    },
+                    {
+                        {"path",
+                         "deploy/lichess/config.uci_arena.template.yml"},
+                        {"size_bytes", 166},
+                        {"sha256",
+                         "93c4b2eb1b64db5a021d92316ab162cdefd433ff2c19e19b62ca69294d29694b"},
+                    },
+                })},
+           }
+               .dump(2);
+    const auto write_receipt = [&receipts](
+                                   const std::string& id,
+                                   const fs::path& active_root,
+                                   const std::string& state,
+                                   const fs::path& configuration_path =
+                                       fs::path{}) {
+        std::ofstream(receipts / (id + ".json"))
+            << json{
+                   {"schema", "arena_install_receipt_v1"},
+                   {"schema_version", 1},
+                   {"component_id", id},
+                   {"component_version", "1.0.0"},
+                   {"state", state},
+                   {"active_root", active_root.string()},
+                   {"artifact_sha256", std::string(64, 'a')},
+                   {"dependencies", json::array()},
+                   {"data_paths", json::array()},
+                   {"configuration_path", configuration_path.string()},
+                   {"activated_files", json::array()},
+               }
+                   .dump(2);
+    };
+    write_receipt(
+        "uci_arena.engine", engine_root, "installed_managed");
+    write_receipt(
+        "lichess.adapter",
+        adapter_root,
+        "installed_disabled",
+        configuration);
+    std::ofstream(configuration)
+        << json{
+               {"schema", "uci_arena_lichess_adapter_v6"},
+               {"engine", {{"uci_options", json::object()}}},
+               {"capacity",
+                {
+                    {"total_slots", 1},
+                    {"bot", {{"target_active", 0}}},
+                }},
+               {"scheduler", {{"enabled", false}}},
+               {"timing", json::object()},
+           }
+               .dump(2);
+
+    const fs::path transport = root / "transport_profile_v2.json";
+    std::ofstream(transport)
+        << json{
+               {"schema", "uci_arena_lichess_transport_profile_v2"},
+               {"qualified", true},
+           }
+               .dump(2);
+    const json imported =
+        SetupEngine::import_path(
+            paths, "lichess_transport_profile", transport);
+    REQUIRE(
+        imported.at("refreshed_consumers") ==
+        json::array({"lichess.adapter"}));
+    std::ifstream updated_input(configuration);
+    const json updated = json::parse(updated_input);
+    REQUIRE(
+        updated.at("timing").at("transport_profile_path") ==
+        fs::absolute(transport).lexically_normal().string());
+    updated_input.close();
     fs::remove_all(root);
 }
 
@@ -705,7 +877,7 @@ TEST_CASE("Lichess safety profiles preserve qualification and manage the evidenc
     fs::remove_all(root);
 }
 
-TEST_CASE("Lichess installation plans block until every qualified profile is imported") {
+TEST_CASE("Lichess installation is disabled without blocking on onboarding evidence") {
     const fs::path root = temporary_directory();
     const SetupPaths paths = paths_under(root);
     const json catalog{
@@ -716,15 +888,16 @@ TEST_CASE("Lichess installation plans block until every qualified profile is imp
         {"components",
          json::array({component("manager.core"), component("lichess.adapter")})},
     };
-    const json blocked =
+    const json disabled =
         SetupEngine::plan(catalog, paths, "custom", {"lichess.adapter"}, true, false);
-    REQUIRE(blocked.at("blockers").size() == 4);
-    REQUIRE(std::all_of(
-        blocked.at("blockers").begin(), blocked.at("blockers").end(),
-        [](const json& blocker) {
-            return blocker.value("code", "") == "required_locator_missing" &&
-                   blocker.value("component_id", "") == "lichess.adapter";
-        }));
+    REQUIRE(disabled.at("blockers").empty());
+    const auto adapter = std::find_if(
+        disabled.at("actions").begin(), disabled.at("actions").end(),
+        [](const json& action) {
+            return action.value("component_id", "") == "lichess.adapter";
+        });
+    REQUIRE(adapter != disabled.at("actions").end());
+    REQUIRE(adapter->at("enabled") == false);
 
     const json identity{
         {"engine", {{"executable_sha256", "sha256:" + std::string(64, 'a')}}},
@@ -779,6 +952,13 @@ TEST_CASE("Lichess installation plans block until every qualified profile is imp
     const json ready =
         SetupEngine::plan(catalog, paths, "custom", {"lichess.adapter"}, true, false);
     REQUIRE(ready.at("blockers").empty());
+    const auto still_disabled = std::find_if(
+        ready.at("actions").begin(), ready.at("actions").end(),
+        [](const json& action) {
+            return action.value("component_id", "") == "lichess.adapter";
+        });
+    REQUIRE(still_disabled != ready.at("actions").end());
+    REQUIRE(still_disabled->at("enabled") == false);
     fs::remove_all(root);
 }
 

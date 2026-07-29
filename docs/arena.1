@@ -1,0 +1,76 @@
+.TH ARENA 1 "July 2026" "UCI Arena Manager" "User Commands"
+.SH NAME
+arena \- control UCI Arena Manager from the command line
+.SH SYNOPSIS
+.B arena
+[\fB\-\-endpoint\fR \fIURL\fR]
+[\fB\-\-data\-dir\fR \fIPATH\fR]
+[\fB\-\-output\fR \fIhuman|json|jsonl\fR]
+\fICOMMAND\fR [\fIOPTIONS\fR]
+.SH DESCRIPTION
+.B arena
+uses the authenticated loopback control contract shared by the desktop
+application and dashboard. Global flags must appear before the command.
+.SH GLOBAL OPTIONS
+.TP
+.BI \-\-endpoint " URL"
+Manager service endpoint. The default is http://127.0.0.1:47831.
+.TP
+.BI \-\-data\-dir " PATH"
+Manager data directory containing client.key. The default is
+/var/lib/uci-arena on Linux.
+.TP
+.BI \-\-output " FORMAT"
+Output format: human, json, or jsonl.
+.TP
+.B \-h, \-\-help
+Show context-sensitive help. Use
+.B arena COMMAND \-\-help
+for command options.
+.SH COMMON COMMANDS
+.TP
+.B status
+Show control-plane status.
+.TP
+.B health
+Show control-plane health.
+.TP
+.B doctor
+Run safe local diagnostics.
+.TP
+.B ui
+Open the paired dashboard and host the interactive-user path picker.
+.TP
+.B engine list
+List registered UCI engines.
+.TP
+.BI "engine probe " EXECUTABLE
+Probe a UCI executable without registering it.
+.TP
+.B service profiles
+List external service adapter profiles.
+.TP
+.B daemon status
+Query the native Manager service state.
+.SH EXAMPLES
+.nf
+arena status
+arena --output json health
+arena ui
+arena engine probe /opt/engines/my-engine
+arena engine list
+arena service profiles
+arena --endpoint http://127.0.0.1:47831 doctor
+.fi
+.SH SETUP
+Suite component installation is performed by
+.BR arena-setup (1).
+Run
+.B arena-setup \-\-help
+for inventory, plan, apply, verify, repair, upgrade, and uninstall operations.
+.SH FILES
+.TP
+.I /var/lib/uci-arena/client.key
+Local CLI authentication key. Do not copy or expose it.
+.SH SEE ALSO
+.BR systemctl (1)

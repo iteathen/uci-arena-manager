@@ -227,7 +227,9 @@ int main(int argc, char** argv) {
         std::filesystem::path engine_working_directory;
         std::vector<std::string> engine_arguments;
         bool engine_dry_run = false;
-        engine_add->add_option("--name", engine_name)->required();
+        engine_add->add_option(
+            "--name", engine_name,
+            "Optional display name; defaults to the identity reported by the engine");
         engine_add->add_option("--executable", engine_executable)->required();
         engine_add->add_option("--working-directory", engine_working_directory);
         engine_add->add_option("--arg", engine_arguments);
@@ -437,7 +439,8 @@ int main(int argc, char** argv) {
             if (!no_picker) {
                 std::cout << "Local browse helper active on 127.0.0.1:" << picker_port
                           << "; press Ctrl+C to stop it.\n";
-                arena::cli::run_ui_picker(picker_port, picker_token, dashboard_origin);
+                arena::cli::run_ui_picker(
+                    picker_port, picker_token, dashboard_origin, data_directory);
             }
         } else if (*engine_list) {
             print_json(client.get("/api/v1/resources/engine"), output);

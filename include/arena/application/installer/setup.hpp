@@ -40,6 +40,10 @@ class SetupEngine final {
                                                     const std::filesystem::path& path,
                                                     bool managed_copy = false);
 
+    [[nodiscard]] static nlohmann::json save_lichess_token_reference(
+        const std::filesystem::path& data_root,
+        const std::filesystem::path& path);
+
     [[nodiscard]] static nlohmann::json
     plan(const nlohmann::json& catalog, const SetupPaths& paths, const std::string& preset,
          const std::vector<std::string>& selected_components, bool offline,

@@ -268,6 +268,15 @@ int run_control_plane(const Options& options) {
                             parameters[field] = body.at(field);
                         }
                     }
+                    if (!parameters.contains("working_directory") &&
+                        parameters.contains("executable") &&
+                        parameters.at("executable").is_string()) {
+                        parameters["working_directory"] =
+                            std::filesystem::path(
+                                parameters.at("executable").get<std::string>())
+                                .parent_path()
+                                .string();
+                    }
                     const json command{
                         {"schema_version", 1},
                         {"request_id", arena::domain::uuid_v7()},
@@ -281,6 +290,13 @@ int run_control_plane(const Options& options) {
                     };
                     const json preview =
                         control_plane->submit(command, "local-admin");
+                    if (!parameters.contains("display_name") &&
+                        preview.contains("resource") &&
+                        preview.at("resource").contains("data")) {
+                        parameters["display_name"] =
+                            preview.at("resource").at("data")
+                                .value("display_name", "UCI engine");
+                    }
                     callback(response({
                         {"schema", "arena_engine_probe_result_v1"},
                         {"schema_version", 1},
@@ -302,6 +318,82 @@ int run_control_plane(const Options& options) {
                             {"diagnostic",
                              arena::application::problem_json(failure)},
                         },
+                        status_code(failure.http_status())));
+                }
+            },
+            {drogon::Post});
+
+        app.registerHandler(
+            "/api/v1/components",
+            [control_plane, auth](
+                const HttpRequestPtr& request,
+                std::function<void(const HttpResponsePtr&)>&& callback) {
+                if (!authorized(request, auth)) {
+                    callback(response(
+                        {{"code", "authentication_required"}},
+                        drogon::k401Unauthorized));
+                    return;
+                }
+                callback(response(control_plane->component_inventory()));
+            },
+            {drogon::Get});
+
+        app.registerHandler(
+            "/api/v1/bot-profiles",
+            [control_plane, auth](
+                const HttpRequestPtr& request,
+                std::function<void(const HttpResponsePtr&)>&& callback) {
+                if (!authorized(request, auth)) {
+                    callback(response(
+                        {{"code", "authentication_required"}},
+                        drogon::k401Unauthorized));
+                    return;
+                }
+                callback(response(control_plane->bot_profiles()));
+            },
+            {drogon::Get});
+
+        app.registerHandler(
+            "/api/v1/bot-candidates",
+            [control_plane, auth](
+                const HttpRequestPtr& request,
+                std::function<void(const HttpResponsePtr&)>&& callback) {
+                if (!authorized(request, auth)) {
+                    callback(response(
+                        {{"code", "authentication_required"}},
+                        drogon::k401Unauthorized));
+                    return;
+                }
+                callback(response(control_plane->bot_candidates()));
+            },
+            {drogon::Get});
+
+        app.registerHandler(
+            "/api/v1/bot-token-reference",
+            [control_plane, auth](
+                const HttpRequestPtr& request,
+                std::function<void(const HttpResponsePtr&)>&& callback) {
+                if (!mutation_authorized(request, auth)) {
+                    callback(response(
+                        {{"code", "authentication_required"}},
+                        drogon::k401Unauthorized));
+                    return;
+                }
+                try {
+                    const json body = parse_body(request);
+                    if (!body.is_object() || !body.contains("path") ||
+                        !body.at("path").is_string() ||
+                        body.at("path").get_ref<const std::string&>().empty()) {
+                        throw arena::application::CommandFailure(
+                            "invalid_bot_token_reference",
+                            "path must be a nonempty string",
+                            400);
+                    }
+                    callback(response(control_plane->save_bot_token_reference(
+                        body.at("path").get<std::string>())));
+                } catch (const arena::application::CommandFailure& failure) {
+                    callback(response(
+                        arena::application::problem_json(failure),
                         status_code(failure.http_status())));
                 }
             },

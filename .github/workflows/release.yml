@@ -81,6 +81,7 @@ jobs:
             throw 'TUF_ROOT_SHA256 must pin the exact offline-root metadata'
           }
           node tools/release/clean-build.mjs `
+            --manager-only `
             --platform '${{ matrix.target }}' `
             --version '${{ needs.validate.outputs.version }}' `
             --tuf-root-sha256 '${{ vars.TUF_ROOT_SHA256 }}'
@@ -673,13 +674,13 @@ jobs:
         run: |
           $version = '${{ needs.validate.outputs.version }}'
           dotnet tool install --global wix --version 6.0.2
-          wix extension add -g WixToolset.Bal.wixext/6.0.2
+          wix extension add -g WixToolset.BootstrapperApplications.wixext/6.0.2
           $media = (Resolve-Path dist/windows-media).Path
           $setup = Join-Path $media 'bin/arena-setup.exe'
           $msi = (Resolve-Path `
             "dist/windows-installers/UCI-Arena-Manager-$version-windows-x64.msi").Path
           wix build `
-            -ext WixToolset.Bal.wixext `
+            -ext WixToolset.BootstrapperApplications.wixext `
             -d "ProductVersion=$version" `
             -d "SuiteSetup=$setup" `
             -d "ManagerMsi=$msi" `
@@ -690,7 +691,7 @@ jobs:
             packaging/windows/Bundle.wxs `
             dist/windows-installers/SuiteMediaPayloads.wxs
           wix build `
-            -ext WixToolset.Bal.wixext `
+            -ext WixToolset.BootstrapperApplications.wixext `
             -d "ProductVersion=$version" `
             -d "SuiteSetup=$setup" `
             -d "ManagerMsi=$msi" `

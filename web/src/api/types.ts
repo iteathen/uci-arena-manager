@@ -79,6 +79,12 @@ export interface EngineCandidate {
   uci_options: Record<string, unknown>
   component_id?: string
   component_version?: string
+  recommended?: boolean
+  default_model?: {
+    model_id: string
+    display_name: string
+    input_adapter_id: string
+  }
   fingerprint?: string
   issues: Array<{ code: string; detail: string }>
 }
@@ -161,4 +167,78 @@ export interface ManagedServiceData extends Record<string, unknown> {
   workspace?: string
   startup_installed?: boolean
   startup_control?: string
+}
+
+export interface ComponentInventory {
+  schema: 'arena_component_inventory_v1'
+  schema_version: 1
+  retained_catalog_available: boolean
+  components: Array<{
+    component_id: string
+    display_name: string
+    optional: boolean
+    package_state: 'installed' | 'missing' | 'broken'
+    downloadable: boolean
+    component_version?: string
+    startup_installed?: boolean
+    issue?: string
+    default_model?: {
+      model_id: string
+      display_name: string
+      input_adapter_id: string
+    }
+  }>
+}
+
+export interface BotProfile {
+  profile_id: 'lichess_bot'
+  display_name: string
+  adapter_component_id: 'lichess.adapter'
+  optional: true
+  capabilities: string[]
+}
+
+export interface BotCandidate {
+  candidate_id: string
+  profile_id: 'lichess_bot'
+  display_name: string
+  adapter_component_id: 'lichess.adapter'
+  package_state: 'installed' | 'missing'
+  configuration_state: 'configured' | 'missing'
+  token_reference_available: boolean
+  startup_state: 'installed' | 'disabled'
+  state: 'ready_to_probe' | 'blocked'
+  options: Record<string, unknown>
+  default_model?: {
+    model_id: string
+    display_name: string
+    input_adapter_id: string
+  }
+  readiness: Record<
+    string,
+    'ready' | 'missing' | 'not_verified' | 'verified' | 'disabled' | 'enabled'
+  >
+  issues: Array<{ code: string; detail: string }>
+}
+
+export interface BotCandidates {
+  schema: 'arena_bot_candidates_v1'
+  schema_version: 1
+  candidates: BotCandidate[]
+}
+
+export interface BotProbeResult {
+  schema: 'arena_bot_probe_result_v1'
+  schema_version: 1
+  state: 'passed'
+  account_name: string
+  is_bot: true
+  games: number
+}
+
+export interface BotTokenReferenceResult {
+  schema: 'arena_bot_token_reference_result_v1'
+  schema_version: 1
+  state: 'saved'
+  validation: 'path_reference_only'
 }

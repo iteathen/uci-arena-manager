@@ -30,25 +30,26 @@ void write_installed_component(
     const std::string& id,
     const std::string& entrypoint_name,
     const std::string& entrypoint_path,
-    const std::vector<fs::path>& data_paths = {}) {
+    const std::vector<fs::path>& data_paths = {},
+    const json& manifest_fields = json::object()) {
     const fs::path active = install_root / id / "1.0.0";
     const fs::path entrypoint = active / entrypoint_path;
     fs::create_directories(entrypoint.parent_path());
     std::ofstream(entrypoint, std::ios::binary) << "fixture";
-    write_json(
-        active / "arena-component.json",
-        {
-            {"schema", "arena_install_component_v1"},
-            {"component_id", id},
-            {"component_version", "1.0.0"},
-            {"entrypoints", {{entrypoint_name, entrypoint_path}}},
-            {"files",
-             json::array(
-                 {{{"path", entrypoint_path},
-                   {"sha256",
-                    "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d"},
-                   {"size_bytes", 7}}})},
-        });
+    json manifest{
+        {"schema", "arena_install_component_v1"},
+        {"component_id", id},
+        {"component_version", "1.0.0"},
+        {"entrypoints", {{entrypoint_name, entrypoint_path}}},
+        {"files",
+         json::array(
+             {{{"path", entrypoint_path},
+               {"sha256",
+                "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d"},
+               {"size_bytes", 7}}})},
+    };
+    manifest.update(manifest_fields);
+    write_json(active / "arena-component.json", manifest);
     json paths = json::array();
     for (const auto& path : data_paths) {
         fs::create_directories(path);
@@ -246,6 +247,221 @@ TEST_CASE("installed service receipts reconcile exact private runtime entrypoint
         arena::application::ServiceCatalog::installed_registrations(data);
     REQUIRE(tampered.at("services").empty());
     REQUIRE(tampered.at("errors").size() == 1);
+    fs::remove_all(root);
+}
+
+TEST_CASE("component inventory separates package and startup truth") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-component-inventory-" + arena::domain::uuid_v7());
+    const fs::path data = root / "data";
+    const fs::path install = root / "install";
+    write_installed_component(
+        data, install, "book_forge.service", "cli", "app/book-forge.mjs");
+    json receipt = read_json(data / "receipts" / "book_forge.service.json");
+    receipt["startup"] = {{"installed", true}};
+    write_json(data / "receipts" / "book_forge.service.json", receipt);
+
+    const json inventory =
+        arena::application::ServiceCatalog::component_inventory(data);
+    const auto& components = inventory.at("components");
+    const auto found = std::find_if(
+        components.begin(), components.end(), [](const json& component) {
+            return component.value("component_id", "") == "book_forge.service";
+        });
+    REQUIRE(found != components.end());
+    REQUIRE(found->at("package_state") == "installed");
+    REQUIRE(found->at("startup_installed") == true);
+    const auto missing = std::find_if(
+        components.begin(), components.end(), [](const json& component) {
+            return component.value("component_id", "") ==
+                   "uci_arena_evidence.service";
+        });
+    REQUIRE(missing != components.end());
+    REQUIRE(missing->at("package_state") == "missing");
+    fs::remove_all(root);
+}
+
+TEST_CASE("Lichess bot discovery projects every missing readiness dimension") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-bot-discovery-" + arena::domain::uuid_v7());
+    const fs::path data = root / "data";
+    const fs::path install = root / "install";
+    write_installed_component(
+        data, install, "node_runtime.private", "node", "bin/node");
+    write_installed_component(
+        data, install, "lichess.adapter", "adapter", "app/adapter.mjs",
+        {root / "workspaces" / "lichess-adapter"});
+    const fs::path configuration =
+        root / "workspaces" / "lichess-adapter" / "manager-config.json";
+    write_json(
+        configuration,
+        {
+            {"capacity", {{"total_slots", 1}}},
+            {"challenges", {{"accept", true}}},
+            {"scheduler", {{"enabled", false}}},
+        });
+    json receipt = read_json(data / "receipts" / "lichess.adapter.json");
+    receipt["state"] = "installed_disabled";
+    receipt["configuration_path"] = configuration.string();
+    write_json(data / "receipts" / "lichess.adapter.json", receipt);
+    const fs::path token = root / "operator-token.txt";
+    const std::string sentinel = "TOKEN_VALUE_MUST_NOT_BE_READ";
+    std::ofstream(token) << sentinel;
+    write_json(
+        data / "locators" / "lichess_token_path.json",
+        {
+            {"schema", "arena_saved_locator_v1"},
+            {"schema_version", 1},
+            {"kind", "lichess_token_path"},
+            {"mode", "in_place_reference"},
+            {"path", token.string()},
+            {"validation", {{"validation", "path_reference_only"}}},
+        });
+
+    const json discovered =
+        arena::application::ServiceCatalog::discover_bot(data);
+    const json& candidate = discovered.at("candidates").at(0);
+    REQUIRE(candidate.at("state") == "blocked");
+    REQUIRE(candidate.at("package_state") == "installed");
+    REQUIRE(candidate.at("token_reference_available") == true);
+    REQUIRE(candidate.at("readiness").at("verified_adapter") == "ready");
+    REQUIRE(candidate.at("readiness").at("adapter_runtime") == "ready");
+    REQUIRE(
+        candidate.at("readiness").at("verified_uci_arena_engine") ==
+        "missing");
+    REQUIRE(candidate.at("readiness").at("active_model") == "missing");
+    REQUIRE(candidate.at("readiness").at("opening_book") == "missing");
+    REQUIRE(candidate.at("readiness").at("syzygy") == "missing");
+    REQUIRE(candidate.at("readiness").at("timing_profile") == "missing");
+    REQUIRE(candidate.at("readiness").at("single_game_profile") == "missing");
+    REQUIRE(candidate.at("readiness").at("capacity_profile") == "missing");
+    REQUIRE(candidate.at("readiness").at("transport_profile") == "missing");
+    REQUIRE(candidate.at("readiness").at("token_reference") == "ready");
+    REQUIRE(
+        candidate.at("readiness").at("bot_account_probe") ==
+        "not_verified");
+    REQUIRE(candidate.at("readiness").at("startup") == "disabled");
+    REQUIRE(discovered.dump().find(sentinel) == std::string::npos);
+    fs::remove_all(root);
+}
+
+TEST_CASE("Lichess bot discovery becomes probe-ready only with exact visible prerequisites") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-bot-ready-" + arena::domain::uuid_v7());
+    const fs::path data = root / "data";
+    const fs::path install = root / "install";
+    write_installed_component(
+        data, install, "node_runtime.private", "node", "bin/node");
+    write_installed_component(
+        data,
+        install,
+        "uci_arena.engine",
+        "uci",
+        "bin/uci_arena_engine",
+        {},
+        {
+            {"default_model",
+             {
+                 {"model_id", "qualified-model-v1"},
+                 {"display_name", "Qualified Model"},
+                 {"input_adapter_id", "qualified_dense_planes_v1"},
+             }},
+        });
+    write_installed_component(
+        data,
+        install,
+        "opening_book.standard",
+        "book",
+        "opening_books/default.bin");
+    write_installed_component(
+        data,
+        install,
+        "syzygy.wdl.3-4-5",
+        "tablebase",
+        "tablebases/KQvK.rtbw");
+    write_installed_component(
+        data,
+        install,
+        "lichess.adapter",
+        "adapter",
+        "app/adapter.mjs",
+        {root / "workspaces" / "lichess-adapter"});
+
+    const fs::path timing = root / "uci_time_profile_v3.json";
+    const fs::path single = root / "uci_arena_single_game_profile_v1.json";
+    const fs::path capacity =
+        root / "uci_arena_lichess_capacity_profile_v1.json";
+    const fs::path transport = root / "transport_profile_v2.json";
+    const fs::path token = root / "operator-token.txt";
+    for (const auto& path : {timing, single, capacity, transport, token}) {
+        std::ofstream(path) << "fixture";
+    }
+    const auto write_locator = [&data](
+                                   const std::string& kind,
+                                   const fs::path& path) {
+        write_json(
+            data / "locators" / (kind + ".json"),
+            {
+                {"schema", "arena_saved_locator_v1"},
+                {"schema_version", 1},
+                {"kind", kind},
+                {"mode", "in_place_reference"},
+                {"path", path.string()},
+                {"validation", json::object()},
+            });
+    };
+    write_locator("timing_profile", timing);
+    write_locator("lichess_single_game_profile", single);
+    write_locator("lichess_capacity_profile", capacity);
+    write_locator("lichess_transport_profile", transport);
+    write_locator("lichess_token_path", token);
+
+    const fs::path configuration =
+        root / "workspaces" / "lichess-adapter" / "manager-config.json";
+    write_json(
+        configuration,
+        {
+            {"engine",
+             {
+                 {"time_profile", timing.string()},
+                 {"single_game_profile", single.string()},
+             }},
+            {"capacity",
+             {
+                 {"capacity_profile", capacity.string()},
+                 {"total_slots", 1},
+             }},
+            {"timing", {{"transport_profile_path", transport.string()}}},
+            {"challenges", {{"accept", true}}},
+            {"scheduler", {{"enabled", false}}},
+        });
+    json receipt = read_json(data / "receipts" / "lichess.adapter.json");
+    receipt["state"] = "installed_disabled";
+    receipt["configuration_path"] = configuration.string();
+    write_json(data / "receipts" / "lichess.adapter.json", receipt);
+
+    const json candidate =
+        arena::application::ServiceCatalog::discover_bot(data)
+            .at("candidates")
+            .at(0);
+    REQUIRE(candidate.at("state") == "ready_to_probe");
+    for (const auto& dimension :
+         {"verified_adapter", "adapter_runtime",
+          "verified_uci_arena_engine", "active_model", "opening_book",
+          "syzygy", "timing_profile", "single_game_profile",
+          "capacity_profile", "transport_profile", "token_reference"}) {
+        REQUIRE(candidate.at("readiness").at(dimension) == "ready");
+    }
+    REQUIRE(
+        candidate.at("readiness").at("bot_account_probe") ==
+        "not_verified");
+    REQUIRE(candidate.at("readiness").at("startup") == "disabled");
+    REQUIRE(
+        candidate.at("default_model").at("display_name") ==
+        "Qualified Model");
     fs::remove_all(root);
 }
 

@@ -216,6 +216,7 @@ test("catalog assembly preserves provider digests and dependency ownership", () 
       component.id === "lichess.adapter").dependencies,
     ["node_runtime.private", "uci_arena.engine", "opening_book.standard"],
   );
+  assert.ok(catalog.presets.complete_arena.includes("lichess.adapter"));
   assert.equal(
     catalog.components.find((component) =>
       component.id === "book_forge.service")

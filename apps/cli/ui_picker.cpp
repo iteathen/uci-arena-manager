@@ -1,5 +1,8 @@
 #include "ui_picker.hpp"
 
+#include "arena/application/process_supervisor.hpp"
+#include "arena/application/service_catalog.hpp"
+
 #include <drogon/drogon.h>
 #include <nlohmann/json.hpp>
 #include <sodium.h>
@@ -386,7 +389,8 @@ std::string make_ui_picker_token() {
 void run_ui_picker(
     const std::uint16_t port,
     const std::string& bearer_token,
-    const std::string& dashboard_origin) {
+    const std::string& dashboard_origin,
+    const std::filesystem::path& manager_data_root) {
     auto& application = drogon::app();
     application.registerHandler(
         "/v1/pick",
@@ -422,6 +426,76 @@ void run_ui_picker(
                 callback(json_response(
                     problem("invalid_picker_request", error.what()),
                     drogon::k400BadRequest,
+                    dashboard_origin));
+            }
+        },
+        {drogon::Post, drogon::Options});
+    application.registerHandler(
+        "/v1/bot-probe",
+        [bearer_token, dashboard_origin, manager_data_root](
+            const drogon::HttpRequestPtr& request,
+            std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+            if (request->method() == drogon::Options) {
+                if (request->getHeader("Origin") != dashboard_origin) {
+                    callback(json_response(
+                        problem("origin_rejected", "Dashboard origin is not authorized"),
+                        drogon::k403Forbidden,
+                        dashboard_origin));
+                    return;
+                }
+                callback(json_response(
+                    json::object(), drogon::k204NoContent, dashboard_origin));
+                return;
+            }
+            if (request->getHeader("Origin") != dashboard_origin ||
+                request->getHeader("Authorization") !=
+                    "Bearer " + bearer_token) {
+                callback(json_response(
+                    problem(
+                        "picker_unauthorized",
+                        "Interactive-user helper session is unavailable"),
+                    drogon::k401Unauthorized,
+                    dashboard_origin));
+                return;
+            }
+            try {
+                if (request->body().size() > 1024) {
+                    throw std::invalid_argument("helper request is too large");
+                }
+                const json input = json::parse(request->body());
+                if (!input.is_object() || input.size() != 1 ||
+                    input.value("schema", "") !=
+                        "arena_ui_bot_probe_request_v1") {
+                    throw std::invalid_argument(
+                        "schema must be arena_ui_bot_probe_request_v1");
+                }
+                arena::application::ProcessSupervisor process;
+                callback(json_response(
+                    arena::application::ServiceCatalog::probe_bot(
+                        manager_data_root, process),
+                    drogon::k200OK,
+                    dashboard_origin));
+            } catch (const std::invalid_argument&) {
+                callback(json_response(
+                    problem(
+                        "invalid_bot_probe_request",
+                        "Interactive BOT probe request is invalid"),
+                    drogon::k400BadRequest,
+                    dashboard_origin));
+            } catch (const json::exception&) {
+                callback(json_response(
+                    problem(
+                        "invalid_bot_probe_request",
+                        "Interactive BOT probe request is invalid"),
+                    drogon::k400BadRequest,
+                    dashboard_origin));
+            } catch (const std::exception&) {
+                callback(json_response(
+                    problem(
+                        "bot_probe_failed",
+                        "The verified adapter could not confirm a BOT account. "
+                        "Review the visible readiness blockers and token-file access."),
+                    drogon::k422UnprocessableEntity,
                     dashboard_origin));
             }
         },

@@ -32,6 +32,18 @@
     "uci_options": {"type": "object"},
     "component_id": {"type": "string"},
     "component_version": {"type": "string"},
+    "recommended": {"type": "boolean"},
+    "default_model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_id", "display_name", "input_adapter_id", "root"],
+      "properties": {
+        "model_id": {"type": "string"},
+        "display_name": {"type": "string"},
+        "input_adapter_id": {"type": "string"},
+        "root": {"type": "string"}
+      }
+    },
     "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "issues": {
       "type": "array",

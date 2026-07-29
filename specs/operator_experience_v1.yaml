@@ -36,6 +36,9 @@ requirements:
   - optional_external_service_integrations
   - auto_discovery_with_manual_locator_fallback
   - model_neutral_engine_identity
+  - command_line_free_normal_startup
+  - truthful_install_configuration_runtime_states
+  - installed_cli_on_path_with_offline_help
 
 engine_identity_experience:
   requirements:
@@ -68,6 +71,10 @@ managed_service_experience:
       process Start, Stop, or Restart controls that would create a duplicate
       daemon.
     - Do not show an unconfigured optional service as an unhealthy manager resource.
+    - Show Installed/Missing, Configured/Not configured, and current runtime
+      activity as separate states on the catalog card.
+    - When a signed component is missing, offer a reviewed foreground
+      download/install plan without granting package authority to the service.
 
 local_path_picker:
   owner: arena_ui_session_helper
@@ -88,6 +95,44 @@ local_path_picker:
     - Closing `arena ui` removes picker authority without invalidating the
       already-paired Manager dashboard session.
 
+desktop_launcher:
+  executable: uci-arena-manager
+  behavior:
+    - Runs without a console window.
+    - Verifies the local service, establishes pairing, starts the authenticated
+      interactive-user helper, and opens the dashboard in the default browser.
+    - Installs product-neutral application, installer, shortcut, and browser icons.
+    - A second invocation reuses the per-user launcher and opens the dashboard.
+  setup_helper:
+    - Accepts only typed inventory, plan, and apply requests for catalog component ids.
+    - Uses only the adjacent verified arena-setup, retained signed catalog, and fixed roots.
+    - Rejects executable, argv, shell, and caller-selected catalog fields.
+    - Shows dependencies, bytes, disk impact, elevation, and restart before confirmation.
+
+cli_experience:
+  executable: arena
+  requirements:
+    - Windows setup adds the installed bin directory to the machine PATH and
+      removes only its own PATH entry during uninstall.
+    - Linux packages install arena in the normal executable path and install
+      arena(1) under the platform man hierarchy.
+    - arena --help, every command help surface, the man page, and README use
+      the same names for --endpoint, --data-dir, --output, and common commands.
+    - Help documents that global flags precede the subcommand and includes
+      status, health, doctor, ui, engine, service, and setup examples.
+
+bot_experience:
+  profile: lichess_bot
+  requirements:
+    - Replace the generic bot table with install, detection, account probe,
+      readiness, options, and lifecycle views.
+    - Use a token-file path only until broader account management is specified.
+    - Detect and reject non-BOT accounts through the verified adapter.
+    - Default engine selection to the verified uci_arena.engine component and
+      show its model package separately.
+    - Show every engine, knowledge, evidence, capacity, transport, credential,
+      and startup blocker without claiming the bot is active.
+
 knowledge_asset_setup:
   location: configuration
   requirements:
@@ -104,9 +149,10 @@ knowledge_asset_setup:
       tablebase components.
     - Generated commands place global arena-setup options before the selected
       subcommand so the copied command is directly executable.
-    - The dashboard and Manager service never execute arena-setup or acquire
-      package-execution authority; the foreground operator reviews and invokes
-      the command explicitly.
+    - The dashboard and Manager service never execute arena-setup package
+      operations or acquire package-install authority. The token-reference
+      mutation is the sole locator-only exception: it reuses path-metadata
+      validation and cannot download, activate, repair, or remove a component.
     - Lichess token contents are never read, previewed, copied, or placed in
       the generated command; only the selected path is present.
 

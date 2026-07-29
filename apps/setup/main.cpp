@@ -5,10 +5,13 @@
 #include <filesystem>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <set>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
+#include "arena/application/broker_policy.hpp"
 #include "arena/application/installer/setup.hpp"
 
 namespace {
@@ -17,6 +20,24 @@ namespace fs = std::filesystem;
 using arena::application::installer::SetupEngine;
 using arena::application::installer::SetupPaths;
 using nlohmann::json;
+
+const char* manager_service_name() {
+#ifdef _WIN32
+    return "UCIArenaManager";
+#else
+    return "uci-arena-manager.service";
+#endif
+}
+
+bool manager_service_running() {
+    const int status = arena::application::perform_service_action(
+        manager_service_name(), "status");
+#ifdef _WIN32
+    return status == 4;  // SERVICE_RUNNING
+#else
+    return status == 0;
+#endif
+}
 
 fs::path environment_path(const char* name, const fs::path& fallback) {
     if (const char* value = std::getenv(name); value != nullptr && *value != '\0') {
@@ -116,6 +137,7 @@ int main(int argc, char** argv) {
         bool download_missing_knowledge = false;
         bool download_missing_books = false;
         bool download_missing_tablebases = false;
+        std::vector<std::string> bundle_features;
         auto configure_plan = [&](CLI::App* command) {
             command->add_option("--preset", preset, "complete_arena, manager_only, or custom")
                 ->check(CLI::IsMember({"complete_arena", "manager_only", "custom"}));
@@ -128,6 +150,10 @@ int main(int argc, char** argv) {
                               "Add the signed standard opening-book component");
             command->add_flag("--download-missing-tablebases", download_missing_tablebases,
                               "Add the signed bounded Syzygy WDL component");
+            command->add_option(
+                "--bundle-feature", bundle_features,
+                "Installer feature selection as component-id=0 or component-id=1; "
+                "may be repeated");
         };
 
         auto* plan_command = app.add_subcommand("plan", "Resolve dependencies and capacity");
@@ -200,6 +226,36 @@ int main(int argc, char** argv) {
             const json catalog = SetupEngine::load_catalog(
                 catalog_path, metadata_directory, allow_unsigned_development_catalog,
                 paths.data_root / "trust" / "tuf-versions.json");
+            std::unordered_map<std::string, bool> feature_state{
+                {"uci_arena.engine", true},
+                {"book_forge.service", true},
+                {"uci_arena_evidence.service", true},
+                {"lichess.adapter", true},
+            };
+            if (!bundle_features.empty()) {
+                for (const auto& feature : bundle_features) {
+                    const auto separator = feature.find('=');
+                    if (separator == std::string::npos ||
+                        (feature.substr(separator + 1) != "0" &&
+                         feature.substr(separator + 1) != "1")) {
+                        throw std::runtime_error(
+                            "bundle feature must be component-id=0 or component-id=1");
+                    }
+                    const std::string id = feature.substr(0, separator);
+                    if (!feature_state.contains(id)) {
+                        throw std::runtime_error("unknown bundle feature " + id);
+                    }
+                    feature_state.at(id) = feature.substr(separator + 1) == "1";
+                }
+                preset = "custom";
+                components.clear();
+                for (const auto& id : {"uci_arena.engine", "book_forge.service",
+                                       "uci_arena_evidence.service", "lichess.adapter"}) {
+                    if (feature_state.at(id)) {
+                        components.emplace_back(id);
+                    }
+                }
+            }
             const json resolved = SetupEngine::plan(
                 catalog, paths, preset, components, offline, download_missing_knowledge,
                 download_missing_books, download_missing_tablebases,
@@ -209,8 +265,68 @@ int main(int argc, char** argv) {
                 curl_global_cleanup();
                 return resolved.at("blockers").empty() ? 0 : 3;
             }
-            json result = SetupEngine::apply(catalog, resolved, paths, yes,
-                                             *repair_command || *upgrade_command);
+            const bool feature_reconcile = !bundle_features.empty();
+            const bool restart_manager = paths.restart_manager_service;
+            bool manager_was_running = false;
+            if (feature_reconcile && restart_manager) {
+                manager_was_running = manager_service_running();
+                if (manager_was_running &&
+                    arena::application::perform_service_action(
+                        manager_service_name(), "stop") != 0) {
+                    throw std::runtime_error(
+                        "Manager service could not be stopped for component transition");
+                }
+                paths.restart_manager_service = false;
+            }
+            json result;
+            try {
+                result = SetupEngine::apply(catalog, resolved, paths, yes,
+                                            *repair_command || *upgrade_command);
+                if (feature_reconcile && result.value("state", "") == "committed") {
+                    std::set<std::string> selected;
+                    for (const auto& action : resolved.at("actions")) {
+                        selected.insert(action.at("component_id").get<std::string>());
+                    }
+                    std::vector<std::string> remove;
+                    for (const auto& id :
+                         {"lichess.adapter", "uci_arena_evidence.service",
+                          "book_forge.service", "uci_arena.engine",
+                          "opening_book.standard", "stockfish.engine",
+                          "node_runtime.private"}) {
+                        if (!selected.contains(id) &&
+                            fs::is_regular_file(
+                                paths.data_root / "receipts" /
+                                (std::string(id) + ".json"))) {
+                            remove.emplace_back(id);
+                        }
+                    }
+                    if (!remove.empty()) {
+                        result["removed_components"] =
+                            SetupEngine::uninstall(paths, remove, true, false);
+                    } else {
+                        result["removed_components"] = json::array();
+                    }
+                }
+            } catch (...) {
+                if (feature_reconcile && restart_manager &&
+                    manager_was_running) {
+                    static_cast<void>(arena::application::perform_service_action(
+                        manager_service_name(), "start"));
+                }
+                throw;
+            }
+            if (feature_reconcile && restart_manager &&
+                manager_was_running &&
+                arena::application::perform_service_action(
+                    manager_service_name(), "start") != 0) {
+                throw std::runtime_error(
+                    "Manager service prior running state could not be restored "
+                    "after component transition");
+            }
+            if (feature_reconcile && restart_manager) {
+                result["manager_service_state_preserved"] =
+                    manager_was_running ? "running" : "stopped";
+            }
             if (result.value("state", "") == "committed") {
                 result["retained_release_media"] = SetupEngine::persist_release_media(
                     catalog, paths, catalog_path, metadata_directory);

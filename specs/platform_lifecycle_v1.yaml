@@ -35,9 +35,32 @@ packages:
   normal_uninstall: preserve_data
   purge: explicit_preview_confirm_optional_export
   self_update: false
+  cli:
+    windows_path_scope: machine_msi_owned
+    linux_manpage: share/man/man1/arena.1
+  selectable_services:
+    initial_state: selected
+    modify: supported
+    major_upgrade: preserve_selection
+    lifecycle: typed_stop_commit_start_verify_with_rollback
   installer:
     executable: arena-setup
     privilege: unprivileged_plan_elevated_commit_only
     broker_dependency: false
     allowed_operations: [inventory, plan, apply, verify, repair, upgrade, uninstall]
     runtime_service_release_authority: false
+
+desktop_application:
+  windows:
+    subsystem: gui
+    shortcut: start_menu
+    icon_formats: [ico]
+  linux:
+    launcher: desktop_entry
+    terminal: false
+    icon_formats: [svg, png]
+  session:
+    binding: random_loopback_port
+    authentication: unguessable_per_process_token
+    authority: [path_picker, typed_component_setup]
+    arbitrary_process_execution: forbidden

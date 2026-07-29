@@ -14,6 +14,7 @@
     "clean_tree",
     "build_preset",
     "installer_authority",
+    "release_scope",
     "release_classification",
     "artifacts"
   ],
@@ -32,6 +33,7 @@
     "clean_tree": {"const": true},
     "build_preset": {"enum": ["windows-release", "linux-release"]},
     "installer_authority": {"const": "iteathen/uci-arena-manager"},
+    "release_scope": {"const": "manager_core_development"},
     "release_classification": {"const": "unsigned_platform_installer_candidate"},
     "artifacts": {
       "type": "array",

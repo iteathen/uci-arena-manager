@@ -2144,7 +2144,7 @@ json generated_component_config(const std::string& component_id, const fs::path&
         const fs::path template_path =
             component_root / "deploy" / "lichess" / "config.uci_arena.template.yml";
         json config = read_json(template_path);
-        if (config.value("schema", "") != "uci_arena_lichess_adapter_v5") {
+        if (config.value("schema", "") != "uci_arena_lichess_adapter_v6") {
             throw std::runtime_error("installed Lichess adapter template is incompatible");
         }
         const fs::path engine = installed_entrypoint(receipts_root, "uci_arena.engine", "uci");
@@ -2294,9 +2294,15 @@ json refresh_import_consumers(const SetupPaths& paths, const std::string& kind) 
             continue;
         }
         const json receipt = read_json(receipt_path);
+        const std::string receipt_state =
+            receipt.value("state", "");
+        const bool refresh_disabled_lichess =
+            component_id == "lichess.adapter" &&
+            receipt_state == "installed_disabled";
         if (receipt.value("schema", "") != "arena_install_receipt_v1" ||
             receipt.value("component_id", "") != component_id ||
-            receipt.value("state", "") != "installed_managed") {
+            (receipt_state != "installed_managed" &&
+             !refresh_disabled_lichess)) {
             continue;
         }
         const fs::path component_root =
@@ -2948,6 +2954,31 @@ json SetupEngine::import_path(const SetupPaths& paths, const std::string& kind,
     };
 }
 
+json SetupEngine::save_lichess_token_reference(
+    const fs::path& data_root,
+    const fs::path& path) {
+    const fs::path normalized = normalized_absolute(path);
+    const json validation =
+        validate_import_locator("lichess_token_path", normalized);
+    write_json_atomic(
+        data_root / "locators" / "lichess_token_path.json",
+        {
+            {"schema", "arena_saved_locator_v1"},
+            {"schema_version", 1},
+            {"kind", "lichess_token_path"},
+            {"mode", "in_place_reference"},
+            {"path", normalized.string()},
+            {"validation", validation},
+            {"saved_at", current_utc_iso()},
+        });
+    return {
+        {"schema", "arena_bot_token_reference_result_v1"},
+        {"schema_version", 1},
+        {"state", "saved"},
+        {"validation", "path_reference_only"},
+    };
+}
+
 json SetupEngine::plan(const json& catalog, const SetupPaths& paths, const std::string& preset,
                        const std::vector<std::string>& selected_components, const bool offline,
                        const bool download_missing_knowledge, const bool download_missing_books,
@@ -3009,30 +3040,12 @@ json SetupEngine::plan(const json& catalog, const SetupPaths& paths, const std::
                            {"component_id", id},
                            {"version", component.at("version")},
                            {"dependencies", component.value("dependencies", json::array())},
-                           {"enabled", already_current ? current_enabled : true},
+                           {"enabled",
+                            already_current ? current_enabled
+                                            : id != "lichess.adapter"},
                            {"artifact", artifact}});
     }
     json blockers = json::array();
-    if (std::find(ids.begin(), ids.end(), "lichess.adapter") != ids.end()) {
-        for (const auto* kind :
-             {"timing_profile", "lichess_single_game_profile",
-              "lichess_capacity_profile", "lichess_transport_profile"}) {
-            try {
-                if (!saved_locator_path(paths.data_root, kind).has_value()) {
-                    blockers.push_back(
-                        {{"code", "required_locator_missing"},
-                         {"component_id", "lichess.adapter"},
-                         {"kind", kind}});
-                }
-            } catch (const std::exception& error) {
-                blockers.push_back(
-                    {{"code", "required_locator_invalid"},
-                     {"component_id", "lichess.adapter"},
-                     {"kind", kind},
-                     {"detail", error.what()}});
-            }
-        }
-    }
     std::uint64_t effective_reserve = reserve;
     if (preset != "complete_arena" && reserve > 0) {
         const fs::space_info workspace_space =
@@ -3285,7 +3298,8 @@ json SetupEngine::apply(const json&, const json& plan, const SetupPaths& paths,
                                             : id == "uci_arena_evidence.service"
                                                 ? "evidence-service"
                                                 : "lichess-adapter");
-                if (action.value("enabled", true)) {
+                if (action.value("enabled", true) ||
+                    id == "lichess.adapter") {
                     fs::create_directories(workspace);
                     const fs::path config_path = workspace / "manager-config.json";
                     journal["actions"].back()["configuration_path"] = config_path.string();
@@ -3365,8 +3379,13 @@ json SetupEngine::apply(const json&, const json& plan, const SetupPaths& paths,
             results.push_back(receipt);
         }
         if (paths.restart_manager_service) {
+#ifdef _WIN32
+            constexpr const char* manager_service = "UCIArenaManager";
+#else
+            constexpr const char* manager_service = "uci-arena-manager.service";
+#endif
             const int restart_result =
-                arena::application::perform_service_action("UCIArenaManager", "restart");
+                arena::application::perform_service_action(manager_service, "restart");
             if (restart_result != 0) {
                 throw std::runtime_error("Manager service restart did not succeed");
             }

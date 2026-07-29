@@ -60,6 +60,17 @@ common_contract:
       pause, and resume remain available, while process start/stop/restart are
       omitted until an authenticated per-user startup-control transport is
       present.
+  operator_projection:
+    dimensions:
+      package: [installed, missing, broken]
+      integration: [not_configured, configured, incompatible]
+      runtime: [active, paused, stopped, degraded, unavailable, unknown]
+    requirements:
+      - Catalog availability is never displayed as installation or runtime activity.
+      - Configured services expose the last successful status sample time.
+      - Page entry and bounded refresh invoke the public status contract.
+      - Compatible saved, environment, PATH, and receipt hints are merged into
+        complete candidates before partial candidates are returned.
 
 profiles:
   book_forge:
