@@ -9,6 +9,7 @@
     "suite_version",
     "release_ready",
     "provider_repository",
+    "managed_repository",
     "components",
     "managed_components"
   ],
@@ -20,6 +21,7 @@
     },
     "release_ready": {"type": "boolean"},
     "provider_repository": {"const": "iteathen/UCI_Arena"},
+    "managed_repository": {"const": "iteathen/uci-arena-manager"},
     "components": {
       "type": "array",
       "items": {"$ref": "#/$defs/providerComponent"}
@@ -150,14 +152,23 @@
             "component_id",
             "component_version",
             "target_triple",
+            "source_commit",
+            "managed_release_tag",
             "artifact_name",
-            "artifact_url",
             "artifact_sha256",
             "artifact_size_bytes",
+            "installed_bytes",
             "component_manifest_sha256",
             "licenses_sha256",
-            "provenance_url",
-            "provenance_sha256"
+            "managed_result_name",
+            "managed_result_sha256",
+            "provenance_bundle_name",
+            "provenance_bundle_sha256",
+            "provenance_certificate_identity",
+            "provenance_oidc_issuer",
+            "provenance_workflow_name",
+            "provenance_workflow_ref",
+            "provenance_workflow_trigger"
           ],
           "properties": {
             "component_id": true,
@@ -172,18 +183,42 @@
             "backup_bytes": true,
             "workspace_reserve_bytes": true,
             "dependencies": true,
-            "artifact_url": {
+            "source_commit": {
               "type": "string",
-              "pattern": "^https://"
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "managed_release_tag": {
+              "type": "string",
+              "pattern": "^managed/[A-Za-z0-9._/-]+$"
             },
             "artifact_size_bytes": {"type": "integer", "minimum": 1},
             "component_manifest_sha256": {"$ref": "#/$defs/digest"},
             "licenses_sha256": {"$ref": "#/$defs/digest"},
-            "provenance_url": {
+            "managed_result_name": {
               "type": "string",
-              "pattern": "^https://"
+              "pattern": "^[A-Za-z0-9._-]+\\.managed-result\\.json$"
             },
-            "provenance_sha256": {"$ref": "#/$defs/digest"},
+            "managed_result_sha256": {"$ref": "#/$defs/digest"},
+            "provenance_bundle_name": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._-]+\\.tar\\.gz\\.sigstore\\.json$"
+            },
+            "provenance_bundle_sha256": {"$ref": "#/$defs/digest"},
+            "provenance_certificate_identity": {
+              "const": "https://github.com/iteathen/uci-arena-manager/.github/workflows/managed-component-release.yml@refs/heads/main"
+            },
+            "provenance_oidc_issuer": {
+              "const": "https://token.actions.githubusercontent.com"
+            },
+            "provenance_workflow_name": {
+              "const": "Managed component candidate"
+            },
+            "provenance_workflow_ref": {
+              "const": "refs/heads/main"
+            },
+            "provenance_workflow_trigger": {
+              "const": "workflow_dispatch"
+            },
             "source_offer_url": {
               "type": "string",
               "pattern": "^https://"

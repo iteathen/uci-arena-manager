@@ -3,6 +3,7 @@
   "suite_version": "0.1.0",
   "release_ready": false,
   "provider_repository": "iteathen/UCI_Arena",
+  "managed_repository": "iteathen/uci-arena-manager",
   "components": [],
   "managed_components": []
 }

@@ -12,6 +12,7 @@ import process from "node:process";
 import {
   assembleCatalog,
   sha256File,
+  validateLockedManagedResult,
   validateLockedProviderResult,
   validateReleaseLock,
 } from "./release-lock.mjs";
@@ -67,23 +68,29 @@ const providerRows = lock.components.map((component) => {
 });
 const managedRows = lock.managed_components.map((component) => {
   const artifactPath = path.join(providerDirectory, component.artifact_name);
-  const provenancePath = path.join(
+  const resultPath = path.join(
     providerDirectory,
-    `${component.artifact_name}.provenance.json`,
+    component.managed_result_name,
+  );
+  const bundlePath = path.join(
+    providerDirectory,
+    component.provenance_bundle_name,
   );
   if (sha256File(artifactPath) !== component.artifact_sha256
-      || sha256File(provenancePath) !== component.provenance_sha256) {
+      || statSync(artifactPath).size !== component.artifact_size_bytes
+      || sha256File(resultPath) !== component.managed_result_sha256
+      || sha256File(bundlePath) !== component.provenance_bundle_sha256) {
     throw new Error(`managed bytes do not match lock for ${component.component_id}`);
   }
+  const result = JSON.parse(readFileSync(resultPath, "utf8"));
+  validateLockedManagedResult(component, result, statSync(artifactPath).size);
   return {
     ...component,
     artifactPath,
-    provenancePath,
+    bundlePath,
+    resultPath,
     managed: true,
-    result: {
-      component_version: component.component_version,
-      artifact_size_bytes: component.artifact_size_bytes,
-    },
+    result,
   };
 });
 const rows = [...providerRows, ...managedRows];
@@ -111,8 +118,12 @@ for (const row of providerRows) {
 }
 for (const row of managedRows) {
   copyFileSync(
-    row.provenancePath,
-    path.join(provenance, path.basename(row.provenancePath)),
+    row.resultPath,
+    path.join(provenance, row.managed_result_name),
+  );
+  copyFileSync(
+    row.bundlePath,
+    path.join(provenance, row.provenance_bundle_name),
   );
 }
 for (const artifact of managerArtifacts) {

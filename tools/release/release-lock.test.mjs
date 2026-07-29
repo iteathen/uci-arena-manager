@@ -3,6 +3,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   assembleCatalog,
+  validateLockedManagedResult,
   validateLockedProviderResult,
   validateReleaseLock,
 } from "./release-lock.mjs";
@@ -41,14 +42,26 @@ function managed(component, target) {
     component_id: component,
     component_version: "1.0.0",
     target_triple: target,
+    source_commit: "9".repeat(40),
+    managed_release_tag:
+      `managed/${component === "stockfish.engine" ? "stockfish" : "node-runtime"}/v1.0.0/${target}`,
     artifact_name: `${component}-${target}.tar.gz`,
-    artifact_url: `https://example.invalid/${component}-${target}.tar.gz`,
     artifact_sha256: "4".repeat(64),
     artifact_size_bytes: 100,
+    installed_bytes: 500,
     component_manifest_sha256: "5".repeat(64),
     licenses_sha256: "6".repeat(64),
-    provenance_url: `https://example.invalid/${component}-${target}.provenance.json`,
-    provenance_sha256: "7".repeat(64),
+    managed_result_name: `${component}-${target}.managed-result.json`,
+    managed_result_sha256: "7".repeat(64),
+    provenance_bundle_name: `${component}-${target}.tar.gz.sigstore.json`,
+    provenance_bundle_sha256: "8".repeat(64),
+    provenance_certificate_identity:
+      "https://github.com/iteathen/uci-arena-manager/"
+      + ".github/workflows/managed-component-release.yml@refs/heads/main",
+    provenance_oidc_issuer: "https://token.actions.githubusercontent.com",
+    provenance_workflow_name: "Managed component candidate",
+    provenance_workflow_ref: "refs/heads/main",
+    provenance_workflow_trigger: "workflow_dispatch",
     ...(component === "stockfish.engine"
       ? { source_offer_url: "https://example.invalid/stockfish-source.tar.gz" }
       : {}),
@@ -76,6 +89,7 @@ test("release lock requires every provider component on both platforms", () => {
     suite_version: "1.0.0",
     release_ready: true,
     provider_repository: "iteathen/UCI_Arena",
+    managed_repository: "iteathen/uci-arena-manager",
     components,
     managed_components: managedComponents,
   });
@@ -88,6 +102,7 @@ test("release lock rejects mutable and incomplete composition", () => {
     suite_version: "latest",
     release_ready: true,
     provider_repository: "iteathen/UCI_Arena",
+    managed_repository: "iteathen/uci-arena-manager",
     components: [row("uci_arena.engine", "windows-x86_64")],
     managed_components: [],
   });
@@ -108,6 +123,7 @@ test("release lock rejects provenance that is not bound to the trusted workflow"
     suite_version: "1.0.0",
     release_ready: false,
     provider_repository: "iteathen/UCI_Arena",
+    managed_repository: "iteathen/uci-arena-manager",
     components: [component],
     managed_components: [],
   }, { requireReady: false });
@@ -118,6 +134,76 @@ test("release lock rejects provenance that is not bound to the trusted workflow"
     error.includes("invalid provenance workflow ref/trigger pair")));
   assert.ok(validation.errors.some((error) =>
     error.includes("untrusted provenance_certificate_identity")));
+});
+
+test("managed result requires exact build, smoke, source, and workflow evidence", () => {
+  const locked = managed("stockfish.engine", "linux-x86_64");
+  const result = {
+    schema: "arena_managed_component_release_result_v1",
+    release_authority: "manager_managed_component_only",
+    suite_installer_authority: "iteathen/uci-arena-manager",
+    source_repository: "iteathen/uci-arena-manager",
+    source_commit: locked.source_commit,
+    component_id: locked.component_id,
+    component_version: locked.component_version,
+    target_triple: locked.target_triple,
+    artifact_name: locked.artifact_name,
+    artifact_sha256: locked.artifact_sha256,
+    artifact_size_bytes: locked.artifact_size_bytes,
+    installed_bytes: locked.installed_bytes,
+    component_manifest_sha256: locked.component_manifest_sha256,
+    licenses_sha256: locked.licenses_sha256,
+    upstream_inputs: [{
+      role: "source",
+      url: "https://example.invalid/stockfish-source.tar.gz",
+      sha256: "a".repeat(64),
+    }, {
+      role: "evaluation_network",
+      url: "https://example.invalid/nn-ad9b42354671.nnue",
+      sha256: "b".repeat(64),
+    }],
+    source_offer_url: locked.source_offer_url,
+    validation_evidence: {
+      executable_smoke: {
+        status: "passed",
+        protocol: "uci_startup",
+      },
+    },
+    workflow_identity:
+      "iteathen/uci-arena-manager/"
+      + ".github/workflows/managed-component-release.yml@refs/heads/main#123.1",
+  };
+  assert.doesNotThrow(() =>
+    validateLockedManagedResult(locked, result, 100));
+  assert.throws(
+    () => validateLockedManagedResult(
+      locked,
+      {
+        ...result,
+        validation_evidence: {
+          executable_smoke: { status: "passed", protocol: "node_version" },
+        },
+      },
+      100,
+    ),
+    /smoke evidence mismatch/u,
+  );
+  assert.throws(
+    () => validateLockedManagedResult(
+      locked,
+      { ...result, source_offer_url: "https://example.invalid/substitute" },
+      100,
+    ),
+    /source offer mismatch/u,
+  );
+  assert.throws(
+    () => validateLockedManagedResult(
+      locked,
+      { ...result, upstream_inputs: result.upstream_inputs.slice(0, 1) },
+      100,
+    ),
+    /upstream input mismatch/u,
+  );
 });
 
 test("file-set provider results require exact one-byte range evidence", () => {
