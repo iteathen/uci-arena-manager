@@ -129,6 +129,54 @@ bool valid_identifier(const std::string& value) {
            });
 }
 
+std::optional<std::array<std::uint64_t, 3>> semantic_version(const std::string_view value) {
+    std::array<std::uint64_t, 3> parts{};
+    std::size_t part = 0;
+    bool has_digit = false;
+    for (const unsigned char character : value) {
+        if (character == '.') {
+            if (!has_digit || part >= parts.size() - 1) {
+                return std::nullopt;
+            }
+            part += 1;
+            has_digit = false;
+            continue;
+        }
+        if (std::isdigit(character) == 0) {
+            return std::nullopt;
+        }
+        const std::uint64_t digit = character - '0';
+        if (parts[part] >
+            ((std::numeric_limits<std::uint64_t>::max)() - digit) / 10) {
+            return std::nullopt;
+        }
+        parts[part] = parts[part] * 10 + digit;
+        has_digit = true;
+    }
+    if (!has_digit || part != parts.size() - 1) {
+        return std::nullopt;
+    }
+    return parts;
+}
+
+bool standalone_service_component(const std::string_view component_id) {
+    return component_id == "book_forge.service" ||
+           component_id == "uci_arena_evidence.service";
+}
+
+bool standalone_service_contract_required(const std::string& component_id,
+                                          const std::string& component_version) {
+    if (!standalone_service_component(component_id)) {
+        return false;
+    }
+    const auto parsed = semantic_version(component_version);
+    if (!parsed.has_value()) {
+        throw std::runtime_error(
+            "standalone service component version is not semantic: " + component_version);
+    }
+    return parsed->at(0) > 0 || parsed->at(1) >= 2;
+}
+
 bool valid_bundle_owner(const std::string& value) {
     return value.size() <= 128 &&
            std::all_of(value.begin(), value.end(), [](const unsigned char character) {
@@ -673,9 +721,146 @@ void extract_archive(const fs::path& archive_path, const fs::path& destination) 
     }
 }
 
-json validate_component_payload(const fs::path& root, const std::string& expected_id,
-                                const std::string& expected_version) {
-    const json manifest = read_json(root / "arena-component.json");
+std::set<std::string> identifier_set_field(const json& document, const char* field) {
+    if (!document.contains(field) || !document.at(field).is_array()) {
+        throw std::runtime_error(std::string("standalone service contract field is not an array: ") +
+                                 field);
+    }
+    std::set<std::string> values;
+    for (const auto& value : document.at(field)) {
+        if (!value.is_string() || !valid_identifier(value.get<std::string>()) ||
+            !values.insert(value.get<std::string>()).second) {
+            throw std::runtime_error(
+                std::string("standalone service contract has an invalid or duplicate ") + field +
+                " value");
+        }
+    }
+    if (values.empty()) {
+        throw std::runtime_error(std::string("standalone service contract field is empty: ") +
+                                 field);
+    }
+    return values;
+}
+
+std::string identifier_field(const json& document, const char* field) {
+    if (!document.contains(field) || !document.at(field).is_string()) {
+        throw std::runtime_error(std::string("standalone service contract field is not a string: ") +
+                                 field);
+    }
+    const std::string value = document.at(field).get<std::string>();
+    if (!valid_identifier(value)) {
+        throw std::runtime_error(std::string("standalone service contract identifier is invalid: ") +
+                                 field);
+    }
+    return value;
+}
+
+std::optional<json> validate_standalone_service_contract(
+    const fs::path& root, const json& manifest, const std::set<fs::path>& listed_files) {
+    const std::string component_id = manifest.at("component_id").get<std::string>();
+    const std::string component_version = manifest.at("component_version").get<std::string>();
+    if (!manifest.contains("contract_manifest")) {
+        if (standalone_service_contract_required(component_id, component_version)) {
+            throw std::runtime_error(
+                "standalone service component is missing its contract manifest");
+        }
+        return std::nullopt;
+    }
+    if (!manifest.at("contract_manifest").is_string()) {
+        throw std::runtime_error("component contract manifest path is not a string");
+    }
+    const fs::path contract_relative =
+        fs::path(manifest.at("contract_manifest").get<std::string>()).lexically_normal();
+    if (!safe_relative_path(contract_relative) || !listed_files.contains(contract_relative)) {
+        throw std::runtime_error(
+            "component contract manifest is unsafe or absent from the payload manifest");
+    }
+    const fs::path contract_path = root / contract_relative;
+    if (!fs::is_regular_file(contract_path) || fs::is_symlink(contract_path)) {
+        throw std::runtime_error("component contract manifest is not a regular payload file");
+    }
+    const json contract = read_json(contract_path);
+    if (!contract.is_object() ||
+        contract.value("schema", "") != "uci_arena_standalone_service_contract_v1" ||
+        contract.value("component_id", "") != component_id ||
+        contract.value("component_version", "") != component_version) {
+        throw std::runtime_error(
+            "standalone service contract identity does not match the component");
+    }
+    if (!contract.contains("cli_entrypoint") || !contract.at("cli_entrypoint").is_string() ||
+        !manifest.contains("entrypoints") || !manifest.at("entrypoints").is_object() ||
+        !manifest.at("entrypoints").contains("cli") ||
+        !manifest.at("entrypoints").at("cli").is_string()) {
+        throw std::runtime_error(
+            "standalone service contract or component is missing its CLI entrypoint");
+    }
+    const fs::path contract_cli =
+        fs::path(contract.at("cli_entrypoint").get<std::string>()).lexically_normal();
+    const fs::path component_cli =
+        fs::path(manifest.at("entrypoints").at("cli").get<std::string>()).lexically_normal();
+    if (!safe_relative_path(contract_cli) || contract_cli != component_cli ||
+        !listed_files.contains(contract_cli)) {
+        throw std::runtime_error(
+            "standalone service contract CLI entrypoint does not match the component");
+    }
+    const auto contract_capabilities = identifier_set_field(contract, "capabilities");
+    const auto component_capabilities = identifier_set_field(manifest, "capabilities");
+    if (contract_capabilities != component_capabilities ||
+        !contract_capabilities.contains("status")) {
+        throw std::runtime_error(
+            "standalone service contract capabilities do not match the component");
+    }
+    if (identifier_set_field(contract, "data_paths") !=
+        identifier_set_field(manifest, "data_paths")) {
+        throw std::runtime_error(
+            "standalone service contract data paths do not match the component");
+    }
+    const std::string configuration_schema = identifier_field(contract, "configuration_schema");
+    const std::string status_schema = identifier_field(contract, "status_schema");
+    if (!contract.contains("startup") || !contract.at("startup").is_object() ||
+        !manifest.contains("startup") || !manifest.at("startup").is_object() ||
+        contract.at("startup") != manifest.at("startup")) {
+        throw std::runtime_error(
+            "standalone service contract startup ownership does not match the component");
+    }
+    if (!contract.contains("health_smoke") ||
+        !contract.at("health_smoke").is_object() ||
+        contract.at("health_smoke").value("command", "") != "status" ||
+        contract.at("health_smoke").value("success", "") !=
+            "exit_zero_and_status_schema") {
+        throw std::runtime_error(
+            "standalone service contract health smoke is invalid");
+    }
+    if (!contract.contains("outputs") || !contract.at("outputs").is_object() ||
+        !contract.contains("persistence") || !contract.at("persistence").is_object()) {
+        throw std::runtime_error(
+            "standalone service contract outputs or persistence declaration is invalid");
+    }
+    const json& persistence = contract.at("persistence");
+    if (persistence.value("upgrade", "") != "preserve_and_migrate" ||
+        persistence.value("repair", "") != "preserve" ||
+        persistence.value("uninstall_default", "") != "preserve") {
+        throw std::runtime_error(
+            "standalone service contract does not preserve persistent service data");
+    }
+    return json{
+        {"schema", "uci_arena_standalone_service_contract_v1"},
+        {"path", contract_relative.generic_string()},
+        {"sha256", sha256_file(contract_path)},
+        {"configuration_schema", configuration_schema},
+        {"status_schema", status_schema},
+    };
+}
+
+struct ValidatedComponentPayload {
+    json manifest;
+    std::optional<json> service_contract;
+};
+
+ValidatedComponentPayload validate_component_payload(const fs::path& root,
+                                                     const std::string& expected_id,
+                                                     const std::string& expected_version) {
+    json manifest = read_json(root / "arena-component.json");
     if (manifest.value("schema", "") != "arena_install_component_v1" ||
         manifest.value("component_id", "") != expected_id ||
         manifest.value("component_version", "") != expected_version) {
@@ -711,7 +896,9 @@ json validate_component_payload(const fs::path& root, const std::string& expecte
                                      relative.generic_string());
         }
     }
-    return manifest;
+    auto service_contract =
+        validate_standalone_service_contract(root, manifest, listed_files);
+    return {std::move(manifest), std::move(service_contract)};
 }
 
 void copy_directory_contents(const fs::path& source, const fs::path& destination,
@@ -2472,8 +2659,10 @@ json invoke_provider_startup(const SetupPaths& paths, const json& receipt,
                              const std::string& action) {
     const std::string component_id = receipt.at("component_id").get<std::string>();
     const fs::path active_root = receipt.at("active_root").get<std::string>();
-    const json manifest = validate_component_payload(
-        active_root, component_id, receipt.at("component_version").get<std::string>());
+    const json manifest =
+        validate_component_payload(
+            active_root, component_id, receipt.at("component_version").get<std::string>())
+            .manifest;
     const fs::path receipts_root = paths.data_root / "receipts";
     const fs::path node = installed_entrypoint(receipts_root, "node_runtime.private", "node");
     const json entrypoints = manifest.at("entrypoints");
@@ -3228,15 +3417,16 @@ json SetupEngine::apply(const json&, const json& plan, const SetupPaths& paths,
             const fs::path stage = staging_root / transaction_id / id;
             std::error_code ignored;
             fs::remove_all(stage, ignored);
-            json manifest;
             if (action.at("artifact").value("type", "archive") == "file_set") {
-                manifest = stage_file_set(artifact, action.at("artifact"), catalog_directory, paths,
-                                          plan.value("offline", false), stage, id, version);
+                static_cast<void>(stage_file_set(
+                    artifact, action.at("artifact"), catalog_directory, paths,
+                    plan.value("offline", false), stage, id, version));
             } else {
                 extract_archive(artifact, stage);
-                manifest = validate_component_payload(stage, id, version);
             }
-            manifest = validate_component_payload(stage, id, version);
+            const ValidatedComponentPayload validated =
+                validate_component_payload(stage, id, version);
+            const json& manifest = validated.manifest;
 
             const fs::path component_root = components_root / id;
             const fs::path target = component_root / version;
@@ -3374,6 +3564,9 @@ json SetupEngine::apply(const json&, const json& plan, const SetupPaths& paths,
             };
             if (!paths.bundle_owner.empty()) {
                 receipt["bundle_owner"] = paths.bundle_owner;
+            }
+            if (validated.service_contract.has_value()) {
+                receipt["service_contract"] = *validated.service_contract;
             }
             write_json_atomic(receipt_path, receipt);
             if (action.value("enabled", true) && id == "book_forge.service" &&
@@ -3561,9 +3754,17 @@ json SetupEngine::verify(const SetupPaths& paths) {
             continue;
         }
         try {
-            validate_component_payload(receipt.at("active_root").get<std::string>(),
-                                       receipt.at("component_id").get<std::string>(),
-                                       receipt.at("component_version").get<std::string>());
+            const ValidatedComponentPayload validated =
+                validate_component_payload(
+                    receipt.at("active_root").get<std::string>(),
+                    receipt.at("component_id").get<std::string>(),
+                    receipt.at("component_version").get<std::string>());
+            if (validated.service_contract.has_value() != receipt.contains("service_contract") ||
+                (validated.service_contract.has_value() &&
+                 receipt.at("service_contract") != *validated.service_contract)) {
+                throw std::runtime_error(
+                    "installed service contract receipt evidence does not match the payload");
+            }
             for (const auto& activated : receipt.value("activated_files", json::array())) {
                 const fs::path path = activated.at("path").get<std::string>();
                 if (!within(paths.knowledge_root, path) || !fs::is_regular_file(path) ||

@@ -3,7 +3,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <tuple>
 
 #include "arena/application/installer/setup.hpp"
@@ -82,6 +84,73 @@ fs::path write_lichess_single_profile(const fs::path& root,
     return profile_path;
 }
 
+void write_book_forge_service_install(
+    const SetupPaths& paths,
+    const std::optional<std::pair<std::string_view, std::string_view>>& contract) {
+    const fs::path active_root =
+        paths.install_root / "components" / "book_forge.service" / "0.2.0";
+    const fs::path cli = active_root / "services" / "book-forge" / "src" / "cli.mjs";
+    const fs::path contract_path =
+        active_root / "services" / "book-forge" / "contracts" / "service-contract.json";
+    fs::create_directories(cli.parent_path());
+    fs::create_directories(paths.data_root / "receipts");
+    std::ofstream(cli, std::ios::binary) << "book-forge";
+    json files = json::array(
+        {{{"path", "services/book-forge/src/cli.mjs"},
+          {"size_bytes", 10},
+          {"sha256", "f7628bf86d7b79dab3847e8f5101b3f82224d7bdf694a9817cc0bfc710d553ad"}}});
+    json manifest{
+        {"schema", "arena_install_component_v1"},
+        {"schema_version", 1},
+        {"component_id", "book_forge.service"},
+        {"component_version", "0.2.0"},
+        {"entrypoints", {{"cli", "services/book-forge/src/cli.mjs"}}},
+        {"capabilities", json::array({"status", "start"})},
+        {"data_paths", json::array({"workspace"})},
+        {"startup",
+         {{"windows", "per_user_task_scheduler"}, {"linux", "per_user_systemd"}}},
+    };
+    if (contract.has_value()) {
+        fs::create_directories(contract_path.parent_path());
+        std::ofstream(contract_path, std::ios::binary) << contract->first;
+        files.push_back(
+            {{"path", "services/book-forge/contracts/service-contract.json"},
+             {"size_bytes", contract->first.size()},
+             {"sha256", std::string(contract->second)}});
+        manifest["contract_manifest"] =
+            "services/book-forge/contracts/service-contract.json";
+    }
+    manifest["files"] = std::move(files);
+    std::ofstream(active_root / "arena-component.json", std::ios::binary)
+        << manifest.dump(2);
+
+    json receipt{
+        {"schema", "arena_install_receipt_v1"},
+        {"schema_version", 1},
+        {"component_id", "book_forge.service"},
+        {"component_version", "0.2.0"},
+        {"state", "installed_managed"},
+        {"active_root", active_root.string()},
+        {"artifact_sha256", std::string(64, 'a')},
+        {"dependencies", json::array()},
+        {"data_paths", json::array({(paths.workspace_root / "book-forge").string()})},
+        {"configuration_path", ""},
+        {"activated_files", json::array()},
+    };
+    if (contract.has_value()) {
+        receipt["service_contract"] = {
+            {"schema", "uci_arena_standalone_service_contract_v1"},
+            {"path", "services/book-forge/contracts/service-contract.json"},
+            {"sha256", std::string(contract->second)},
+            {"configuration_schema", "uci_arena_book_forge_config_v1"},
+            {"status_schema", "uci_arena_book_forge_status_v2"},
+        };
+    }
+    std::ofstream(paths.data_root / "receipts" / "book_forge.service.json",
+                  std::ios::binary)
+        << receipt.dump(2);
+}
+
 } // namespace
 
 TEST_CASE("setup plan resolves dependencies once and includes Manager Core") {
@@ -155,6 +224,41 @@ TEST_CASE("repair plan restages components that are already current") {
     REQUIRE(repair.at("actions").at(0).at("action") == "repair");
     REQUIRE(repair.at("actions").at(0).contains("artifact"));
     fs::remove_all(root);
+}
+
+TEST_CASE("standalone service contracts are identity-bound and receipt-verified") {
+    constexpr std::string_view valid_contract =
+        R"({"schema":"uci_arena_standalone_service_contract_v1","component_id":"book_forge.service","component_version":"0.2.0","cli_entrypoint":"services/book-forge/src/cli.mjs","configuration_schema":"uci_arena_book_forge_config_v1","status_schema":"uci_arena_book_forge_status_v2","capabilities":["status","start"],"data_paths":["workspace"],"startup":{"windows":"per_user_task_scheduler","linux":"per_user_systemd"},"health_smoke":{"command":"status","success":"exit_zero_and_status_schema"},"outputs":{},"persistence":{"upgrade":"preserve_and_migrate","repair":"preserve","uninstall_default":"preserve"}})";
+    constexpr std::string_view invalid_entrypoint_contract =
+        R"({"schema":"uci_arena_standalone_service_contract_v1","component_id":"book_forge.service","component_version":"0.2.0","cli_entrypoint":"services/book-forge/src/wrong.mjs","configuration_schema":"uci_arena_book_forge_config_v1","status_schema":"uci_arena_book_forge_status_v2","capabilities":["status","start"],"data_paths":["workspace"],"startup":{"windows":"per_user_task_scheduler","linux":"per_user_systemd"},"health_smoke":{"command":"status","success":"exit_zero_and_status_schema"},"outputs":{},"persistence":{"upgrade":"preserve_and_migrate","repair":"preserve","uninstall_default":"preserve"}})";
+
+    const fs::path valid_root = temporary_directory();
+    const SetupPaths valid_paths = paths_under(valid_root);
+    write_book_forge_service_install(
+        valid_paths,
+        std::pair{
+            valid_contract,
+            std::string_view{
+                "eb5d969de295d01cbbb365c82d645798cc1e2c482e1f03ff664c0547bd49314a"}});
+    REQUIRE(SetupEngine::verify(valid_paths).at("ok") == true);
+    fs::remove_all(valid_root);
+
+    const fs::path mismatched_root = temporary_directory();
+    const SetupPaths mismatched_paths = paths_under(mismatched_root);
+    write_book_forge_service_install(
+        mismatched_paths,
+        std::pair{
+            invalid_entrypoint_contract,
+            std::string_view{
+                "45404169ac7dc063d4a41841a6e6d1ab430fbceee8f98a9f7f26317a80b7b2ae"}});
+    REQUIRE(SetupEngine::verify(mismatched_paths).at("ok") == false);
+    fs::remove_all(mismatched_root);
+
+    const fs::path missing_root = temporary_directory();
+    const SetupPaths missing_paths = paths_under(missing_root);
+    write_book_forge_service_install(missing_paths, std::nullopt);
+    REQUIRE(SetupEngine::verify(missing_paths).at("ok") == false);
+    fs::remove_all(missing_root);
 }
 
 TEST_CASE("download missing knowledge selects opening book and bounded Syzygy WDL") {
@@ -563,7 +667,7 @@ TEST_CASE("Lichess token path imports refresh installed Book Forge configuration
     const fs::path stockfish_root =
         paths.install_root / "components" / "stockfish.engine" / "1.0.0";
     const fs::path book_forge_root =
-        paths.install_root / "components" / "book_forge.service" / "1.0.0";
+        paths.install_root / "components" / "book_forge.service" / "0.1.0";
     const fs::path stockfish = stockfish_root / "bin" / "stockfish.exe";
     const fs::path book_forge_cli = book_forge_root / "tools" / "book_forge" / "cli.mjs";
     const fs::path book_forge_config =
@@ -594,7 +698,7 @@ TEST_CASE("Lichess token path imports refresh installed Book Forge configuration
                {"schema", "arena_install_component_v1"},
                {"schema_version", 1},
                {"component_id", "book_forge.service"},
-               {"component_version", "1.0.0"},
+               {"component_version", "0.1.0"},
                {"entrypoints", {{"cli", "tools/book_forge/cli.mjs"}}},
                {"files",
                 json::array(
@@ -605,13 +709,14 @@ TEST_CASE("Lichess token path imports refresh installed Book Forge configuration
            }
                .dump(2);
     const auto write_receipt = [&](const std::string& id, const fs::path& active_root,
-                                   const std::string& configuration_path = "") {
+                                   const std::string& configuration_path = "",
+                                   const std::string& component_version = "1.0.0") {
         std::ofstream(receipts / (id + ".json"))
             << json{
                    {"schema", "arena_install_receipt_v1"},
                    {"schema_version", 1},
                    {"component_id", id},
-                   {"component_version", "1.0.0"},
+                   {"component_version", component_version},
                    {"state", "installed_managed"},
                    {"active_root", active_root.string()},
                    {"artifact_sha256", std::string(64, 'a')},
@@ -623,7 +728,7 @@ TEST_CASE("Lichess token path imports refresh installed Book Forge configuration
                    .dump(2);
     };
     write_receipt("stockfish.engine", stockfish_root);
-    write_receipt("book_forge.service", book_forge_root, book_forge_config.string());
+    write_receipt("book_forge.service", book_forge_root, book_forge_config.string(), "0.1.0");
     std::ofstream(book_forge_config)
         << json{
                {"schema", "uci_arena_book_forge_config_v1"},

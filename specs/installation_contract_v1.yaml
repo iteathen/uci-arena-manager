@@ -132,12 +132,50 @@ signed_provenance:
 interfaces:
   catalog: arena_install_catalog_v1
   component: arena_install_component_v1
+  standalone_service_contract: uci_arena_standalone_service_contract_v1
   provider_result: arena_provider_release_result_v1
   plan: arena_install_plan_v1
   receipt: arena_install_receipt_v1
   transaction: arena_install_transaction_v1
   release_lock: arena_suite_release_lock_v1
   schema_compatibility: reject_unknown_major_accept_additive_minor
+
+standalone_service_contracts:
+  components:
+    - book_forge.service
+    - uci_arena_evidence.service
+  required_from_component_version: 0.2.0
+  legacy_compatibility: >
+    Existing 0.1.x provider candidates remain readable without a standalone
+    service contract. A service candidate at or after 0.2.0 fails closed when
+    its component manifest does not name a contract manifest.
+  validation:
+    - The contract path is a safe relative path to a regular, non-symbolic-link
+      file listed with its exact size and SHA-256 in arena-component.json.
+    - Contract schema, component id, and component version match the installed
+      component manifest exactly.
+    - The contract CLI entrypoint equals the component's declared cli
+      entrypoint and names a digest-verified payload file.
+    - Contract capabilities and data paths exactly match their component
+      manifest projections; duplicate or non-string values are rejected.
+    - Configuration and status schemas are explicit stable identifiers.
+    - Startup ownership exactly matches the component manifest, and the health
+      smoke is the public status command with exit-zero plus schema validation.
+    - Upgrade preserves and migrates service data, while repair and normal
+      uninstall preserve it.
+  receipt:
+    fields:
+      - schema
+      - path
+      - sha256
+      - configuration_schema
+      - status_schema
+    rules:
+      - Apply records the exact validated contract evidence in the component receipt.
+      - Verify recomputes contract evidence from the immutable active root and
+        rejects a missing, stale, or fabricated receipt projection.
+      - Manager consumes only the installed contract and public service
+        entrypoints; it never imports provider source or service-owned storage.
 
 setup:
   executable: arena-setup
