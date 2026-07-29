@@ -35,6 +35,16 @@ requirements:
   - service_profile_setup_for_book_forge
   - optional_external_service_integrations
   - auto_discovery_with_manual_locator_fallback
+  - model_neutral_engine_identity
+
+engine_identity_experience:
+  requirements:
+    - Present UCI Arena Engine as an engine product, independently of its
+      selected model package.
+    - Do not use model names as engine cards, discovery hints, planner examples,
+      or status labels.
+    - Show the model package as separate metadata only when reported by the
+      registered engine.
 
 managed_service_experience:
   catalog_cards:

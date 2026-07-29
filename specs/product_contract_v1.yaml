@@ -48,8 +48,19 @@ engine_contract:
     - typed_option_discovery
     - legal_startpos_bestmove
   rule: >
-    LC0, Stockfish, LatticeKnight, and every other UCI engine use this same
-    resource and interrogation path. Engine names never dispatch code.
+    UCI Arena Engine, LC0, Stockfish, and every other registered UCI engine use
+    this same resource and interrogation path. Engine names never dispatch code.
+  naming_boundary:
+    product_engine_executable: uci_arena_engine
+    requirements:
+      - Model names identify model packages only.
+      - Engine discovery, registration, display defaults, match planning, and
+        installer logic must not identify an engine by a bundled model name.
+      - The UCI Arena Engine candidate is recognized only by its neutral
+        executable name or an explicit operator-selected path.
+      - No legacy model-branded executable alias is accepted automatically.
+      - UI examples use registered engine resources rather than hardcoded model
+        families.
 
 local_match_planner:
   supported:

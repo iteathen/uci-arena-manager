@@ -328,10 +328,10 @@ void append_path_candidates(
 #ifdef _WIN32
     constexpr char separator = ';';
     constexpr std::array names{
-        "stockfish.exe", "lc0.exe", "flashfork_uci.exe"};
+        "uci_arena_engine.exe", "stockfish.exe", "lc0.exe"};
 #else
     constexpr char separator = ':';
-    constexpr std::array names{"stockfish", "lc0", "flashfork_uci"};
+    constexpr std::array names{"uci_arena_engine", "stockfish", "lc0"};
 #endif
     std::stringstream paths(path_environment);
     for (std::string item; std::getline(paths, item, separator);) {

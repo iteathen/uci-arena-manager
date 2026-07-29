@@ -229,7 +229,7 @@ json book_forge_profile() {
          }},
         {"health_contract",
          {
-             {"schema", "flashfork_book_forge_status_v2"},
+             {"schema", "uci_arena_book_forge_status_v2"},
              {"heartbeat_seconds", 15},
              {"stale_seconds", 300},
          }},

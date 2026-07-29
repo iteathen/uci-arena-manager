@@ -301,7 +301,7 @@ export function EnginesPage() {
           </Text>
           <TextInput
             label="Display name"
-            placeholder="LatticeKnight"
+            placeholder="UCI Arena Engine"
             value={name}
             onChange={(event) => {
               setName(event.currentTarget.value)

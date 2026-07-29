@@ -236,7 +236,7 @@ int main(int argc, char** argv) {
         auto* match = app.add_subcommand("match", "Plan local engine matches");
         match->require_subcommand(1);
         auto* match_plan = match->add_subcommand(
-            "plan", "Plan LC0, Stockfish, LatticeKnight, or any registered UCI engines");
+            "plan", "Plan matches among any registered UCI engines");
         std::string match_name;
         std::vector<std::string> match_engines;
         std::string match_format{"head_to_head"};
