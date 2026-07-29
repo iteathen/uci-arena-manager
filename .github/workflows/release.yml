@@ -49,7 +49,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -59,6 +58,10 @@ jobs:
           node-version: 24.15.0
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v3.0.6
       - run: npm ci
         working-directory: web
       - uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57
@@ -104,17 +107,70 @@ jobs:
           rpmlint dist/linux/*.rpm
           systemd-analyze verify packaging/linux/uci-arena-manager.service
           systemd-analyze verify packaging/linux/uci-arena-broker.service
-      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
-        with:
-          subject-path: |
-            dist/*.tar.gz
-            dist/windows/*
-            dist/linux/*
+      - name: Prepare exact Manager build provenance
+        id: manager-provenance
+        shell: pwsh
+        env:
+          BUNDLE_NAME: manager-${{ matrix.target }}.sigstore.json
+          SOURCE_COMMIT: ${{ github.sha }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          STATEMENT_DIRECTORY: ${{ runner.temp }}/manager-provenance
+          SUITE_VERSION: ${{ needs.validate.outputs.version }}
+          TARGET_TRIPLE: ${{ matrix.target }}
+          WORKFLOW_IDENTITY: ${{ github.workflow_ref }}#${{ github.run_id }}.${{ github.run_attempt }}
+        run: |
+          node tools/release/sigstore-provenance.mjs prepare-manager `
+            --artifact-root dist `
+            --bundle-name $env:BUNDLE_NAME `
+            --scope manager-build `
+            --source-commit $env:SOURCE_COMMIT `
+            --source-repository $env:SOURCE_REPOSITORY `
+            --statement-directory $env:STATEMENT_DIRECTORY `
+            --suite-version $env:SUITE_VERSION `
+            --target-triple $env:TARGET_TRIPLE `
+            --workflow-identity $env:WORKFLOW_IDENTITY `
+            --github-output $env:GITHUB_OUTPUT
+      - name: Sign and verify exact Manager build provenance
+        shell: pwsh
+        env:
+          ANCHOR_ARTIFACT_PATH: ${{ steps.manager-provenance.outputs.anchor_artifact_path }}
+          BUNDLE_PATH: ${{ steps.manager-provenance.outputs.bundle_path }}
+          CERTIFICATE_IDENTITY: https://github.com/${{ github.workflow_ref }}
+          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+          PREDICATE_TYPE: ${{ steps.manager-provenance.outputs.predicate_type }}
+          STATEMENT_PATH: ${{ steps.manager-provenance.outputs.statement_path }}
+          WORKFLOW_NAME: ${{ github.workflow }}
+          WORKFLOW_REF: ${{ github.ref }}
+          WORKFLOW_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          WORKFLOW_TRIGGER: ${{ github.event_name }}
+        run: |
+          cosign attest-blob `
+            --yes `
+            --statement $env:STATEMENT_PATH `
+            --bundle $env:BUNDLE_PATH
+          if ($LASTEXITCODE -ne 0) { throw 'Manager Sigstore attestation failed' }
+          cosign verify-blob-attestation `
+            --bundle $env:BUNDLE_PATH `
+            --certificate-identity $env:CERTIFICATE_IDENTITY `
+            --certificate-oidc-issuer $env:CERTIFICATE_OIDC_ISSUER `
+            --certificate-github-workflow-repository $env:WORKFLOW_REPOSITORY `
+            --certificate-github-workflow-sha $env:WORKFLOW_SHA `
+            --certificate-github-workflow-name $env:WORKFLOW_NAME `
+            --certificate-github-workflow-ref $env:WORKFLOW_REF `
+            --certificate-github-workflow-trigger $env:WORKFLOW_TRIGGER `
+            --type $env:PREDICATE_TYPE `
+            $env:ANCHOR_ARTIFACT_PATH
+          if ($LASTEXITCODE -ne 0) { throw 'Manager Sigstore verification failed' }
+          node tools/release/sigstore-provenance.mjs verify-bundle `
+            --bundle $env:BUNDLE_PATH `
+            --statement $env:STATEMENT_PATH
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: manager-${{ matrix.target }}
           path: |
             dist/*.tar.gz
+            dist/*.sigstore.json
             dist/windows/*
             dist/linux/*
           if-no-files-found: error
@@ -129,6 +185,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v3.0.6
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: manager-*
+          path: dist/manager
+          merge-multiple: true
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
         id: provider-token
         with:
@@ -136,11 +201,6 @@ jobs:
           private-key: ${{ secrets.COMPONENT_READER_PRIVATE_KEY }}
           owner: iteathen
           repositories: UCI_Arena
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          pattern: manager-*
-          path: dist/manager
-          merge-multiple: true
       - name: Fetch exact provider candidates
         env:
           GH_PROVIDER_TOKEN: ${{ steps.provider-token.outputs.token }}
@@ -824,16 +884,79 @@ jobs:
     permissions:
       contents: write
       id-token: write
-      attestations: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.15.0
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v3.0.6
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: release-*
           path: dist/release
           merge-multiple: true
-      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
-        with:
-          subject-path: dist/release/**/*
+      - name: Prepare exact suite release provenance
+        id: suite-provenance
+        shell: pwsh
+        env:
+          BUNDLE_NAME: suite-${{ needs.validate.outputs.version }}.sigstore.json
+          SOURCE_COMMIT: ${{ github.sha }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          STATEMENT_DIRECTORY: ${{ runner.temp }}/suite-provenance
+          SUITE_VERSION: ${{ needs.validate.outputs.version }}
+          WORKFLOW_IDENTITY: ${{ github.workflow_ref }}#${{ github.run_id }}.${{ github.run_attempt }}
+        run: |
+          node tools/release/sigstore-provenance.mjs prepare-manager `
+            --artifact-root dist/release `
+            --bundle-name $env:BUNDLE_NAME `
+            --scope suite-release `
+            --source-commit $env:SOURCE_COMMIT `
+            --source-repository $env:SOURCE_REPOSITORY `
+            --statement-directory $env:STATEMENT_DIRECTORY `
+            --suite-version $env:SUITE_VERSION `
+            --target-triple any `
+            --workflow-identity $env:WORKFLOW_IDENTITY `
+            --github-output $env:GITHUB_OUTPUT
+      - name: Sign and verify exact suite release provenance
+        shell: pwsh
+        env:
+          ANCHOR_ARTIFACT_PATH: ${{ steps.suite-provenance.outputs.anchor_artifact_path }}
+          BUNDLE_PATH: ${{ steps.suite-provenance.outputs.bundle_path }}
+          CERTIFICATE_IDENTITY: https://github.com/${{ github.workflow_ref }}
+          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+          PREDICATE_TYPE: ${{ steps.suite-provenance.outputs.predicate_type }}
+          STATEMENT_PATH: ${{ steps.suite-provenance.outputs.statement_path }}
+          WORKFLOW_NAME: ${{ github.workflow }}
+          WORKFLOW_REF: ${{ github.ref }}
+          WORKFLOW_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          WORKFLOW_TRIGGER: ${{ github.event_name }}
+        run: |
+          cosign attest-blob `
+            --yes `
+            --statement $env:STATEMENT_PATH `
+            --bundle $env:BUNDLE_PATH
+          if ($LASTEXITCODE -ne 0) { throw 'Suite Sigstore attestation failed' }
+          cosign verify-blob-attestation `
+            --bundle $env:BUNDLE_PATH `
+            --certificate-identity $env:CERTIFICATE_IDENTITY `
+            --certificate-oidc-issuer $env:CERTIFICATE_OIDC_ISSUER `
+            --certificate-github-workflow-repository $env:WORKFLOW_REPOSITORY `
+            --certificate-github-workflow-sha $env:WORKFLOW_SHA `
+            --certificate-github-workflow-name $env:WORKFLOW_NAME `
+            --certificate-github-workflow-ref $env:WORKFLOW_REF `
+            --certificate-github-workflow-trigger $env:WORKFLOW_TRIGGER `
+            --type $env:PREDICATE_TYPE `
+            $env:ANCHOR_ARTIFACT_PATH
+          if ($LASTEXITCODE -ne 0) { throw 'Suite Sigstore verification failed' }
+          node tools/release/sigstore-provenance.mjs verify-bundle `
+            --bundle $env:BUNDLE_PATH `
+            --statement $env:STATEMENT_PATH
       - name: Publish exact signed digests
         env:
           GH_TOKEN: ${{ github.token }}

@@ -8,7 +8,12 @@ import { fetchLockedComponents } from "./release-lock.mjs";
 const lockPath = path.resolve(process.argv[2] ?? "release/catalog.lock.json");
 const output = path.resolve(process.argv[3] ?? "dist/provider");
 const lock = JSON.parse(readFileSync(lockPath, "utf8"));
-const rows = await fetchLockedComponents(lock, output, process.env.GH_PROVIDER_TOKEN);
+const rows = await fetchLockedComponents(
+  lock,
+  output,
+  process.env.GH_PROVIDER_TOKEN,
+  { cosignExecutable: process.env.COSIGN_EXECUTABLE ?? "cosign" },
+);
 process.stdout.write(`${JSON.stringify({
   schema: "arena_suite_component_fetch_result_v1",
   components: rows.map((row) => ({

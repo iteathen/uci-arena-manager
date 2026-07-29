@@ -18,6 +18,27 @@ reviewed pull request pins every required platform candidate and managed
 dependency by digest. Setting `release_ready` to `true` without complete
 attested rows fails release-lock validation.
 
+Both repositories remain private. Provider candidates use Cosign `v3.0.6`
+keyless signing with the GitHub Actions OIDC identity; the resulting
+`<artifact>.sigstore.json` asset contains the signing certificate,
+transparency-log inclusion proof, and an in-toto statement whose sole subject
+is the exact artifact digest and whose predicate is the exact provider result.
+Each provider lock row pins that bundle's asset name and SHA-256 plus the exact
+certificate identity, issuer, workflow name, `refs/heads/main` ref, and
+`workflow_dispatch` trigger. Suite composition downloads the artifact, provider
+result, and bundle from the same private release, verifies all three digests,
+then runs Cosign with the lock-pinned identity and source commit before it
+accepts or copies the candidate. The signed provider result and bundle are
+retained under the candidate's `provenance` directory.
+
+The protected release workflow uses the same mechanism for Manager outputs. It
+creates one signed multi-subject statement for each platform Manager build and
+one for the final suite artifact set. No release workflow uses an
+ignore-transparency-log, ignore-certificate, ignore-claim, ignore-SCT, or
+unsigned fallback flag. A missing Sigstore service, bundle, claim, proof,
+predicate, or digest fails closed; making either repository public is not a
+fallback.
+
 Repository administrators must configure these controls before the first
 production run:
 
@@ -34,10 +55,12 @@ production run:
   Official `arena-setup` binaries pin this value at compile time; an empty or
   different root is rejected.
 
-Build and test jobs retain read-only repository permissions. Only the
-environment-approved signing jobs receive OIDC, and only the final publisher
-receives temporary `contents: write`. Stable promotion publishes already-built
-and already-tested bytes; it never rebuilds a candidate.
+Build and test jobs retain read-only repository contents permissions. The
+Manager build receives only `id-token: write` in addition so it can issue
+keyless Sigstore provenance; production signing jobs receive OIDC behind their
+protected environments, and only the final publisher receives temporary
+`contents: write`. Stable promotion publishes already-built and already-tested
+bytes; it never rebuilds a candidate.
 
 Native package outputs are staged under:
 
