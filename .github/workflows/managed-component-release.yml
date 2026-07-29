@@ -128,8 +128,7 @@ jobs:
               throw 'windows-latest is missing the pinned MSYS2 build environment'
             }
             $windowsPath = $tree.FullName.Replace('\','/')
-            $posixPath = (& $bash -lc "cygpath -u '$windowsPath'").Trim()
-            & $bash -lc "export PATH=/c/mingw64/bin:`$PATH; make -C '$posixPath/src' -j2 build ARCH=x86-64 COMP=gcc COMPCXX=g++"
+            & $bash -lc "export PATH=/c/mingw64/bin:`$PATH; make -C '$windowsPath/src' -j2 build ARCH=x86-64 COMP=gcc COMPCXX=g++"
             if ($LASTEXITCODE -ne 0) { throw 'Stockfish Windows build failed' }
             $executable = Join-Path $tree.FullName 'src\stockfish.exe'
             $license = Join-Path $tree.FullName 'Copying.txt'
