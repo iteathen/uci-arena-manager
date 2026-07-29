@@ -203,7 +203,7 @@ TEST_CASE("installed service receipts reconcile exact private runtime entrypoint
     write_json(
         service_config,
         {
-            {"schema", "flashfork_book_forge_config_v1"},
+            {"schema", "uci_arena_book_forge_config_v1"},
             {"stockfish", "C:/verified/stockfish.exe"},
         });
     json receipt = read_json(service_receipt);

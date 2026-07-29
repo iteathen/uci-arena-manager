@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "spec:check": "node tools/spec-check.mjs",
-    "check": "npm run spec:check && npm test --prefix web && npm run build --prefix web"
+    "naming:check": "node tools/check-model-product-naming.mjs",
+    "check": "npm run spec:check && npm run naming:check && npm test --prefix web && npm run build --prefix web"
   },
   "engines": {
     "node": ">=22"

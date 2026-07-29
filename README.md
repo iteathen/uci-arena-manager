@@ -5,7 +5,7 @@ engines, chess bots, services, matches, tournaments, game history, logs,
 health, statistics, and reports.
 
 The product is intentionally independent of every engine or training
-repository. Engines such as LC0, Stockfish, and LatticeKnight are registered as
+repository. Engines such as UCI Arena Engine, LC0, and Stockfish are registered as
 ordinary UCI executables with their own working directory, options, resource
 limits, and identity fingerprint.
 
@@ -59,9 +59,9 @@ No engine names are hardcoded.
 ```powershell
 arena engine add --name Stockfish --executable C:\engines\stockfish.exe
 arena engine add --name LC0 --executable C:\engines\lc0.exe
-arena engine add --name LatticeKnight --executable C:\engines\latticeknight.exe
+arena engine add --name "UCI Arena Engine" --executable C:\engines\uci_arena_engine.exe
 arena match plan --name "LC0 vs Stockfish" --engine <lc0-id> --engine <stockfish-id> --games-per-pair 20 --initial-ms 60000 --increment-ms 600
-arena tournament create --name "Local round robin" --format round_robin --engine <stockfish-id> --engine <lc0-id> --engine <latticeknight-id>
+arena tournament create --name "Local round robin" --format round_robin --engine <stockfish-id> --engine <lc0-id> --engine <uci-arena-engine-id>
 ```
 
 ## External services

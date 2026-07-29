@@ -53,10 +53,18 @@ profiles:
     current_state: implemented_external
     runtime: external_node_process_or_native_startup_registration
     minimum_contract:
-      status_schema: flashfork_book_forge_status_v2
+      status_schema: uci_arena_book_forge_status_v2
       cli_machine_output: json
       heartbeat_seconds: 15
       stale_seconds: 300
+      schema_identity_migration:
+        accepted_legacy_shape: exact_book_forge_status_version_suffix
+        normalization: canonical_status_schema_before_projection
+        restrictions:
+          - A legacy prefix is compatibility metadata only and never a service,
+            engine, model, discovery, or display identity.
+          - Manager responses and persisted resource state expose only the
+            canonical UCI Arena schema.
     declared_capabilities:
       - status
       - start

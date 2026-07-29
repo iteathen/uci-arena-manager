@@ -741,14 +741,23 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
         if (!request.at("dry_run").get<bool>()) {
             const json status = process_supervisor_.run_json(
                 node, cli.parent_path(), arguments);
-            const json& status_payload =
+            json status_payload =
                 status.contains("status") && status.at("status").is_object()
                     ? status.at("status")
                     : status;
             const std::string expected_schema = evidence_service
                 ? "uci_arena_evidence_status_v1"
-                : "flashfork_book_forge_status_v2";
-            if (status_payload.value("schema", "") != expected_schema) {
+                : "uci_arena_book_forge_status_v2";
+            const std::string actual_schema =
+                status_payload.value("schema", "");
+            constexpr std::string_view book_forge_status_suffix =
+                "_book_forge_status_v2";
+            const bool compatible_schema =
+                actual_schema == expected_schema ||
+                (!evidence_service &&
+                 actual_schema.size() > book_forge_status_suffix.size() &&
+                 actual_schema.ends_with(book_forge_status_suffix));
+            if (!compatible_schema) {
                 data["integration_state"] = "incompatible";
                 data["observed_state"] = "degraded";
                 data["health"] = {
@@ -759,6 +768,7 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                          : "Book Forge status schema is incompatible"},
                 };
             } else {
+                status_payload["schema"] = expected_schema;
                 try {
                     if (evidence_service) {
                         auto dataset_arguments = base;

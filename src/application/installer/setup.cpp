@@ -1423,9 +1423,9 @@ json discovery_rows(
     }
     const std::set<std::string> engine_names{
 #ifdef _WIN32
-        "stockfish.exe", "lc0.exe", "flashfork_uci.exe"
+        "uci_arena_engine.exe", "stockfish.exe", "lc0.exe"
 #else
-        "stockfish", "lc0", "flashfork_uci"
+        "uci_arena_engine", "stockfish", "lc0"
 #endif
     };
     std::set<std::string> engine_roots;
@@ -2142,7 +2142,7 @@ json generated_component_config(
     const fs::path data_root = receipts_root.parent_path();
     if (component_id == "book_forge.service") {
         return {
-            {"schema", "flashfork_book_forge_config_v1"},
+            {"schema", "uci_arena_book_forge_config_v1"},
             {"stockfish",
              installed_entrypoint(
                  receipts_root, "stockfish.engine", "stockfish").string()},
@@ -2690,9 +2690,9 @@ json SetupEngine::inventory(
     }
     const std::set<std::string> candidate_names{
 #ifdef _WIN32
-        "stockfish.exe", "lc0.exe", "flashfork_uci.exe"
+        "uci_arena_engine.exe", "stockfish.exe", "lc0.exe"
 #else
-        "stockfish", "lc0", "flashfork_uci"
+        "uci_arena_engine", "stockfish", "lc0"
 #endif
     };
     std::set<std::string> seen;
