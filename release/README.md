@@ -55,6 +55,10 @@ production run:
   reviewer and prevent self-review.
 - Configure the read-only component GitHub App as
   `COMPONENT_READER_APP_ID` / `COMPONENT_READER_PRIVATE_KEY`.
+- After GitHub Advanced Security and the dependency graph are enabled for this
+  private repository, set `DEPENDENCY_REVIEW_ENABLED=true`. Until then, CI
+  keeps the lockfile-backed `npm audit --omit=dev` gate and skips the
+  unavailable GitHub dependency-review action instead of failing every PR.
 - Configure Azure Trusted Signing OIDC variables and the isolated Linux/TUF
   signing endpoint variables used by the workflow.
 - Set `TUF_ROOT_SHA256` to the lowercase SHA-256 of the offline-root metadata.

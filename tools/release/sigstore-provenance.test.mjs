@@ -292,6 +292,12 @@ test("release workflow uses only pinned fail-closed Sigstore provenance", () => 
     continuousIntegration,
     /node --test tools\/release\/\*\.test\.mjs/u,
   );
+  assert.match(continuousIntegration, /npm audit --omit=dev/u);
+  assert.match(
+    continuousIntegration,
+    /vars\.DEPENDENCY_REVIEW_ENABLED == 'true'/u,
+  );
+  assert.doesNotMatch(continuousIntegration, /continue-on-error:\s*true/u);
   assert.match(catalogAssembler, /validateLockedManagedResult/u);
   assert.match(catalogAssembler, /managed_result_sha256/u);
   assert.match(catalogAssembler, /provenance_bundle_sha256/u);
@@ -321,6 +327,11 @@ test("release workflow uses only pinned fail-closed Sigstore provenance", () => 
     /ad9b423546714137916bd38978af6fd68d7b8951bef25ff76bf43da72d6cb786/u,
   );
   assert.match(managedWorkflow, /\$version = '15\.1'/u);
+  assert.match(
+    managedWorkflow,
+    /export PATH=\/c\/mingw64\/bin:`\$PATH; make[\s\S]*COMP=gcc COMPCXX=g\+\+/u,
+  );
+  assert.doesNotMatch(managedWorkflow, /PATH=\/mingw64\/bin/u);
   assert.doesNotMatch(
     managedWorkflow,
     /insecure-ignore|check-claims=false|ignore-sct|curl\s+-[^ \n]*k/u,

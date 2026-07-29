@@ -21,6 +21,10 @@ authority:
     - Suite composition pins exact provider, commit, manifest, provenance, and artifact digests.
     - Stable promotion republishes the exact tested candidate bytes and never rebuilds.
     - Build identities never receive private signing keys.
+    - Private-repository CI always runs the lockfile-backed npm audit. GitHub
+      dependency review runs only when the account has enabled that private
+      repository feature and DEPENDENCY_REVIEW_ENABLED is explicitly true;
+      feature unavailability must not make every private pull request fail.
 
 signed_provenance:
   repository_visibility: private
