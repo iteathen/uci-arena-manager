@@ -13,7 +13,7 @@ import {
   assembleCatalog,
   sha256File,
   validateLockedManagedResult,
-  validateLockedProviderResult,
+  validateLockedProviderResultForLock,
   validateReleaseLock,
 } from "./release-lock.mjs";
 
@@ -60,7 +60,8 @@ const providerRows = lock.components.map((component) => {
     throw new Error(`provider bytes do not match lock for ${component.component_id}`);
   }
   const result = JSON.parse(readFileSync(resultPath, "utf8"));
-  validateLockedProviderResult(
+  validateLockedProviderResultForLock(
+    lock,
     component,
     result,
     statSync(artifactPath).size,

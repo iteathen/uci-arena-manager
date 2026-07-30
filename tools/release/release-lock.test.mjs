@@ -7,6 +7,7 @@ import {
   resolveProviderAssetSource,
   validateLockedManagedResult,
   validateLockedProviderResult,
+  validateLockedProviderResultForLock,
   validateReleaseLock,
 } from "./release-lock.mjs";
 
@@ -243,6 +244,43 @@ test("v2 release lock rejects provider and workflow substitution", () => {
     error.includes("untrusted provenance_certificate_identity")));
   assert.ok(validation.errors.some((error) =>
     error.includes("provider evidence_service does not match")));
+});
+
+test("provider result revalidation selects the component's locked provider", () => {
+  const component = v2Row("book_forge.service", "windows-x86_64");
+  const result = {
+    schema: "arena_provider_release_result_v1",
+    release_authority: "provider_component_only",
+    suite_installer_authority: "iteathen/uci-arena-manager",
+    source_repository: PROVIDERS.book_forge.repository,
+    component_id: component.component_id,
+    component_version: component.component_version,
+    target_triple: component.target_triple,
+    source_commit: component.source_commit,
+    artifact_name: component.artifact_name,
+    artifact_sha256: component.artifact_sha256,
+    artifact_size_bytes: 100,
+    workflow_identity:
+      `${PROVIDERS.book_forge.repository}/.github/workflows/`
+      + "component-release.yml@refs/heads/main#123.1",
+  };
+  const lock = {
+    schema: "arena_suite_release_lock_v2",
+  };
+  assert.doesNotThrow(() =>
+    validateLockedProviderResultForLock(lock, component, result, 100));
+  assert.throws(
+    () => validateLockedProviderResultForLock(
+      lock,
+      component,
+      {
+        ...result,
+        source_repository: PROVIDERS.uci_arena.repository,
+      },
+      100,
+    ),
+    /provider result mismatch/u,
+  );
 });
 
 test("release lock rejects mutable and incomplete composition", () => {
