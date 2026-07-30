@@ -2143,20 +2143,35 @@ json managed_knowledge_components(const SetupPaths& paths,
 fs::path installed_entrypoint(const fs::path& receipts_root, const std::string& component_id,
                               const std::string& entrypoint_name) {
     const json receipt = read_json(receipts_root / (component_id + ".json"));
+    const std::string receipt_state = receipt.value("state", "");
     if (receipt.value("schema", "") != "arena_install_receipt_v1" ||
         receipt.value("component_id", "") != component_id ||
-        receipt.value("state", "") != "installed_managed") {
+        (receipt_state != "installed_managed" &&
+         receipt_state != "installed_disabled")) {
         throw std::runtime_error("required installed dependency is unavailable: " + component_id);
     }
     const fs::path active_root = receipt.at("active_root").get<std::string>();
     const json manifest = read_json(active_root / "arena-component.json");
     if (manifest.value("schema", "") != "arena_install_component_v1" ||
         manifest.value("component_id", "") != component_id || !manifest.contains("entrypoints") ||
-        !manifest.at("entrypoints").contains(entrypoint_name)) {
+        !manifest.at("entrypoints").is_object()) {
         throw std::runtime_error("required installed dependency entrypoint is unavailable: " +
                                  component_id + ":" + entrypoint_name);
     }
-    const fs::path relative = manifest.at("entrypoints").at(entrypoint_name).get<std::string>();
+    const json& entrypoints = manifest.at("entrypoints");
+    std::string resolved_name = entrypoint_name;
+    const bool exact_legacy_managed_alias =
+        (component_id == "node_runtime.private" && entrypoint_name == "node") ||
+        (component_id == "stockfish.engine" && entrypoint_name == "stockfish");
+    if (!entrypoints.contains(resolved_name) && exact_legacy_managed_alias &&
+        entrypoints.contains("executable")) {
+        resolved_name = "executable";
+    }
+    if (!entrypoints.contains(resolved_name) || !entrypoints.at(resolved_name).is_string()) {
+        throw std::runtime_error("required installed dependency entrypoint is unavailable: " +
+                                 component_id + ":" + entrypoint_name);
+    }
+    const fs::path relative = entrypoints.at(resolved_name).get<std::string>();
     if (!safe_relative_path(relative)) {
         throw std::runtime_error("installed dependency entrypoint is unsafe");
     }

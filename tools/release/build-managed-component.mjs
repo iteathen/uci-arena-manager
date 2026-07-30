@@ -21,12 +21,14 @@ import { gzipSync } from "node:zlib";
 const COMPONENTS = Object.freeze({
   "node_runtime.private": {
     executable: { windows: "node.exe", linux: "node" },
+    entrypoint: "node",
     licenseName: "node-LICENSE",
     capability: "private_node_runtime",
     smokeProtocol: "node_version",
   },
   "stockfish.engine": {
     executable: { windows: "stockfish.exe", linux: "stockfish" },
+    entrypoint: "stockfish",
     licenseName: "stockfish-Copying.txt",
     capability: "uci_engine",
     smokeProtocol: "uci_startup",
@@ -268,7 +270,7 @@ writeFileSync(manifestPath, canonicalJson({
   component_id: componentId,
   component_version: args.version,
   target_triple: args.target,
-  entrypoints: { executable: executableRelative },
+  entrypoints: { [definition.entrypoint]: executableRelative },
   capabilities: [definition.capability],
   startup: {},
   data_paths: [],

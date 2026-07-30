@@ -684,7 +684,7 @@ TEST_CASE("Lichess token path imports refresh installed Book Forge configuration
                {"schema_version", 1},
                {"component_id", "stockfish.engine"},
                {"component_version", "1.0.0"},
-               {"entrypoints", {{"stockfish", "bin/stockfish.exe"}}},
+               {"entrypoints", {{"executable", "bin/stockfish.exe"}}},
                {"files",
                 json::array(
                     {{{"path", "bin/stockfish.exe"},
@@ -1226,7 +1226,8 @@ TEST_CASE("suite uninstall removes every receipt while preserving workspaces") {
     const SetupPaths paths = paths_under(root);
     const fs::path receipts = paths.data_root / "receipts";
     fs::create_directories(receipts);
-    const auto install = [&](const std::string& id, const json& dependencies) {
+    const auto install = [&](const std::string& id, const json& dependencies,
+                             const std::string& state = "installed_managed") {
         const fs::path component_root = paths.install_root / "components" / id / "1.0.0";
         fs::create_directories(component_root);
         std::ofstream(component_root / "payload") << id;
@@ -1236,7 +1237,7 @@ TEST_CASE("suite uninstall removes every receipt while preserving workspaces") {
                    {"schema_version", 1},
                    {"component_id", id},
                    {"component_version", "1.0.0"},
-                   {"state", "installed_managed"},
+                   {"state", state},
                    {"active_root", component_root.string()},
                    {"artifact_sha256", std::string(64, 'a')},
                    {"dependencies", dependencies},
@@ -1248,7 +1249,9 @@ TEST_CASE("suite uninstall removes every receipt while preserving workspaces") {
     };
     const fs::path manager = install("manager.core", json::array());
     const fs::path node = install("node_runtime.private", json::array());
-    const fs::path provider = install("optional.provider", json::array({"node_runtime.private"}));
+    const fs::path provider =
+        install("optional.provider", json::array({"node_runtime.private"}),
+                "installed_disabled");
     const fs::path preserved = paths.workspace_root / "provider" / "state.json";
     fs::create_directories(preserved.parent_path());
     std::ofstream(preserved) << "{}";
