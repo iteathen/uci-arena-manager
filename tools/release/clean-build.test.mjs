@@ -121,13 +121,25 @@ test("release workflow delegates platform packaging to the canonical clean build
   )?.[0] ?? "";
   assert.match(
     managerJob,
-    /node tools\/release\/clean-build\.mjs[\s\S]*--manager-only[\s\S]*--platform '\$\{\{ matrix\.target \}\}'/,
+    /'tools\/release\/clean-build\.mjs'[\s\S]*'--manager-only'[\s\S]*'--platform', '\$\{\{ matrix\.target \}\}'/,
+  );
+  assert.match(
+    managerJob,
+    /'\$\{\{ inputs\.publish \}\}' -eq 'true'[\s\S]*TUF_ROOT_SHA256/u,
+  );
+  assert.match(
+    managerJob,
+    /if \(\$rootSha256 -match '\^\[0-9a-f\]\{64\}\$'\)[\s\S]*--tuf-root-sha256/u,
   );
   assert.doesNotMatch(managerJob, /^\s+cpack /mu);
 
   const integrationWorkflow = readFileSync(
     path.join(repositoryRoot, ".github", "workflows", "ci.yml"),
     "utf8",
+  );
+  assert.match(
+    integrationWorkflow,
+    /concurrency:\s+group: ci-\$\{\{ github\.workflow \}\}-\$\{\{ github\.event\.pull_request\.number \|\| github\.ref \}\}\s+cancel-in-progress: true/u,
   );
   const nativeJob = integrationWorkflow.match(
     /^  native:[\s\S]*?(?=^  dependency-review:)/mu,
