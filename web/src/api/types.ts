@@ -177,6 +177,7 @@ export interface ManagedServiceData extends Record<string, unknown> {
   workspace?: string
   startup_installed?: boolean
   startup_control?: string
+  installed_component_id?: string
   output_integration?: ServiceOutputIntegration
 }
 

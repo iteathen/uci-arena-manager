@@ -256,6 +256,37 @@ std::filesystem::path create_setup_result_path() {
     return result;
 }
 
+class ScopedHelperScratch final {
+  public:
+    ScopedHelperScratch()
+        : path_(
+              std::filesystem::temp_directory_path() /
+              ("uci-arena-manager-ui-" +
+#ifdef _WIN32
+               std::to_string(GetCurrentProcessId())
+#else
+               std::to_string(getpid())
+#endif
+                   )) {
+        std::filesystem::create_directories(path_);
+    }
+
+    ~ScopedHelperScratch() {
+        std::error_code error;
+        std::filesystem::remove_all(path_, error);
+    }
+
+    ScopedHelperScratch(const ScopedHelperScratch&) = delete;
+    ScopedHelperScratch& operator=(const ScopedHelperScratch&) = delete;
+
+    [[nodiscard]] const std::filesystem::path& path() const noexcept {
+        return path_;
+    }
+
+  private:
+    std::filesystem::path path_;
+};
+
 json read_setup_result(const std::filesystem::path& path) {
     std::error_code error;
     const auto size = std::filesystem::file_size(path, error);
@@ -753,7 +784,9 @@ void run_ui_picker(
     const std::filesystem::path& manager_data_root,
     const std::filesystem::path& setup_executable,
     const bool allow_setup) {
+    ScopedHelperScratch scratch;
     auto& application = drogon::app();
+    application.setUploadPath(scratch.path().string());
     application.registerHandler(
         "/v1/pick",
         [bearer_token, dashboard_origin](
@@ -1022,7 +1055,6 @@ void run_ui_picker(
     }
     application.addListener("127.0.0.1", port);
     application.setThreadNum(1);
-    application.disableSigtermHandling();
     application.run();
 }
 

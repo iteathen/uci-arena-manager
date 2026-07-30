@@ -6,6 +6,7 @@ import {
   IconPlugConnected,
   IconSearch,
   IconSettings,
+  IconTrash,
 } from '@tabler/icons-react'
 import {
   Alert,
@@ -26,11 +27,12 @@ import { useDisclosure } from '@mantine/hooks'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { api, makeCommand } from '../api/client'
-import type { ManagedServiceData } from '../api/types'
+import type { ManagedServiceData, Resource } from '../api/types'
 import { PageHeader } from '../components/PageHeader'
 import { ComponentSetupButton } from '../components/ComponentSetupButton'
 import { PathPickerInput } from '../components/PathPickerInput'
 import { StatusPill } from '../components/StatusPill'
+import { selectPreferredService } from './serviceSelection'
 
 export function ServicesPage() {
   const queryClient = useQueryClient()
@@ -76,11 +78,22 @@ export function ServicesPage() {
   const [evidenceCliPath, setEvidenceCliPath] = useState('')
   const [evidenceWorkspace, setEvidenceWorkspace] = useState('')
   const [discoveryMessage, setDiscoveryMessage] = useState('')
-  const serviceByProfile = new Map(
-    services.data?.map((service) => [service.data.profile_id, service]),
+  const bookService = selectPreferredService(
+    services.data ?? [],
+    'book_forge',
+    'book_forge.service',
   )
-  const bookService = serviceByProfile.get('book_forge')
-  const evidenceService = serviceByProfile.get('uci_arena_evidence')
+  const evidenceService = selectPreferredService(
+    services.data ?? [],
+    'uci_arena_evidence',
+    'uci_arena_evidence.service',
+  )
+  const duplicateProfiles = ['book_forge', 'uci_arena_evidence'].filter(
+    (profileId) =>
+      (services.data ?? []).filter(
+        (service) => service.data.profile_id === profileId,
+      ).length > 1,
+  )
   const packageById = new Map(
     components.data?.components.map((component) => [component.component_id, component]),
   )
@@ -187,6 +200,27 @@ export function ServicesPage() {
         }
       }
       await queryClient.invalidateQueries({ queryKey: ['resources', 'managed_service'] })
+    },
+  })
+  const [removeTarget, setRemoveTarget] =
+    useState<Resource<ManagedServiceData> | null>(null)
+  const removeLocator = useMutation({
+    mutationFn: (service: Resource<ManagedServiceData>) =>
+      api.command(
+        makeCommand(
+          'resource.remove',
+          'managed_service',
+          {},
+          false,
+          service.id,
+          service.revision,
+        ),
+      ),
+    onSuccess: async () => {
+      setRemoveTarget(null)
+      await queryClient.invalidateQueries({
+        queryKey: ['resources', 'managed_service'],
+      })
     },
   })
 
@@ -321,9 +355,21 @@ export function ServicesPage() {
       <Title order={2} mb="md">
         Service instances
       </Title>
+      {duplicateProfiles.length > 0 && (
+        <Alert color="yellow" mb="md">
+          Multiple saved locators exist for {duplicateProfiles.join(' and ')}. The
+          receipt-verified package is used by the catalog card. Stop and remove inactive manual
+          locators below to restore one instance per profile.
+        </Alert>
+      )}
       <Stack>
-        {services.data?.map((service) => (
-          <Paper withBorder className="service-instance" key={service.id}>
+        {services.data?.map((service) => {
+          const removalBlocked = ['running', 'starting', 'paused', 'stopping'].includes(
+            service.data.observed_state,
+          )
+          const receiptOwned = Boolean(service.data.installed_component_id)
+          return (
+            <Paper withBorder className="service-instance" key={service.id}>
             <Grid align="center">
               <Grid.Col span={{ base: 12, md: 5 }}>
                 <Text fw={700}>{service.data.display_name}</Text>
@@ -391,6 +437,24 @@ export function ServicesPage() {
                           Stop
                         </Button>
                       </>
+                    ) : service.data.observed_state === 'paused' ? (
+                      <>
+                        <Button
+                          size="xs"
+                          variant="light"
+                          onClick={() => control.mutate({ id: service.id, action: 'resume' })}
+                        >
+                          Resume
+                        </Button>
+                        <Button
+                          size="xs"
+                          color="red"
+                          variant="light"
+                          onClick={() => control.mutate({ id: service.id, action: 'stop' })}
+                        >
+                          Stop
+                        </Button>
+                      </>
                     ) : service.data.observed_state === 'starting' ? (
                       <Button
                         size="xs"
@@ -406,6 +470,23 @@ export function ServicesPage() {
                         onClick={() => control.mutate({ id: service.id, action: 'start' })}
                       >
                         Start
+                      </Button>
+                    )}
+                    {!receiptOwned && (
+                      <Button
+                        size="xs"
+                        color="red"
+                        variant="subtle"
+                        leftSection={<IconTrash size={14} />}
+                        disabled={removalBlocked}
+                        title={
+                          removalBlocked
+                            ? 'Stop this manual service before removing its locator.'
+                            : 'Remove this manual locator.'
+                        }
+                        onClick={() => setRemoveTarget(service)}
+                      >
+                        Remove
                       </Button>
                     )}
                   </Group>
@@ -438,8 +519,9 @@ export function ServicesPage() {
                   )}
                 </Paper>
               )}
-          </Paper>
-        ))}
+            </Paper>
+          )
+        })}
         {!services.data?.length && (
           <Alert color="gray">
             No service instances configured. The catalog above remains available even when an
@@ -447,6 +529,38 @@ export function ServicesPage() {
           </Alert>
         )}
       </Stack>
+      <Modal
+        opened={removeTarget !== null}
+        onClose={() => !removeLocator.isPending && setRemoveTarget(null)}
+        title="Remove manual service locator?"
+      >
+        <Stack>
+          <Text>
+            This removes the Manager registration for{' '}
+            <strong>{removeTarget?.data.display_name}</strong>. It does not delete the
+            provider workspace or uninstall any package.
+          </Text>
+          {removeLocator.error && (
+            <Text c="red">{removeLocator.error.message}</Text>
+          )}
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              disabled={removeLocator.isPending}
+              onClick={() => setRemoveTarget(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              color="red"
+              loading={removeLocator.isPending}
+              onClick={() => removeTarget && removeLocator.mutate(removeTarget)}
+            >
+              Remove locator
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
 
       <Modal opened={bookOpened} onClose={bookModal.close} title="Configure Book Forge" size="lg">
         <Stack>

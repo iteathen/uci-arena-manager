@@ -1,5 +1,4 @@
 import {
-  IconBookDownload,
   IconCopy,
   IconDatabaseImport,
   IconDownload,

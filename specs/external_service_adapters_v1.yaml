@@ -80,6 +80,19 @@ common_contract:
     - Secrets use SecretReference ids and are never copied into managed-service data.
     - Missing optional capabilities produce unavailable actions, not startup failure.
     - Installed services are reconciled only from enabled arena_install_receipt_v1 receipts.
+    - V1 permits one configured managed-service resource per profile. Manual
+      registration rejects an already configured profile. Receipt
+      reconciliation reuses an exact receipt-owned resource; when only an
+      operator-configured resource exists it preserves that locator and does
+      not create a competing packaged resource or silently overwrite operator
+      intent. Preservation performs no implicit probe or launch; the normal
+      bounded page/status action refreshes that manual instance.
+    - Databases created before the cardinality rule may retain duplicate
+      manual resources until explicit cleanup. The receipt-owned resource is
+      the catalog-card authority, every duplicate remains visible in the
+      instance list, and only an inactive non-receipt-owned resource may be
+      removed through the audited resource command. Receipt-owned resources
+      are changed or removed only through Suite Setup.
     - Reconciliation verifies the complete immutable private runtime and provider component file sets by exact size and SHA-256, rejects symbolic links and unlisted files, and never launches an unverifiable component.
     - Reconciliation resolves managed dependency entrypoints with the same
       narrow compatibility rule as arena-setup: an already locked and

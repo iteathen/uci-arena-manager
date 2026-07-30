@@ -39,6 +39,23 @@ test("native host setup authority is narrow, typed, and unavailable to normal br
   assert.match(setup, /--result-file/);
 });
 
+test("desktop helper keeps scratch state out of the install directory", () => {
+  const helper = readFileSync(
+    path.join(root, "apps", "cli", "ui_picker.cpp"),
+    "utf8",
+  );
+  const launcher = readFileSync(
+    path.join(root, "apps", "launcher", "main.cpp"),
+    "utf8",
+  );
+  assert.match(helper, /temp_directory_path\(\)/);
+  assert.match(helper, /uci-arena-manager-ui-/);
+  assert.match(helper, /setUploadPath\(scratch\.path\(\)\.string\(\)\)/);
+  assert.match(helper, /remove_all\(path_, error\)/);
+  assert.match(launcher, /scratch_path_/);
+  assert.match(launcher, /remove_all\(scratch_path_, error\)/);
+});
+
 test("desktop WebView dependencies are immutable and their licenses are packaged", () => {
   const cmake = readFileSync(path.join(root, "CMakeLists.txt"), "utf8");
   assert.match(

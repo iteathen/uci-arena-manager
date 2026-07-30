@@ -1,4 +1,6 @@
+#include "arena/adapters/sqlite_store.hpp"
 #include "arena/application/broker_policy.hpp"
+#include "arena/application/control_plane.hpp"
 #include "arena/application/service_catalog.hpp"
 #include "arena/domain/uuid.hpp"
 
@@ -388,6 +390,97 @@ TEST_CASE("installed service receipts reconcile exact private runtime entrypoint
         arena::application::ServiceCatalog::installed_registrations(data);
     REQUIRE(tampered.at("services").empty());
     REQUIRE(tampered.at("errors").size() == 1);
+    fs::remove_all(root);
+}
+
+TEST_CASE("installed reconciliation preserves one existing manual service profile") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-installed-manual-service-" + arena::domain::uuid_v7());
+    const fs::path data = root / "data";
+    const fs::path install = root / "install";
+    write_installed_component(
+        data,
+        install,
+        "node_runtime.private",
+        "executable",
+        "bin/node");
+    write_installed_component(
+        data,
+        install,
+        "book_forge.service",
+        "cli",
+        "src/cli.mjs",
+        {root / "workspaces" / "book-forge"},
+        {{"manager_integration_api", manager_service_api()}});
+    const fs::path service_receipt =
+        data / "receipts" / "book_forge.service.json";
+    const fs::path service_config =
+        root / "workspaces" / "book-forge" / "manager-config.json";
+    write_json(
+        service_config,
+        {
+            {"schema", "uci_arena_book_forge_config_v1"},
+            {"stockfish", "C:/verified/stockfish.exe"},
+        });
+    json receipt = read_json(service_receipt);
+    receipt["configuration_path"] = service_config.string();
+    receipt["startup"] = {{"installed", true}};
+    write_json(service_receipt, receipt);
+
+    const fs::path manual_node = root / "manual" / "node.exe";
+    const fs::path manual_cli = root / "manual" / "book-cli.mjs";
+    const fs::path manual_workspace = root / "manual-workspace";
+    fs::create_directories(manual_node.parent_path());
+    fs::create_directories(manual_workspace);
+    std::ofstream(manual_node) << "mock";
+    std::ofstream(manual_cli) << "mock";
+
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(
+            root / "arena.db");
+        arena::application::ControlPlane control_plane(store);
+        control_plane.initialize();
+        const json created = control_plane.submit(
+            {
+                {"schema_version", 1},
+                {"request_id", arena::domain::uuid_v7()},
+                {"idempotency_key", arena::domain::uuid_v7()},
+                {"target", {{"kind", "managed_service"}, {"id", nullptr}}},
+                {"action", "service.register"},
+                {"dry_run", false},
+                {"parameters",
+                 {
+                     {"profile_id", "book_forge"},
+                     {"node_executable", manual_node.string()},
+                     {"cli_entrypoint", manual_cli.string()},
+                     {"workspace", manual_workspace.string()},
+                 }},
+            },
+            "test");
+
+        control_plane.reconcile_installed_services(data);
+        const json resources = control_plane.list("managed_service");
+        REQUIRE(resources.size() == 1);
+        REQUIRE(resources.at(0).at("id") == created.at("resource").at("id"));
+        REQUIRE(
+            resources.at(0).at("revision") ==
+            created.at("resource").at("revision"));
+        REQUIRE_FALSE(
+            resources.at(0).at("data").contains("installed_component_id"));
+        const json changes =
+            control_plane.status()
+                .at("installed_service_reconciliation")
+                .at("changes");
+        REQUIRE(
+            std::any_of(
+                changes.begin(),
+                changes.end(),
+                [](const json& change) {
+                    return change.value("state", "") ==
+                           "manual_configuration_preserved";
+                }));
+    }
     fs::remove_all(root);
 }
 

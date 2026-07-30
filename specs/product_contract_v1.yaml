@@ -162,6 +162,7 @@ managed_service_contract:
     A managed service is identified by a manager-owned UUID and a stable
     profile id. Repository names, paths, and implementation language are never
     identities.
+  v1_cardinality: one_configured_resource_per_profile
   lifecycle:
     - not_installed
     - stopped
@@ -179,6 +180,8 @@ managed_service_contract:
     - health_contract
   invariants:
     - Service commands use native argument arrays or a declared HTTP adapter.
+    - A second registration for an already configured profile is rejected;
+      operators reconfigure or remove the existing manual resource.
     - The manager never imports service source or opens a service-owned database.
     - Installed standalone services expose a digest-verified public contract
       whose identity, CLI entrypoint, capabilities, and data paths agree with

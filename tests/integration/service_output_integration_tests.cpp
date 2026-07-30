@@ -68,7 +68,116 @@ json register_and_status(
         "test");
 }
 
+void seed_managed_service(
+    const std::shared_ptr<arena::adapters::SqliteStore>& store,
+    const std::string& id,
+    const json& data,
+    const json& labels = json::object()) {
+    const std::string timestamp = "2026-01-01T00:00:00.000Z";
+    const std::string command_id = arena::domain::uuid_v7();
+    store->create_resource(
+        {
+            id,
+            "managed_service",
+            "local",
+            1,
+            timestamp,
+            timestamp,
+            labels.dump(),
+            data.dump(),
+        },
+        {
+            command_id,
+            arena::domain::uuid_v7(),
+            arena::domain::uuid_v7(),
+            "test.seed",
+            "completed",
+            "{}",
+            timestamp,
+        },
+        {
+            0,
+            arena::domain::uuid_v7(),
+            timestamp,
+            "state",
+            "managed_service.created",
+            "managed_service",
+            id,
+            1,
+            command_id,
+            "{}",
+        });
+}
+
 }  // namespace
+
+TEST_CASE("managed service profiles are cardinal and removal respects ownership") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-service-cardinality-" + arena::domain::uuid_v7());
+    fs::create_directories(root);
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(
+            root / "arena.db");
+        arena::application::ControlPlane control_plane(store);
+        control_plane.initialize();
+
+        const json manual = register_service(
+            control_plane, root, "book_forge", "book-cli.mjs");
+        REQUIRE_THROWS_AS(
+            register_service(
+                control_plane,
+                root,
+                "book_forge",
+                "book-cli-duplicate.mjs"),
+            arena::application::CommandFailure);
+
+        const std::string manual_id =
+            manual.at("resource").at("id").get<std::string>();
+        static_cast<void>(control_plane.submit(
+            command(
+                "resource.remove",
+                {{"kind", "managed_service"}, {"id", manual_id}}),
+            "test"));
+        REQUIRE(control_plane.list("managed_service").empty());
+
+        const std::string active_id = arena::domain::uuid_v7();
+        seed_managed_service(
+            store,
+            active_id,
+            {
+                {"profile_id", "book_forge"},
+                {"observed_state", "running"},
+            });
+        REQUIRE_THROWS_AS(
+            control_plane.submit(
+                command(
+                    "resource.remove",
+                    {{"kind", "managed_service"}, {"id", active_id}}),
+                "test"),
+            arena::application::CommandFailure);
+
+        const std::string receipt_owned_id = arena::domain::uuid_v7();
+        seed_managed_service(
+            store,
+            receipt_owned_id,
+            {
+                {"profile_id", "uci_arena_evidence"},
+                {"observed_state", "stopped"},
+                {"installed_component_id", "uci_arena_evidence.service"},
+            },
+            {{"managed_by", "arena-setup"}});
+        REQUIRE_THROWS_AS(
+            control_plane.submit(
+                command(
+                    "resource.remove",
+                    {{"kind", "managed_service"},
+                     {"id", receipt_owned_id}}),
+                "test"),
+            arena::application::CommandFailure);
+    }
+    fs::remove_all(root);
+}
 
 TEST_CASE("service start never reports running before provider status") {
     const fs::path root =
