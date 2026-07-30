@@ -89,11 +89,17 @@ void write_installed_component(
         });
 }
 
-void write_ready_bot_fixture(const fs::path& root) {
+void write_ready_bot_fixture(
+    const fs::path& root,
+    const std::string& node_entrypoint_name = "node") {
     const fs::path data = root / "data";
     const fs::path install = root / "install";
     write_installed_component(
-        data, install, "node_runtime.private", "node", "bin/node");
+        data,
+        install,
+        "node_runtime.private",
+        node_entrypoint_name,
+        "bin/node");
     write_installed_component(
         data,
         install,
@@ -297,7 +303,7 @@ TEST_CASE("installed service receipts reconcile exact private runtime entrypoint
         data,
         install,
         "node_runtime.private",
-        "node",
+        "executable",
         "bin/node");
     write_installed_component(
         data,
@@ -658,7 +664,7 @@ TEST_CASE("Lichess BOT status and disable never require credential arguments") {
     const fs::path root =
         fs::temp_directory_path() /
         ("arena-bot-disable-" + arena::domain::uuid_v7());
-    write_ready_bot_fixture(root);
+    write_ready_bot_fixture(root, "executable");
     std::vector<std::vector<std::string>> calls;
     const auto runner =
         [&calls](

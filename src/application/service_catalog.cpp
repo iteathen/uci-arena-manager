@@ -264,15 +264,29 @@ InstalledComponent installed_component(
 fs::path verified_entrypoint(
     const InstalledComponent& component,
     const std::string& name) {
+    const std::string component_id =
+        component.receipt.at("component_id").get<std::string>();
     if (!component.manifest.contains("entrypoints") ||
-        !component.manifest.at("entrypoints").contains(name) ||
-        !component.manifest.at("entrypoints").at(name).is_string()) {
+        !component.manifest.at("entrypoints").is_object()) {
         throw std::runtime_error(
-            component.receipt.at("component_id").get<std::string>() +
-            " does not declare the " + name + " entrypoint");
+            component_id + " does not declare the " + name + " entrypoint");
+    }
+    const json& entrypoints = component.manifest.at("entrypoints");
+    std::string resolved_name = name;
+    if ((!entrypoints.contains(resolved_name) ||
+         !entrypoints.at(resolved_name).is_string()) &&
+        component_id == "node_runtime.private" && name == "node" &&
+        entrypoints.contains("executable") &&
+        entrypoints.at("executable").is_string()) {
+        resolved_name = "executable";
+    }
+    if (!entrypoints.contains(resolved_name) ||
+        !entrypoints.at(resolved_name).is_string()) {
+        throw std::runtime_error(
+            component_id + " does not declare the " + name + " entrypoint");
     }
     const fs::path relative =
-        component.manifest.at("entrypoints").at(name).get<std::string>();
+        entrypoints.at(resolved_name).get<std::string>();
     if (!safe_relative_path(relative)) {
         throw std::runtime_error("installed component entrypoint is unsafe");
     }
