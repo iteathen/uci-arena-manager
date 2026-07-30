@@ -68,6 +68,12 @@ engine_contract:
       - Verified component identity, never enumeration order or a model label,
         marks the recommended engine.
       - The bundled model is projected as separate model-package metadata.
+      - A successful registration copied from a verified installation receipt
+        persists component_id, onboarding_source, recommended, and
+        default_model as non-authoritative discovery provenance.
+      - A registration without component_id remains usable but cannot become
+        preferred by matching its display name, reported engine name,
+        executable stem, or persisted creation order.
       - Stockfish and every external UCI engine remain peers under the same
         registration and probing contract.
 

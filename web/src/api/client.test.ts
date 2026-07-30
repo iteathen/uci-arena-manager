@@ -133,3 +133,53 @@ describe('interactive-user BOT account control', () => {
     )
   })
 })
+
+describe('native desktop typed setup', () => {
+  it('retains setup capability only for a native-host pairing and sends typed fields', async () => {
+    history.replaceState(
+      null,
+      '',
+      '/#pair=' +
+        'a'.repeat(64) +
+        '&picker_port=47832&picker_token=' +
+        'b'.repeat(64) +
+        '&setup=1',
+    )
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ csrf_token: 'csrf' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            schema: 'arena_ui_setup_plan_v1',
+            operation: 'component',
+            actions: [],
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
+      )
+
+    await exchangePairingToken()
+    const { planLocalSetup } = await import('./client')
+    await planLocalSetup({
+      operation: 'component',
+      component_id: 'opening_book.standard',
+    })
+
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('http://127.0.0.1:47832/v1/setup-plan')
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      schema: 'arena_ui_setup_request_v1',
+      operation: 'component',
+      component_id: 'opening_book.standard',
+    })
+    fetchMock.mockRestore()
+  })
+})

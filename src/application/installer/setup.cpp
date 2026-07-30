@@ -2863,14 +2863,47 @@ std::string SetupEngine::platform_key() {
 
 json SetupEngine::load_catalog(const fs::path& catalog_path, const fs::path& metadata_directory,
                                const bool allow_unsigned_development_catalog,
-                               const fs::path& rollback_state_path) {
+                               const fs::path& rollback_state_path,
+                               const fs::path& retained_development_trust_path) {
+    std::string catalog_trust;
     if (metadata_directory.empty()) {
         if (!allow_unsigned_development_catalog) {
-            throw std::runtime_error("trusted TUF metadata is required; unsigned catalogs are "
-                                     "development-only");
+            const fs::path expected_catalog =
+                retained_development_trust_path.parent_path() /
+                "catalog.json";
+            if (retained_development_trust_path.empty() ||
+                normalized_absolute(catalog_path) !=
+                    normalized_absolute(expected_catalog) ||
+                !fs::is_regular_file(catalog_path) ||
+                contains_symbolic_link(catalog_path) ||
+                !fs::is_regular_file(
+                    retained_development_trust_path) ||
+                contains_symbolic_link(
+                    retained_development_trust_path)) {
+                throw std::runtime_error(
+                    "trusted TUF metadata is required; unsigned catalogs are "
+                    "development-only");
+            }
+            const json retained_trust =
+                read_json(retained_development_trust_path);
+            if (retained_trust.value("schema", "") !=
+                    "arena_retained_development_catalog_trust_v1" ||
+                retained_trust.value("schema_version", 0) != 1 ||
+                retained_trust.value("scope", "") !=
+                    "exact_retained_catalog" ||
+                retained_trust.value("catalog_sha256", "") !=
+                    sha256_file(catalog_path)) {
+                throw std::runtime_error(
+                    "retained development catalog trust does not match the "
+                    "exact catalog");
+            }
+            catalog_trust = "retained_unsigned_development";
+        } else {
+            catalog_trust = "explicit_unsigned_development";
         }
     } else {
         verify_tuf_chain(catalog_path, metadata_directory, rollback_state_path);
+        catalog_trust = "tuf";
     }
     json catalog = read_json(catalog_path);
     if (catalog.value("schema", "") != "arena_install_catalog_v1" ||
@@ -2888,12 +2921,18 @@ json SetupEngine::load_catalog(const fs::path& catalog_path, const fs::path& met
         }
     }
     catalog["_catalog_directory"] = normalized_absolute(catalog_path.parent_path()).string();
+    catalog["_catalog_trust"] = catalog_trust;
     return catalog;
 }
 
 json SetupEngine::persist_release_media(const json& catalog, const SetupPaths& paths,
                                         const fs::path& catalog_path,
-                                        const fs::path& metadata_directory) {
+                                        const fs::path& metadata_directory,
+                                        const bool retain_development_trust) {
+    if (retain_development_trust && !metadata_directory.empty()) {
+        throw std::runtime_error(
+            "development catalog trust cannot replace TUF metadata");
+    }
     const fs::path source_catalog = normalized_absolute(catalog_path);
     const fs::path source_root = source_catalog.parent_path();
     if (!fs::is_regular_file(source_catalog) || contains_symbolic_link(source_catalog)) {
@@ -2912,6 +2951,27 @@ json SetupEngine::persist_release_media(const json& catalog, const SetupPaths& p
     try {
         fs::create_directories(stage);
         fs::copy_file(source_catalog, stage / "catalog.json", fs::copy_options::overwrite_existing);
+
+        if (retain_development_trust) {
+            std::ofstream trust_output(
+                stage / "development-trust.json",
+                std::ios::binary | std::ios::trunc);
+            trust_output
+                << json{
+                       {"schema",
+                        "arena_retained_development_catalog_trust_v1"},
+                       {"schema_version", 1},
+                       {"scope", "exact_retained_catalog"},
+                       {"catalog_sha256",
+                        sha256_file(source_catalog)},
+                   }
+                       .dump(2);
+            trust_output.flush();
+            if (!trust_output) {
+                throw std::runtime_error(
+                    "cannot retain the exact development catalog trust");
+            }
+        }
 
         if (!metadata_directory.empty()) {
             const fs::path metadata_root = normalized_absolute(metadata_directory);
@@ -2997,6 +3057,13 @@ json SetupEngine::persist_release_media(const json& catalog, const SetupPaths& p
             {"catalog", (release_root / "catalog.json").string()},
             {"metadata",
              metadata_directory.empty() ? json(nullptr) : json((release_root / "tuf").string())},
+            {"development_trust",
+             retain_development_trust
+                 ? json(
+                       (release_root /
+                        "development-trust.json")
+                           .string())
+                 : json(nullptr)},
             {"payloads", std::move(retained)},
         };
     } catch (...) {

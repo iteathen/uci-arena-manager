@@ -13,6 +13,8 @@ limits, and identity fingerprint.
 
 - `arena-service`: authoritative C++ service and local HTTP/WebSocket API
 - `arena`: native CLI using the same public control contract
+- `uci-arena-manager`: thin native desktop host for the packaged React view
+- `arena-setup`: typed, provenance-verifying component installer
 - `arena-broker`: minimal allowlisted privileged service-control boundary
 - `web`: React and TypeScript operator dashboard
 - `specs`: authoritative product, API, persistence, lifecycle, and UX contracts
@@ -20,9 +22,10 @@ limits, and identity fingerprint.
 ## Start the installed application
 
 On Windows, open **UCI Arena Manager** from the Start menu. The GUI-subsystem
-launcher starts the authenticated interactive session and opens the dashboard
-without a terminal window. On Linux, open UCI Arena Manager from the
-application menu.
+launcher starts the authenticated interactive session and embeds the packaged
+dashboard in its native window without a terminal or default-browser launch.
+On Linux, open UCI Arena Manager from the application menu. `arena ui` remains
+the optional external-browser monitoring and troubleshooting entrypoint.
 
 The installed CLI is `arena`. Windows setup adds it to the machine `PATH`;
 open a new terminal after setup. Linux packages install both the command and
@@ -158,6 +161,12 @@ installers or advance release channels.
 
 Complete Arena setup presents UCI Arena Engine, Book Forge, UCI Arena Evidence
 Service, and the Lichess Bot adapter as named, selected-by-default components.
+The desktop Engines, Services, Bots, and Configuration views can review and
+apply a missing signed component from retained release media. The React view
+supplies only a fixed component id or asset kind; the native helper invokes the
+adjacent verified `arena-setup`, shows dependencies and disk impact, and asks
+for administrator confirmation only for the commit. External-browser sessions
+copy commands instead and never claim that copying performed installation.
 On Windows, reopen **UCI Arena Suite Setup** from Apps and Features and choose
 **Modify**, then **Choose Components**, to add or remove them. Feature choices
 are persisted across upgrades. The Lichess adapter is installed disabled until

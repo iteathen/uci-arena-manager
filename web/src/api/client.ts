@@ -20,6 +20,7 @@ import type {
 const csrfKey = 'arena.csrf'
 const pickerPortKey = 'arena.picker.port'
 const pickerTokenKey = 'arena.picker.token'
+const setupCapabilityKey = 'arena.setup.capability'
 
 export class ApiError extends Error {
   constructor(
@@ -73,12 +74,132 @@ export async function exchangePairingToken(): Promise<boolean> {
   ) {
     sessionStorage.setItem(pickerPortKey, pickerPort)
     sessionStorage.setItem(pickerTokenKey, pickerToken)
+    if (parameters.get('setup') === '1') {
+      sessionStorage.setItem(setupCapabilityKey, 'enabled')
+    } else {
+      sessionStorage.removeItem(setupCapabilityKey)
+    }
   } else {
     sessionStorage.removeItem(pickerPortKey)
     sessionStorage.removeItem(pickerTokenKey)
+    sessionStorage.removeItem(setupCapabilityKey)
   }
   history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
   return true
+}
+
+export type LocalSetupRequest =
+  | {
+      operation: 'import'
+      asset_kind:
+        | 'opening_book'
+        | 'syzygy'
+        | 'uci_engine'
+        | 'book_forge'
+        | 'evidence_service'
+        | 'timing_profile'
+        | 'lichess_single_game_profile'
+        | 'lichess_capacity_profile'
+        | 'lichess_transport_profile'
+        | 'lichess_token_path'
+      path: string
+      managed_copy?: boolean
+    }
+  | {
+      operation: 'component'
+      component_id:
+        | 'uci_arena.engine'
+        | 'stockfish.engine'
+        | 'node_runtime.private'
+        | 'book_forge.service'
+        | 'opening_book.standard'
+        | 'uci_arena_evidence.runtime'
+        | 'uci_arena_evidence.service'
+        | 'lichess.adapter'
+        | 'syzygy.wdl.3-4-5'
+        | 'syzygy.dtz.3-4-5'
+    }
+
+export interface LocalSetupResult {
+  schema: string
+  state?: string
+  operation?: string
+  elevation_required?: boolean
+  manager_service_restart?: boolean
+  disk_impact_bytes?: number | null
+  actions?: Array<Record<string, unknown>>
+  [key: string]: unknown
+}
+
+export function localSetupAvailable() {
+  return sessionStorage.getItem(setupCapabilityKey) === 'enabled'
+}
+
+async function localHelperRequest<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const port = sessionStorage.getItem(pickerPortKey)
+  const token = sessionStorage.getItem(pickerTokenKey)
+  if (!port || !token) {
+    throw new ApiError(
+      'Open UCI Arena Manager from its desktop launcher and keep it open.',
+      503,
+      'interactive_helper_unavailable',
+    )
+  }
+  let response: Response
+  try {
+    response = await fetch(`http://127.0.0.1:${port}${path}`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    })
+  } catch {
+    throw new ApiError(
+      'The interactive-user helper is no longer running. Reopen UCI Arena Manager and try again.',
+      503,
+      'interactive_helper_unavailable',
+    )
+  }
+  const result = (await response.json()) as T & { code?: string; detail?: string }
+  if (!response.ok) {
+    throw new ApiError(
+      result.detail ?? 'The local setup operation failed',
+      response.status,
+      result.code ?? 'setup_failed',
+    )
+  }
+  return result
+}
+
+export function planLocalSetup(request: LocalSetupRequest) {
+  if (!localSetupAvailable()) {
+    throw new ApiError(
+      'Typed setup is available only in the native desktop application.',
+      503,
+      'setup_capability_unavailable',
+    )
+  }
+  return localHelperRequest<LocalSetupResult>('/v1/setup-plan', {
+    schema: 'arena_ui_setup_request_v1',
+    ...request,
+  })
+}
+
+export function applyLocalSetup(request: LocalSetupRequest) {
+  if (!localSetupAvailable()) {
+    throw new ApiError(
+      'Typed setup is available only in the native desktop application.',
+      503,
+      'setup_capability_unavailable',
+    )
+  }
+  return localHelperRequest<LocalSetupResult>('/v1/setup-apply', {
+    schema: 'arena_ui_setup_request_v1',
+    ...request,
+  })
 }
 
 export interface LocalPathFilter {

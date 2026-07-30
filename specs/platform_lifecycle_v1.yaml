@@ -71,8 +71,19 @@ desktop_application:
     launcher: desktop_entry
     terminal: false
     icon_formats: [svg, png]
+    runtime_dependencies:
+      - WebKitGTK_4_1
+      - GTK_3
+      - zenity_or_portal_compatible_picker
   session:
-    binding: random_loopback_port
-    authentication: unguessable_per_process_token
-    authority: [path_picker, typed_component_setup]
+    view: packaged_react_dashboard_in_thin_native_host
+    runtime_authority: manager_service_only
+    manager_endpoint: authenticated_loopback_http
+    authentication: one_use_pairing_token
+    interactive_authority: [path_picker, typed_component_setup]
+    bridge: authenticated_narrow_typed_loopback_capabilities_only
     arbitrary_process_execution: forbidden
+    external_browser:
+      entrypoint: arena ui
+      role: optional_monitoring_and_troubleshooting
+      interactive_binding: random_loopback_picker_port

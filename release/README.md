@@ -105,6 +105,26 @@ reviewed provider candidates, runs both platform acceptance matrices, and emits
 the Windows setup executables and Linux portable installers together with the
 native Manager packages.
 
+For a private unsigned Windows acceptance candidate from the same release-ready
+lock, use:
+
+```powershell
+node tools/release/clean-build.mjs --complete-development --platform windows-x86_64
+```
+
+This path builds Manager Core cleanly, downloads the exact private provider
+mirror assets, verifies every original-provider Sigstore identity and digest,
+assembles retained online/offline media, and emits the two Suite Setup
+executables plus the Manager MSI under `dist/windows`. Install
+`UCI-Arena-Setup-<version>-windows-x64-offline.exe` for the most complete
+single-cycle test. The bare MSI is retained for Manager-Core diagnostics and is
+not the normal Complete Arena handoff.
+
+The initial elevated development transaction records the exact retained
+catalog digest beside the retained media. Native component install, installer
+Modify, repair, and upgrade may reuse only that administrator-protected exact
+catalog; changed or external unsigned catalogs still fail closed.
+
 The command requires a clean tracked worktree, runs the spec and neutral naming
 gates, builds and tests the dashboard and Manager Core, cleans the native build
 before recompiling, and invokes the existing CPack generators. Windows builds
@@ -117,10 +137,10 @@ and tarball under `dist/linux`. Each directory also contains
 SHA-256 digests to the source commit and build preset. Missing, empty,
 ambiguously named, or stale output fails the build.
 
-The ordinary pull-request matrix runs this command for both target platforms
-and retains the verified outputs as workflow artifacts. That validation does
-not require `release_ready: true`; an incomplete release lock still blocks
-suite composition, signing, and publication.
+Automatic pull-request CI is intentionally absent. Local pre-merge validation
+runs these gates, and the manual `Suite release` workflow runs the platform
+matrix only when explicitly dispatched. An incomplete release lock still
+blocks suite composition, signing, and publication.
 
 These unsigned outputs are development installers. The protected release
 workflow remains the only authority that can compose full suite setup media,

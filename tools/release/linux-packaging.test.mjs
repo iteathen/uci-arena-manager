@@ -18,6 +18,9 @@ test("Linux packages declare policy metadata and reproducible documentation", ()
     /CPACK_PACKAGE_CONTACT[\s\S]*iteathen@users\.noreply\.github\.com/u,
   );
   assert.match(cmake, /CPACK_DEBIAN_PACKAGE_DESCRIPTION/u);
+  assert.match(cmake, /libwebkit2gtk-4\.1-0/u);
+  assert.match(cmake, /webkit2gtk4\.1/u);
+  assert.match(cmake, /zenity/u);
   assert.match(cmake, /CPACK_RPM_PACKAGE_LICENSE "AGPL-3\.0-or-later"/u);
   assert.match(cmake, /set\(CPACK_STRIP_FILES TRUE\)/u);
   assert.match(cmake, /gzip REQUIRED/u);

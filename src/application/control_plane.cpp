@@ -1,6 +1,7 @@
 #include "arena/application/control_plane.hpp"
 
 #include "arena/adapters/uci_process.hpp"
+#include "arena/application/engine_onboarding.hpp"
 #include "arena/application/installer/setup.hpp"
 #include "arena/application/service_catalog.hpp"
 #include "arena/domain/match_planner.hpp"
@@ -572,6 +573,60 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
         {"desired_state", "stopped"},
         {"observed_state", "stopped"},
     };
+    if (parameters.contains("candidate_id") &&
+        parameters.at("candidate_id").is_string() &&
+        !parameters.at("candidate_id").get_ref<const std::string&>().empty() &&
+        !manager_data_root_.empty()) {
+        const std::string requested_candidate_id =
+            parameters.at("candidate_id").get<std::string>();
+        const json discovery =
+            EngineOnboarding::discover(manager_data_root_);
+        for (const auto& candidate : discovery.at("candidates")) {
+            if (candidate.value("candidate_id", "") !=
+                    requested_candidate_id ||
+                !candidate.contains("executable") ||
+                !candidate.at("executable").is_string()) {
+                continue;
+            }
+            std::error_code error;
+            if (!std::filesystem::equivalent(
+                    executable,
+                    candidate.at("executable").get<std::string>(),
+                    error) ||
+                error) {
+                continue;
+            }
+            data["candidate_id"] = requested_candidate_id;
+            data["onboarding_source"] =
+                candidate.value("source", "discovered");
+            for (const auto* field :
+                 {"component_id", "component_version"}) {
+                if (candidate.contains(field) &&
+                    candidate.at(field).is_string() &&
+                    !candidate.at(field)
+                         .get_ref<const std::string&>()
+                         .empty()) {
+                    data[field] = candidate.at(field);
+                }
+            }
+            if (candidate.contains("recommended") &&
+                candidate.at("recommended").is_boolean()) {
+                data["recommended"] =
+                    candidate.at("recommended");
+            }
+            if (candidate.contains("default_model") &&
+                candidate.at("default_model").is_object()) {
+                const json& model =
+                    candidate.at("default_model");
+                if (!model.value("model_id", "").empty() &&
+                    !model.value("display_name", "").empty() &&
+                    !model.value("input_adapter_id", "").empty()) {
+                    data["default_model"] = model;
+                }
+            }
+            break;
+        }
+    }
 
     const std::string now = domain::utc_now();
     return complete_create(
@@ -970,8 +1025,18 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
             process_supervisor_.start(id, node, cli.parent_path(), arguments);
         }
         data["desired_state"] = "running";
-        data["observed_state"] = "running";
-        data["integration_state"] = "available";
+        data["observed_state"] =
+            request.at("dry_run").get<bool>()
+                ? data.value("observed_state", "stopped")
+                : process_supervisor_.running(id) ? "starting" : "stopped";
+        data["health"] = {
+            {"state", "unknown"},
+            {"reason",
+             request.at("dry_run").get<bool>()
+                 ? "service start plan validated"
+                 : "service launch acknowledged; awaiting provider status"},
+            {"observed_at", domain::utc_now()},
+        };
     } else if (action == "service.stop") {
         if (!request.at("dry_run").get<bool>()) {
             process_supervisor_.stop(id);
@@ -987,8 +1052,18 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
             process_supervisor_.start(id, node, cli.parent_path(), arguments);
         }
         data["desired_state"] = "running";
-        data["observed_state"] = "running";
-        data["integration_state"] = "available";
+        data["observed_state"] =
+            request.at("dry_run").get<bool>()
+                ? data.value("observed_state", "stopped")
+                : process_supervisor_.running(id) ? "starting" : "stopped";
+        data["health"] = {
+            {"state", "unknown"},
+            {"reason",
+             request.at("dry_run").get<bool>()
+                 ? "service restart plan validated"
+                 : "service relaunch acknowledged; awaiting provider status"},
+            {"observed_at", domain::utc_now()},
+        };
     } else if (action == "service.pause" || action == "service.resume") {
         auto arguments = base;
         arguments.push_back(action == "service.pause" ? "pause" : "resume");

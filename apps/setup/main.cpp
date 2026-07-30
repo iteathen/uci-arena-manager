@@ -71,14 +71,30 @@ SetupPaths default_paths() {
 #endif
 }
 
-void print(const json& value, const bool machine) {
-    std::cout << value.dump(machine ? -1 : 2) << '\n';
+void print(
+    const json& value,
+    const bool machine,
+    const fs::path& result_file = {}) {
+    const std::string rendered = value.dump(machine ? -1 : 2) + '\n';
+    std::cout << rendered;
+    if (!result_file.empty()) {
+        std::ofstream output(result_file, std::ios::binary | std::ios::trunc);
+        if (!output) {
+            throw std::runtime_error("cannot write the requested setup result file");
+        }
+        output << rendered;
+        output.flush();
+        if (!output) {
+            throw std::runtime_error("cannot commit the requested setup result file");
+        }
+    }
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
     curl_global_init(CURL_GLOBAL_DEFAULT);
+    fs::path result_file;
     try {
         CLI::App app{"Trusted cross-platform installer for UCI Arena Manager and provider "
                      "components"};
@@ -104,6 +120,10 @@ int main(int argc, char** argv) {
         app.add_flag("--restart-manager-service", paths.restart_manager_service,
                      "Restart the installed Manager service after component activation");
         app.add_flag("--json", json_output, "Emit compact JSON");
+        app.add_option(
+            "--result-file",
+            result_file,
+            "Write the final machine-readable result to this helper-owned path");
 
         std::vector<fs::path> scan_roots;
         auto* inventory = app.add_subcommand("inventory", "Detect managed and local components");
@@ -195,21 +215,24 @@ int main(int argc, char** argv) {
         CLI11_PARSE(app, argc, argv);
 
         if (*inventory) {
-            print(SetupEngine::inventory(paths, scan_roots), json_output);
+            print(SetupEngine::inventory(paths, scan_roots), json_output, result_file);
         } else if (*import_command) {
             print(SetupEngine::import_path(paths, import_kind, import_source, managed_copy),
-                  json_output);
+                  json_output, result_file);
         } else if (*verify_command) {
             const auto result = SetupEngine::verify(paths);
-            print(result, json_output);
+            print(result, json_output, result_file);
             curl_global_cleanup();
             return result.value("ok", false) ? 0 : 4;
         } else if (*uninstall_command) {
             if (!uninstall_all && uninstall_components.empty()) {
                 throw std::runtime_error("uninstall requires --component or --all");
             }
-            print(SetupEngine::uninstall(paths, uninstall_components, yes, purge, uninstall_all),
-                  json_output);
+            print(
+                SetupEngine::uninstall(
+                    paths, uninstall_components, yes, purge, uninstall_all),
+                json_output,
+                result_file);
         } else {
             if (catalog_option->count() == 0) {
                 const fs::path retained = paths.data_root / "release" / "catalog.json";
@@ -225,7 +248,9 @@ int main(int argc, char** argv) {
             }
             const json catalog = SetupEngine::load_catalog(
                 catalog_path, metadata_directory, allow_unsigned_development_catalog,
-                paths.data_root / "trust" / "tuf-versions.json");
+                paths.data_root / "trust" / "tuf-versions.json",
+                paths.data_root / "release" /
+                    "development-trust.json");
             std::unordered_map<std::string, bool> feature_state{
                 {"uci_arena.engine", true},
                 {"book_forge.service", true},
@@ -261,7 +286,7 @@ int main(int argc, char** argv) {
                 download_missing_books, download_missing_tablebases,
                 repair_command->parsed() || upgrade_command->parsed());
             if (*plan_command) {
-                print(resolved, json_output);
+                print(resolved, json_output, result_file);
                 curl_global_cleanup();
                 return resolved.at("blockers").empty() ? 0 : 3;
             }
@@ -329,9 +354,13 @@ int main(int argc, char** argv) {
             }
             if (result.value("state", "") == "committed") {
                 result["retained_release_media"] = SetupEngine::persist_release_media(
-                    catalog, paths, catalog_path, metadata_directory);
+                    catalog,
+                    paths,
+                    catalog_path,
+                    metadata_directory,
+                    catalog.value("_catalog_trust", "") != "tuf");
             }
-            print(result, json_output);
+            print(result, json_output, result_file);
         }
         curl_global_cleanup();
         return 0;
@@ -339,6 +368,19 @@ int main(int argc, char** argv) {
         curl_global_cleanup();
         return error.get_exit_code();
     } catch (const std::exception& error) {
+        if (!result_file.empty()) {
+            try {
+                print(
+                    {
+                        {"schema", "arena_setup_problem_v1"},
+                        {"code", "setup_failed"},
+                        {"detail", error.what()},
+                    },
+                    true,
+                    result_file);
+            } catch (...) {
+            }
+        }
         std::cerr << "arena-setup: " << error.what() << '\n';
         curl_global_cleanup();
         return 2;

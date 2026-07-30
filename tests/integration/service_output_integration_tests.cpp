@@ -29,7 +29,7 @@ json command(
     };
 }
 
-json register_and_status(
+json register_service(
     arena::application::ControlPlane& control_plane,
     const fs::path& root,
     const std::string& profile,
@@ -38,7 +38,7 @@ json register_and_status(
     const fs::path workspace = root / (profile + "-workspace");
     fs::create_directories(workspace);
     std::ofstream(cli) << "mock";
-    const json created = control_plane.submit(
+    return control_plane.submit(
         command(
             "service.register",
             {{"kind", "managed_service"}},
@@ -49,6 +49,16 @@ json register_and_status(
                 {"workspace", workspace.string()},
             }),
         "test");
+}
+
+json register_and_status(
+    arena::application::ControlPlane& control_plane,
+    const fs::path& root,
+    const std::string& profile,
+    const std::string& cli_name) {
+    const json created =
+        register_service(
+            control_plane, root, profile, cli_name);
     const std::string id =
         created.at("resource").at("id").get<std::string>();
     return control_plane.submit(
@@ -59,6 +69,58 @@ json register_and_status(
 }
 
 }  // namespace
+
+TEST_CASE("service start never reports running before provider status") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-service-start-" + arena::domain::uuid_v7());
+    fs::create_directories(root);
+    {
+        auto store =
+            std::make_shared<arena::adapters::SqliteStore>(
+                root / "arena.db");
+        arena::application::ControlPlane control_plane(store);
+        control_plane.initialize();
+        const json created = register_service(
+            control_plane,
+            root,
+            "book_forge",
+            "book-cli.mjs");
+        const std::string id =
+            created.at("resource").at("id");
+
+        REQUIRE_THROWS_AS(
+            control_plane.submit(
+                command(
+                    "service.start",
+                    {{"kind", "managed_service"},
+                     {"id", id}}),
+                "test"),
+            arena::application::CommandFailure);
+        const json resources =
+            control_plane.list("managed_service");
+        REQUIRE(resources.size() == 1);
+        const json& launch_state =
+            resources.at(0).at("data");
+        REQUIRE(launch_state.at("desired_state") == "stopped");
+        REQUIRE(
+            launch_state.at("observed_state") != "running");
+        REQUIRE(
+            launch_state.at("health").at("state") ==
+            "unknown");
+
+        const json status = control_plane.submit(
+            command(
+                "service.status",
+                {{"kind", "managed_service"}, {"id", id}}),
+            "test");
+        REQUIRE(
+            status.at("resource")
+                    .at("data")
+                    .at("observed_state") == "running");
+    }
+    fs::remove_all(root);
+}
 
 TEST_CASE("Book Forge and Evidence outputs cross only validated public contracts") {
     const fs::path root =

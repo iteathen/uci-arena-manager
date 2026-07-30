@@ -18,17 +18,35 @@ import {
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
+import type { ManagedServiceData } from '../api/types'
 import { Chessboard } from '../components/Chessboard'
 import { MetricCard } from '../components/MetricCard'
 import { PageHeader } from '../components/PageHeader'
 
 export function OverviewPage({ navigate }: { navigate: (page: string) => void }) {
   const status = useQuery({ queryKey: ['status'], queryFn: api.status, refetchInterval: 10_000 })
+  const components = useQuery({ queryKey: ['components'], queryFn: api.components })
+  const services = useQuery({
+    queryKey: ['resources', 'managed_service'],
+    queryFn: () => api.resources<ManagedServiceData>('managed_service'),
+  })
   const counts = status.data?.counts ?? {}
   const resources =
     (counts.engine ?? 0) +
     (counts.bot ?? 0) +
     (counts.managed_service ?? 0)
+  const componentIssues = (components.data?.components ?? []).filter(
+    (component) => component.package_state !== 'installed' && !component.optional,
+  )
+  const serviceIssues = (services.data ?? []).filter(
+    (service) =>
+      service.data.observed_state === 'degraded' ||
+      service.data.integration_state === 'incompatible',
+  )
+  const attention = componentIssues.length + serviceIssues.length + (status.isError ? 1 : 0)
+  const evidence = (services.data ?? []).find(
+    (service) => service.data.profile_id === 'uci_arena_evidence',
+  )
 
   return (
     <>
@@ -62,8 +80,8 @@ export function OverviewPage({ navigate }: { navigate: (page: string) => void })
         />
         <MetricCard
           label="Attention"
-          value={0}
-          detail="No unhealthy resources"
+          value={attention}
+          detail={attention ? 'Review missing or unhealthy components' : 'No known blockers'}
           icon={<IconAlertTriangle size={22} />}
           tone="orange"
         />
@@ -90,13 +108,17 @@ export function OverviewPage({ navigate }: { navigate: (page: string) => void })
             <Stack gap="sm">
               <Group className="attention-row" justify="space-between">
                 <div>
-                  <Text fw={600}>Control plane ready</Text>
+                  <Text fw={600}>
+                    {status.data ? 'Control plane ready' : 'Control plane status unavailable'}
+                  </Text>
                   <Text size="sm" c="dimmed">
-                    Loopback API and durable event stream are available.
+                    {status.data
+                      ? 'Loopback API and durable event stream are available.'
+                      : 'The dashboard could not obtain a current Manager status sample.'}
                   </Text>
                 </div>
-                <Text size="sm" c="teal" fw={700}>
-                  HEALTHY
+                <Text size="sm" c={status.data ? 'teal' : 'red'} fw={700}>
+                  {status.data ? 'HEALTHY' : 'UNAVAILABLE'}
                 </Text>
               </Group>
               <Group className="attention-row" justify="space-between">
@@ -112,9 +134,14 @@ export function OverviewPage({ navigate }: { navigate: (page: string) => void })
               </Group>
               <Group className="attention-row" justify="space-between">
                 <div>
-                  <Text fw={600}>Evidence service integration ready</Text>
+                  <Text fw={600}>
+                    {evidence
+                      ? `Evidence service ${evidence.data.observed_state}`
+                      : 'Evidence service is not configured'}
+                  </Text>
                   <Text size="sm" c="dimmed">
-                    The optional service can be detected, configured, and controlled from here.
+                    {evidence?.data.health.reason ??
+                      'Install or detect the optional service, then validate its public contract.'}
                   </Text>
                 </div>
                 <Button size="xs" variant="subtle" onClick={() => navigate('services')}>

@@ -44,6 +44,21 @@ test("Windows bundle payloads are deterministic and preserve suite media paths",
   }
 });
 
+test("development bundle permits no synthetic TUF root but keeps the catalog", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "arena-dev-media-"));
+  try {
+    mkdirSync(path.join(root, "bin"), { recursive: true });
+    mkdirSync(path.join(root, "release"), { recursive: true });
+    writeFileSync(path.join(root, "bin", "arena-setup.exe"), "setup");
+    writeFileSync(path.join(root, "release", "catalog.json"), "{}");
+    const xml = buildPayloadFragment(root, { development: true });
+    assert.match(xml, /release\\catalog\.json/);
+    assert.doesNotMatch(xml, /release\\tuf\\root\.json/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("Windows bundle owns complete install, repair, and uninstall lifecycle", () => {
   const source = readFileSync(
     path.join(repositoryRoot, "packaging", "windows", "Bundle.wxs"),

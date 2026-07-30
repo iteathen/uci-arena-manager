@@ -14,6 +14,8 @@ void run_ui_picker(
     std::uint16_t port,
     const std::string& bearer_token,
     const std::string& dashboard_origin,
-    const std::filesystem::path& manager_data_root);
+    const std::filesystem::path& manager_data_root,
+    const std::filesystem::path& setup_executable,
+    bool allow_setup);
 
 }  // namespace arena::cli

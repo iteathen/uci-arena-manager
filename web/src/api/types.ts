@@ -64,6 +64,16 @@ export interface EngineData extends Record<string, unknown> {
   fingerprint: string
   observed_state: string
   discovered_options: Array<{ name: string; type: string; default: string }>
+  component_id?: string
+  component_version?: string
+  onboarding_source?: EngineCandidate['source']
+  candidate_id?: string
+  recommended?: boolean
+  default_model?: {
+    model_id: string
+    display_name: string
+    input_adapter_id: string
+  }
 }
 
 export interface EngineCandidate {
@@ -167,6 +177,54 @@ export interface ManagedServiceData extends Record<string, unknown> {
   workspace?: string
   startup_installed?: boolean
   startup_control?: string
+  output_integration?: ServiceOutputIntegration
+}
+
+export interface BookSnapshotProjection {
+  snapshot_id: string
+  channel: string
+  manifest_sha256: string
+  artifact_files: Array<{ name: string; sha256: string }>
+  record_count: number
+  qualified: boolean
+  includes_fixture: boolean
+  current: boolean
+  published_at: string
+}
+
+export interface EvidenceDatasetProjection {
+  schema: 'uci_arena_evidence_dataset_v1'
+  id: string
+  campaign: string
+  state: string
+  target_identity: Record<string, unknown>
+  authority: Record<string, unknown>
+  observation_count: number
+  created_at: string
+  completed_at: string | null
+}
+
+export interface TimingProfileProjection {
+  schema: 'uci_arena_evidence_profile_v1'
+  source: string
+  path: string
+  sha256: string
+  profile_schema: string
+  qualified: true
+  published_at: string
+  identity_sha256: string
+  target_identity: Record<string, unknown>
+  permissions: Record<string, unknown>
+}
+
+export interface ServiceOutputIntegration {
+  authority: 'book_forge' | 'uci_arena_evidence_service'
+  snapshots?: BookSnapshotProjection[]
+  dataset_count?: number
+  datasets?: EvidenceDatasetProjection[]
+  timing_profile_count?: number
+  timing_profiles?: TimingProfileProjection[]
+  selected_timing_profile?: TimingProfileProjection | null
 }
 
 export interface ComponentInventory {

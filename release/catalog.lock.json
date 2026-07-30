@@ -1,6 +1,6 @@
 {
   "schema": "arena_suite_release_lock_v2",
-  "suite_version": "0.3.0",
+  "suite_version": "0.3.1",
   "release_ready": true,
   "providers": {
     "uci_arena": {
@@ -21,7 +21,7 @@
   },
   "provider_asset_mirror": {
     "repository": "iteathen/uci-arena-manager",
-    "release_tag": "provider-mirror/v0.3.0",
+    "release_tag": "provider-mirror/v0.3.1",
     "authority": "digest_pinned_transport_only"
   },
   "managed_repository": "iteathen/uci-arena-manager",
