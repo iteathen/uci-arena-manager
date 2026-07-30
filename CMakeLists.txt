@@ -21,6 +21,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(ARENA_BUILD_TESTS "Build tests" ON)
 option(ARENA_ENABLE_PACKAGING "Enable CPack packaging" ON)
+option(
+  ARENA_DEVELOPMENT_SAME_VERSION_UPGRADES
+  "Allow replacement of an installed Complete development candidate at the same version"
+  OFF
+)
 
 if(MSVC)
   set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION bin)
@@ -350,6 +355,11 @@ if(ARENA_ENABLE_PACKAGING)
       "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/Package.wxs.in")
     set(CPACK_WIX_PATCH_FILE
       "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/ServicePatch.xml")
+    if(ARENA_DEVELOPMENT_SAME_VERSION_UPGRADES)
+      set(CPACK_WIX_ALLOW_SAME_VERSION_UPGRADES "yes")
+    else()
+      set(CPACK_WIX_ALLOW_SAME_VERSION_UPGRADES "no")
+    endif()
   else()
     set(CPACK_GENERATOR "DEB;RPM;TGZ")
     set(CPACK_STRIP_FILES TRUE)

@@ -98,6 +98,7 @@ function parseArguments(argv) {
     verifyOnly: false,
     managerOnly: false,
     completeDevelopment: false,
+    developmentSameVersionUpgrade: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -111,6 +112,10 @@ function parseArguments(argv) {
     }
     if (argument === "--complete-development") {
       parsed.completeDevelopment = true;
+      continue;
+    }
+    if (argument === "--development-same-version-upgrade") {
+      parsed.developmentSameVersionUpgrade = true;
       continue;
     }
     if (!["--platform", "--version", "--tuf-root-sha256"].includes(argument)) {
@@ -292,12 +297,16 @@ export function cleanBuild({
   tufRootSha256 = "",
   verifyOnly = false,
   managerOnly = false,
+  developmentSameVersionUpgrade = false,
 }) {
   if (!managerOnly) {
     fail(
       "scope is required: use --manager-only for a Core development installer; " +
       "Complete Arena installers are built only by the protected suite release workflow",
     );
+  }
+  if (developmentSameVersionUpgrade && platform !== "windows-x86_64") {
+    fail("same-version upgrade mode is Windows-only");
   }
   const definition = definitionFor(platform);
   if (tufRootSha256 && !/^[0-9a-f]{64}$/u.test(tufRootSha256)) {
@@ -317,6 +326,9 @@ export function cleanBuild({
       definition.preset,
       `-DARENA_VERSION=${version}`,
       `-DARENA_TUF_ROOT_SHA256=${tufRootSha256}`,
+      `-DARENA_DEVELOPMENT_SAME_VERSION_UPGRADES=${
+        developmentSameVersionUpgrade ? "ON" : "OFF"
+      }`,
     ]);
     run("cmake", ["--build", "--preset", definition.preset, "--clean-first"]);
     run("ctest", ["--preset", definition.preset]);
