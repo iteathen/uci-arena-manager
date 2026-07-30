@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+
+if ! getent group uci-arena >/dev/null 2>&1; then
+  groupadd --system uci-arena
+fi
+if ! getent passwd uci-arena >/dev/null 2>&1; then
+  useradd --system --gid uci-arena --home-dir /var/lib/uci-arena \
+    --shell /usr/sbin/nologin uci-arena
+fi
+
+install -d -m 0750 -o uci-arena -g uci-arena /var/lib/uci-arena
+install -d -m 0750 -o uci-arena -g uci-arena /var/log/uci-arena
+install -d -m 0750 -o root -g uci-arena /etc/uci-arena
+
+if [ -d /run/systemd/system ]; then
+  deb-systemd-helper unmask uci-arena-manager.service >/dev/null
+  deb-systemd-helper enable uci-arena-manager.service >/dev/null
+  deb-systemd-invoke start uci-arena-manager.service >/dev/null
+fi
+
+exit 0

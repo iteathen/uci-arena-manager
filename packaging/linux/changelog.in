@@ -1,0 +1,6 @@
+uci-arena-manager (@PROJECT_VERSION@) unstable; urgency=medium
+
+  * Build the private standalone Manager release candidate.
+  * Package the native service, CLI, desktop launcher, and typed setup client.
+
+ -- UCI Arena Manager contributors <iteathen@users.noreply.github.com>  Wed, 29 Jul 2026 00:00:00 +0000

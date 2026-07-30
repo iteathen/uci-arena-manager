@@ -317,6 +317,18 @@ packaging:
         same explicit Linux native-build prerequisite set before vcpkg
         dependency bootstrap. Release-only package validators may extend that
         set, but they never replace it or run after dependency bootstrap.
+      - Linux release packages pass blocking lintian, rpmlint, and systemd unit
+        validation before provenance is issued. Maintainer scripts are
+        executable, package metadata is policy-valid, release binaries are
+        stripped, public manual pages and the changelog are reproducibly
+        compressed, and copyright plus bundled-dependency license evidence is
+        installed with the package.
+      - A Lintian override is allowed only for one exact documented occurrence
+        that follows from the standalone distribution contract: reviewed
+        static dependency linkage in a named executable, or the absence of a
+        public manual page for a named internal service, broker, or desktop
+        launcher. Broad tag suppression and validator failure masking are
+        forbidden.
       - A successful build emits a digest-bound
         arena_clean_build_result_v1 manifest and cannot succeed when any
         required installer is missing, empty, ambiguously named, or accompanied
