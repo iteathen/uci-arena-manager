@@ -81,6 +81,12 @@ common_contract:
     - Missing optional capabilities produce unavailable actions, not startup failure.
     - Installed services are reconciled only from enabled arena_install_receipt_v1 receipts.
     - Reconciliation verifies the complete immutable private runtime and provider component file sets by exact size and SHA-256, rejects symbolic links and unlisted files, and never launches an unverifiable component.
+    - Reconciliation resolves managed dependency entrypoints with the same
+      narrow compatibility rule as arena-setup: an already locked and
+      attested node_runtime.private candidate may use executable only when the
+      canonical node key is absent. The aliased path still requires an exact
+      signed file inventory match; no provider, engine, model, or arbitrary
+      component receives this alias, and new managed candidates emit node.
     - Installer-generated provider configuration may reference only exact dependency entrypoints from verified receipts and must remain inside the declared provider workspace.
     - An installed receipt whose provider startup result reports installed true
       reconciles with desired_state running.
