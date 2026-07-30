@@ -359,6 +359,18 @@ packaging:
         cannot bypass provider attestation verification, synthesize a
         component, accept an unreviewed source checkout, or label the result
         official.
+      - A Complete development bootstrapper enables MSI same-version upgrades
+        so a newer source commit can repair or replace an installed candidate
+        that has the same unreleased suite version. Manager-only and official
+        release builds default to rejecting same-version replacement; the
+        development flag is explicit in the clean-build composition path and
+        never changes downgrade protection.
+      - The Complete development bootstrapper uses the upgrade transaction for
+        both initial installation and related-bundle replacement. With no
+        receipts the upgrade transaction installs normally; with existing
+        receipts it restages every selected component, regenerates integration
+        configuration, reapplies managed workspace access, and adopts the
+        receipts before the related older bundle is removed.
       - When that bootstrapper's initial elevated transaction explicitly
         accepts an unsigned development catalog, retained release media records
         the exact catalog digest in the same administrator-protected release

@@ -159,3 +159,46 @@ test("manual release delegates platform packaging to the canonical clean build",
     /^ {2}(?:pull_request|push|merge_group|schedule):/mu,
   );
 });
+
+test("same-version replacement is explicit and development-only", () => {
+  const repositoryRoot = path.resolve(import.meta.dirname, "../..");
+  const cleanBuild = readFileSync(
+    path.join(repositoryRoot, "tools", "release", "clean-build.mjs"),
+    "utf8",
+  );
+  const completeBuild = readFileSync(
+    path.join(
+      repositoryRoot,
+      "tools",
+      "release",
+      "complete-development-build.mjs",
+    ),
+    "utf8",
+  );
+  const cmake = readFileSync(path.join(repositoryRoot, "CMakeLists.txt"), "utf8");
+  const wix = readFileSync(
+    path.join(repositoryRoot, "packaging", "windows", "Package.wxs.in"),
+    "utf8",
+  );
+  assert.match(completeBuild, /--development-same-version-upgrade/u);
+  assert.match(
+    completeBuild,
+    /const setupArguments = \[\s*"upgrade",[\s\S]*"complete_arena"/u,
+  );
+  assert.match(
+    cleanBuild,
+    /ARENA_DEVELOPMENT_SAME_VERSION_UPGRADES=\$\{/u,
+  );
+  assert.match(
+    cleanBuild,
+    /developmentSameVersionUpgrade \? "ON" : "OFF"/u,
+  );
+  assert.match(
+    cmake,
+    /option\(\s*ARENA_DEVELOPMENT_SAME_VERSION_UPGRADES[\s\S]*OFF\s*\)/u,
+  );
+  assert.match(
+    wix,
+    /AllowSameVersionUpgrades="@CPACK_WIX_ALLOW_SAME_VERSION_UPGRADES@"/u,
+  );
+});

@@ -162,6 +162,7 @@ export function completeDevelopmentBuild({
     platform,
     "--version",
     version,
+    "--development-same-version-upgrade",
   ]);
   run("cmake", [
     "--install",
@@ -252,7 +253,7 @@ export function completeDevelopmentBuild({
   const setup = exactFile(path.join(mediaRoot, "bin", "arena-setup.exe"));
   const buildBundle = (name, offline) => {
     const setupArguments = [
-      "apply",
+      "upgrade",
       "--preset",
       "complete_arena",
       ...(offline ? ["--offline"] : []),

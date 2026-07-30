@@ -176,8 +176,14 @@ test("Windows Manager MSI patches the complete staged tree with service lifecycl
   assert.match(cmake, /CPACK_WIX_TEMPLATE/);
   assert.match(cmake, /CPACK_WIX_PATCH_FILE/);
   assert.match(packageTemplate, /<MajorUpgrade/);
-  assert.match(packageTemplate, /AllowSameVersionUpgrades="no"/);
-  assert.doesNotMatch(packageTemplate, /AllowSameVersionUpgrades="yes"/);
+  assert.match(
+    packageTemplate,
+    /AllowSameVersionUpgrades="@CPACK_WIX_ALLOW_SAME_VERSION_UPGRADES@"/,
+  );
+  assert.match(
+    cmake,
+    /option\(\s*ARENA_DEVELOPMENT_SAME_VERSION_UPGRADES[\s\S]*OFF\s*\)/,
+  );
   assert.match(patch, /Id="CM_CP_bin\.arena_service\.exe"/);
   assert.match(patch, /<ServiceInstall/);
   assert.match(patch, /Account="NT AUTHORITY\\LocalService"/);
