@@ -971,6 +971,16 @@ transaction:
     rules:
       - Scripts use typed service identities and provider public lifecycle
         entrypoints; arbitrary executable, argv, and shell input are forbidden.
+      - Before repair or upgrade renames an existing startup-capable component
+        root, arena-setup durably records the prior receipt and invokes that
+        exact verified provider's startup_uninstall entrypoint. Payload rename
+        waits for bounded operating-system process teardown and fails closed
+        if the version root remains locked.
+      - If a later transaction step fails, rollback restores the prior payload,
+        receipt, generated configuration, and active-model pointer before
+        invoking the prior receipt's startup_install entrypoint. Failure to
+        restore that startup is recorded as rollback_failed and is never
+        reported as an exact rollback.
       - Component startup outcomes are recorded in the install transaction.
         The installer wrapper preserves the Manager service's prior
         running/stopped state across its bounded multi-operation feature

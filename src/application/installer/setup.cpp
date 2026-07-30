@@ -2862,6 +2862,27 @@ void remove_managed_component_tree(const fs::path& active_root, const std::strin
                              " after shutdown: " + failure);
 }
 
+void rename_managed_component_tree_with_retry(const fs::path& source,
+                                              const fs::path& destination,
+                                              const std::string& component_id) {
+    constexpr int attempts = 100;
+    constexpr auto retry_delay = std::chrono::milliseconds(100);
+    std::string failure = "rename did not complete";
+    for (int attempt = 0; attempt < attempts; ++attempt) {
+        std::error_code rename_error;
+        fs::rename(source, destination, rename_error);
+        if (!rename_error) {
+            return;
+        }
+        failure = rename_error.message();
+        if (attempt + 1 < attempts) {
+            std::this_thread::sleep_for(retry_delay);
+        }
+    }
+    throw std::runtime_error("cannot replace managed component " + component_id +
+                             " after shutdown: " + failure);
+}
+
 } // namespace
 
 json copy_managed_lichess_profile(const SetupPaths& paths, const fs::path& source,
@@ -3580,6 +3601,7 @@ json SetupEngine::apply(const json&, const json& plan, const SetupPaths& paths,
             if (!valid_identifier(id) || !valid_identifier(version)) {
                 throw std::runtime_error("plan contains an unsafe component identity");
             }
+            const fs::path receipt_path = receipts_root / (id + ".json");
             journal["actions"].push_back(
                 {{"component_id", id}, {"version", version}, {"state", "staging"}});
             write_json_atomic(journal_path, journal);
@@ -3599,6 +3621,30 @@ json SetupEngine::apply(const json&, const json& plan, const SetupPaths& paths,
                 validate_component_payload(stage, id, version);
             const json& manifest = validated.manifest;
 
+            if (fs::is_regular_file(receipt_path)) {
+                const json previous_receipt = read_json(receipt_path);
+                const bool previous_startup_installed =
+                    previous_receipt.contains("startup") &&
+                    previous_receipt.at("startup").is_object() &&
+                    previous_receipt.at("startup").value("installed", false);
+                if (previous_startup_installed) {
+                    if (!supports_startup_capability(previous_receipt,
+                                                     "startup_uninstall")) {
+                        throw std::runtime_error(
+                            "installed provider startup cannot be stopped before replacement: " +
+                            id);
+                    }
+                    journal["actions"].back()["previous_startup_receipt"] =
+                        previous_receipt;
+                    journal["actions"].back()["previous_startup_transition_started"] = true;
+                    write_json_atomic(journal_path, journal);
+                    static_cast<void>(
+                        invoke_provider_startup(paths, previous_receipt, "uninstall"));
+                    journal["actions"].back()["previous_startup_uninstalled"] = true;
+                    write_json_atomic(journal_path, journal);
+                }
+            }
+
             const fs::path component_root = components_root / id;
             const fs::path target = component_root / version;
             if (!within(components_root, target)) {
@@ -3613,7 +3659,7 @@ json SetupEngine::apply(const json&, const json& plan, const SetupPaths& paths,
                 }
                 const fs::path replaced =
                     component_root / (version + ".rollback-" + transaction_id);
-                fs::rename(target, replaced);
+                rename_managed_component_tree_with_retry(target, replaced, id);
                 journal["actions"].back()["rollback_path"] = replaced.string();
             }
             fs::rename(stage, target);
@@ -3658,7 +3704,6 @@ json SetupEngine::apply(const json&, const json& plan, const SetupPaths& paths,
                 write_json_atomic(journal_path, journal);
             }
 
-            const fs::path receipt_path = receipts_root / (id + ".json");
             if (fs::is_regular_file(receipt_path)) {
                 const fs::path receipt_backup =
                     receipts_root / (id + ".rollback-" + transaction_id + ".json");
@@ -3805,6 +3850,13 @@ json SetupEngine::apply(const json&, const json& plan, const SetupPaths& paths,
     } catch (const std::exception& error) {
         std::error_code rollback_error;
         std::string startup_rollback_failure;
+        const auto append_startup_rollback_failure =
+            [&startup_rollback_failure](const std::string& failure) {
+                if (!startup_rollback_failure.empty()) {
+                    startup_rollback_failure += "; ";
+                }
+                startup_rollback_failure += failure;
+            };
         for (auto action = journal["actions"].rbegin(); action != journal["actions"].rend();
              ++action) {
             const std::string state = action->value("state", "staging");
@@ -3818,8 +3870,8 @@ json SetupEngine::apply(const json&, const json& plan, const SetupPaths& paths,
                     (*action)["startup_installed"] = false;
                 } catch (const std::exception& startup_error) {
                     preserve_action = true;
-                    startup_rollback_failure = startup_error.what();
-                    (*action)["startup_rollback_error"] = startup_rollback_failure;
+                    append_startup_rollback_failure(startup_error.what());
+                    (*action)["startup_rollback_error"] = startup_error.what();
                     (*action)["state"] = "rollback_failed";
                 }
             }
@@ -3893,6 +3945,18 @@ json SetupEngine::apply(const json&, const json& plan, const SetupPaths& paths,
                 }
             }
             (*action)["state"] = "rolled_back";
+            if (action->value("previous_startup_transition_started", false) &&
+                action->contains("previous_startup_receipt")) {
+                try {
+                    static_cast<void>(invoke_provider_startup(
+                        paths, action->at("previous_startup_receipt"), "install"));
+                    (*action)["previous_startup_restored"] = true;
+                } catch (const std::exception& startup_error) {
+                    append_startup_rollback_failure(startup_error.what());
+                    (*action)["previous_startup_restore_error"] = startup_error.what();
+                    (*action)["state"] = "rollback_failed";
+                }
+            }
         }
         fs::remove_all(staging_root / transaction_id, rollback_error);
         journal["state"] = startup_rollback_failure.empty() ? "rolled_back" : "rollback_failed";
