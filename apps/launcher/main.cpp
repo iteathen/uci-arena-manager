@@ -160,6 +160,10 @@ public:
                 "cannot start the authenticated desktop helper");
         }
         process_ = process.hProcess;
+        scratch_path_ =
+            std::filesystem::temp_directory_path() /
+            ("uci-arena-manager-ui-" +
+             std::to_string(process.dwProcessId));
 
         job_ = CreateJobObjectW(nullptr, nullptr);
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
@@ -172,6 +176,7 @@ public:
             !AssignProcessToJobObject(job_, process_)) {
             TerminateProcess(process_, 1);
             WaitForSingleObject(process_, 3000);
+            remove_scratch();
             CloseHandle(process.hThread);
             close_handle(job_);
             close_handle(process_);
@@ -190,6 +195,7 @@ public:
         if (process_ != nullptr) {
             WaitForSingleObject(process_, 3000);
         }
+        remove_scratch();
         close_handle(process_);
         close_handle(output_read_);
     }
@@ -249,6 +255,13 @@ public:
     }
 
 private:
+    void remove_scratch() noexcept {
+        if (!scratch_path_.empty()) {
+            std::error_code error;
+            std::filesystem::remove_all(scratch_path_, error);
+        }
+    }
+
     static void close_handle(HANDLE& handle) {
         if (handle != nullptr && handle != INVALID_HANDLE_VALUE) {
             CloseHandle(handle);
@@ -259,6 +272,7 @@ private:
     HANDLE process_{};
     HANDLE job_{};
     HANDLE output_read_{};
+    std::filesystem::path scratch_path_;
 };
 
 int run_desktop() {
@@ -401,6 +415,10 @@ public:
                 "cannot start the authenticated desktop helper");
         }
         output_ = output[0];
+        scratch_path_ =
+            std::filesystem::temp_directory_path() /
+            ("uci-arena-manager-ui-" +
+             std::to_string(process_));
         fcntl(output_, F_SETFL, fcntl(output_, F_GETFL) | O_NONBLOCK);
     }
 
@@ -425,6 +443,8 @@ public:
         if (output_ >= 0) {
             close(output_);
         }
+        std::error_code error;
+        std::filesystem::remove_all(scratch_path_, error);
     }
 
     std::string pairing_url() {
@@ -467,6 +487,7 @@ public:
 private:
     pid_t process_{-1};
     int output_{-1};
+    std::filesystem::path scratch_path_;
 };
 
 std::filesystem::path executable_directory() {

@@ -315,20 +315,45 @@ void ControlPlane::reconcile_installed_services(
         json changes = json::array();
         json errors = discovered.at("errors");
         std::vector<std::string> refresh_ids;
+        const auto configured_services =
+            store_->list_resources("managed_service", 10'000, 0);
         for (const auto& registration : discovered.at("services")) {
             const std::string component_id =
                 registration.at("installed_component_id").get<std::string>();
+            const std::string profile_id =
+                registration.at("profile_id").get<std::string>();
             std::optional<ports::ResourceRecord> existing;
-            for (const auto& resource :
-                 store_->list_resources("managed_service", 10'000, 0)) {
+            std::vector<ports::ResourceRecord> profile_resources;
+            for (const auto& resource : configured_services) {
                 try {
                     const json data = json::parse(resource.data_json);
+                    if (data.value("profile_id", "") == profile_id) {
+                        profile_resources.push_back(resource);
+                    }
                     if (data.value("installed_component_id", "") == component_id) {
-                        existing = resource;
-                        break;
+                        if (!existing.has_value()) {
+                            existing = resource;
+                        }
                     }
                 } catch (const json::exception&) {
                 }
+            }
+            if (!existing.has_value() && !profile_resources.empty()) {
+                const auto& preserved = profile_resources.front();
+                changes.push_back(
+                    {{"component_id", component_id},
+                     {"profile_id", profile_id},
+                     {"resource_id", preserved.id},
+                     {"state", "manual_configuration_preserved"}});
+                continue;
+            }
+            if (existing.has_value() && profile_resources.size() > 1) {
+                changes.push_back(
+                    {{"component_id", component_id},
+                     {"profile_id", profile_id},
+                     {"resource_id", existing->id},
+                     {"duplicate_count", profile_resources.size() - 1},
+                     {"state", "legacy_profile_duplicates_visible"}});
             }
             if (existing.has_value()) {
                 const json current = json::parse(existing->data_json);
@@ -767,6 +792,22 @@ json ControlPlane::register_generic_resource(const json& request, const std::str
             data = ServiceCatalog::normalize_registration(parameters);
         } catch (const std::exception& error) {
             throw CommandFailure("invalid_service_profile", error.what(), 422);
+        }
+        const std::string profile_id =
+            data.at("profile_id").get<std::string>();
+        for (const auto& resource :
+             store_->list_resources("managed_service", 10'000, 0)) {
+            try {
+                const json existing = json::parse(resource.data_json);
+                if (existing.value("profile_id", "") == profile_id) {
+                    throw CommandFailure(
+                        "service_profile_exists",
+                        "this service profile is already configured; edit or "
+                        "remove the existing manual locator",
+                        409);
+                }
+            } catch (const json::exception&) {
+            }
         }
     } else {
         required_string(parameters, "display_name");
@@ -2000,6 +2041,25 @@ json ControlPlane::remove_resource(const json& request, const std::string& actor
     const auto existing = store_->get_resource(kind, id);
     if (!existing) {
         throw CommandFailure("resource_not_found", "resource does not exist", 404);
+    }
+    if (kind == "managed_service") {
+        const json data = json::parse(existing->data_json);
+        if (!data.value("installed_component_id", "").empty()) {
+            throw CommandFailure(
+                "receipt_owned_service",
+                "receipt-owned services are changed or removed through Suite "
+                "Setup Modify",
+                409);
+        }
+        const std::string observed =
+            data.value("observed_state", "unknown");
+        if (observed == "running" || observed == "starting" ||
+            observed == "paused" || observed == "stopping") {
+            throw CommandFailure(
+                "service_active",
+                "stop the manual service before removing its locator",
+                409);
+        }
     }
     const std::uint64_t expected_revision =
         request.contains("expected_revision") && !request.at("expected_revision").is_null()

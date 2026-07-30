@@ -82,6 +82,13 @@ managed_service_experience:
     - Offer Auto-detect without registering or enabling a discovered candidate.
     - When discovery is incomplete or empty, keep manual paths and endpoint fields visible and editable.
     - Permit the operator to reconfigure a previously saved locator.
+    - Reject a second saved locator for the same profile. When upgrading a
+      legacy database that already contains duplicates, select the exact
+      receipt-owned instance for the catalog card, warn about the duplicate,
+      and keep every instance visible until explicit cleanup.
+    - Offer an audited Remove locator action only for an inactive manual
+      instance. A running, starting, or paused instance must be stopped first;
+      a receipt-owned instance directs the operator to Suite Setup Modify.
     - Show every required path or endpoint before validation.
     - Preview capabilities and ownership boundaries.
     - Never request external-service secrets that are not manager-owned.
@@ -136,6 +143,10 @@ local_path_picker:
       the owning validation or import action.
     - Closing `arena ui` removes picker authority without invalidating the
       already-paired Manager dashboard session.
+    - Native helper scratch state uses a unique directory beneath the
+      interactive user's temporary directory, is removed when the helper
+      exits, and never writes beneath the immutable install root or caller
+      working directory.
 
 desktop_launcher:
   executable: uci-arena-manager
