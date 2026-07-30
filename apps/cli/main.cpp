@@ -40,6 +40,22 @@ std::filesystem::path default_manager_data_directory() {
 #endif
 }
 
+std::filesystem::path current_executable_directory() {
+#ifdef _WIN32
+    std::wstring buffer(32768, L'\0');
+    const DWORD length = GetModuleFileNameW(
+        nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (length == 0 || length >= buffer.size()) {
+        throw std::runtime_error(
+            "cannot resolve the installed CLI directory");
+    }
+    buffer.resize(length);
+    return std::filesystem::path(buffer).parent_path();
+#else
+    return std::filesystem::canonical("/proc/self/exe").parent_path();
+#endif
+}
+
 struct HttpResult {
     long status{};
     std::string body;
@@ -195,6 +211,7 @@ int main(int argc, char** argv) {
         auto* ui = app.add_subcommand("ui", "Open the authenticated local dashboard");
         bool no_open = false;
         bool no_picker = false;
+        bool desktop_host = false;
         std::uint16_t picker_port = 47832;
         ui->add_flag("--no-open", no_open, "Print the URL without opening a browser");
         ui->add_flag("--no-picker", no_picker,
@@ -202,6 +219,10 @@ int main(int argc, char** argv) {
         ui->add_option("--picker-port", picker_port,
                        "Loopback port for the interactive-user picker")
             ->check(CLI::Range(1024, 65535));
+        ui->add_flag(
+            "--desktop-host",
+            desktop_host,
+            "Enable native-host-only typed setup capabilities");
 
         auto* daemon = app.add_subcommand("daemon", "Control the installed arena service");
         daemon->require_subcommand(1);
@@ -431,16 +452,30 @@ int main(int argc, char** argv) {
                 picker_token = arena::cli::make_ui_picker_token();
                 url +=
                     "&picker_port=" + std::to_string(picker_port) + "&picker_token=" + picker_token;
+                if (desktop_host) {
+                    url += "&setup=1";
+                }
             }
-            std::cout << url << '\n';
+            std::cout << url << '\n' << std::flush;
             if (!no_open) {
                 open_browser(url);
             }
             if (!no_picker) {
                 std::cout << "Local browse helper active on 127.0.0.1:" << picker_port
                           << "; press Ctrl+C to stop it.\n";
+                const std::filesystem::path setup_executable =
+#ifdef _WIN32
+                    current_executable_directory() / "arena-setup.exe";
+#else
+                    current_executable_directory() / "arena-setup";
+#endif
                 arena::cli::run_ui_picker(
-                    picker_port, picker_token, dashboard_origin, data_directory);
+                    picker_port,
+                    picker_token,
+                    dashboard_origin,
+                    data_directory,
+                    setup_executable,
+                    desktop_host);
             }
         } else if (*engine_list) {
             print_json(client.get("/api/v1/resources/engine"), output);

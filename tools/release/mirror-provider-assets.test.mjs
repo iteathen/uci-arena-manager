@@ -18,7 +18,7 @@ test("provider mirror plan contains every exact provider asset once", () => {
   const lock = currentLock();
   const plan = buildProviderMirrorPlan(lock);
   assert.equal(plan.repository, "iteathen/uci-arena-manager");
-  assert.equal(plan.releaseTag, "provider-mirror/v0.3.0");
+  assert.equal(plan.releaseTag, "provider-mirror/v0.3.1");
   assert.equal(plan.assets.length, lock.components.length * 3);
   assert.equal(
     new Set(plan.assets.map((asset) => asset.name)).size,

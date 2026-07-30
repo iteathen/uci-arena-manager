@@ -38,6 +38,20 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(chess_library)
 
+set(WEBVIEW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(WEBVIEW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(WEBVIEW_ENABLE_PACKAGING OFF CACHE BOOL "" FORCE)
+set(WEBVIEW_INSTALL_TARGETS OFF CACHE BOOL "" FORCE)
+set(WEBVIEW_MSWEBVIEW2_VERSION "1.0.4078.44" CACHE STRING "" FORCE)
+set(WEBVIEW_USE_BUILTIN_MSWEBVIEW2 ON CACHE BOOL "" FORCE)
+FetchContent_Declare(
+  webview
+  GIT_REPOSITORY https://github.com/webview/webview.git
+  GIT_TAG 3ab4b5d722438fc8a13e6ca830c5e2372d19a01d
+  GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(webview)
+
 find_package(CLI11 CONFIG REQUIRED)
 find_package(CURL CONFIG REQUIRED)
 find_package(Drogon CONFIG REQUIRED)
@@ -138,9 +152,24 @@ if(WIN32)
     apps/launcher/main.cpp
     apps/launcher/resources.rc
   )
-  target_link_libraries(uci-arena-manager PRIVATE shell32)
+  target_link_libraries(
+    uci-arena-manager
+    PRIVATE
+      webview::core
+      "${MSWebView2_INCLUDE_DIR}/../x64/WebView2LoaderStatic.lib"
+      ole32
+      shell32
+      ws2_32
+  )
+  target_compile_definitions(
+    uci-arena-manager
+    PRIVATE
+      WEBVIEW_MSWEBVIEW2_BUILTIN_IMPL=0
+      WEBVIEW_MSWEBVIEW2_EXPLICIT_LINK=0
+  )
 else()
   add_executable(uci-arena-manager apps/launcher/main.cpp)
+  target_link_libraries(uci-arena-manager PRIVATE webview::core)
 endif()
 
 if(MSVC)
@@ -186,6 +215,19 @@ else()
 endif()
 install(DIRECTORY web/dist/ DESTINATION share/uci-arena/web)
 install(DIRECTORY specs/ DESTINATION share/uci-arena/specs)
+install(
+  FILES "${webview_SOURCE_DIR}/LICENSE"
+  DESTINATION share/licenses/webview
+  RENAME LICENSE
+)
+if(WIN32)
+  install(
+    FILES
+      "${MSWebView2_INCLUDE_DIR}/../../../LICENSE.txt"
+      "${MSWebView2_INCLUDE_DIR}/../../../NOTICE.txt"
+    DESTINATION share/licenses/microsoft-webview2
+  )
+endif()
 if(NOT WIN32)
   find_program(ARENA_GZIP_EXECUTABLE gzip REQUIRED)
   set(ARENA_GENERATED_LINUX_DOC_DIR
@@ -324,13 +366,13 @@ if(ARENA_ENABLE_PACKAGING)
     set(CPACK_RPM_FILE_NAME
       "uci-arena-manager-${PROJECT_VERSION}-1.x86_64.rpm")
     set(CPACK_DEBIAN_PACKAGE_DEPENDS
-      "libc6, libstdc++6, systemd, init-system-helpers, passwd")
+      "libc6, libstdc++6, systemd, init-system-helpers, passwd, libwebkit2gtk-4.1-0, zenity")
     set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
       "${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/debian/postinst"
       "${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/debian/prerm"
       "${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/debian/postrm"
     )
-    set(CPACK_RPM_PACKAGE_REQUIRES "systemd")
+    set(CPACK_RPM_PACKAGE_REQUIRES "systemd, webkit2gtk4.1, zenity")
     set(CPACK_RPM_PACKAGE_LICENSE "AGPL-3.0-or-later")
     set(CPACK_RPM_PACKAGE_GROUP "Applications/Engineering")
     set(CPACK_RPM_PACKAGE_URL

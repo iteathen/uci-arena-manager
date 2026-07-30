@@ -1,4 +1,4 @@
-import { IconCpu, IconPlus, IconRefresh } from '@tabler/icons-react'
+import { IconCpu, IconFolderSearch, IconPlus, IconRefresh } from '@tabler/icons-react'
 import {
   Alert,
   Badge,
@@ -18,9 +18,10 @@ import {
 import { useDisclosure } from '@mantine/hooks'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import { api, makeCommand } from '../api/client'
+import { api, makeCommand, pickLocalPath } from '../api/client'
 import type { EngineCandidate, EngineData } from '../api/types'
 import { EmptyState } from '../components/EmptyState'
+import { ComponentSetupButton } from '../components/ComponentSetupButton'
 import { PageHeader } from '../components/PageHeader'
 import { PathPickerInput } from '../components/PathPickerInput'
 import { StatusPill } from '../components/StatusPill'
@@ -32,25 +33,32 @@ function registrationParameters(candidate: EngineCandidate) {
     working_directory: candidate.working_directory,
     arguments: candidate.arguments,
     uci_options: candidate.uci_options,
+    candidate_id: candidate.candidate_id,
   }
 }
 
 export function EnginesPage() {
   const queryClient = useQueryClient()
+  const [scanRoot, setScanRoot] = useState('')
   const engines = useQuery({
     queryKey: ['resources', 'engine'],
     queryFn: () => api.resources<EngineData>('engine'),
   })
   const candidates = useQuery({
-    queryKey: ['engine-candidates'],
-    queryFn: () => api.engineCandidates(),
+    queryKey: ['engine-candidates', scanRoot],
+    queryFn: () => api.engineCandidates(scanRoot),
   })
+  const components = useQuery({ queryKey: ['components'], queryFn: api.components })
+  const arenaComponent = components.data?.components.find(
+    (component) => component.component_id === 'uci_arena.engine',
+  )
   const [opened, { open, close }] = useDisclosure(false)
   const [name, setName] = useState('')
   const [executable, setExecutable] = useState('')
   const [workingDirectory, setWorkingDirectory] = useState('')
   const [testedCandidates, setTestedCandidates] = useState<Record<string, string>>({})
   const [manualProbeId, setManualProbeId] = useState('')
+  const [scanError, setScanError] = useState('')
 
   const registeredPaths = useMemo(
     () => new Set((engines.data ?? []).map((engine) => engine.data.executable.toLowerCase())),
@@ -60,7 +68,6 @@ export function EnginesPage() {
   const probeCandidate = useMutation({
     mutationFn: (candidate: EngineCandidate) =>
       api.probeEngine({
-        candidate_id: candidate.candidate_id,
         ...registrationParameters(candidate),
       }),
     onSuccess: (result, candidate) => {
@@ -118,14 +125,28 @@ export function EnginesPage() {
   })
 
   const refresh = async () => {
+    setScanRoot('')
+    setScanError('')
     await Promise.all([engines.refetch(), candidates.refetch()])
+  }
+  const scanFolder = async () => {
+    setScanError('')
+    try {
+      const selected = await pickLocalPath({
+        mode: 'directory',
+        title: 'Select a folder containing UCI engines',
+      })
+      if (selected) setScanRoot(selected)
+    } catch (error) {
+      setScanError(error instanceof Error ? error.message : 'Folder scan is unavailable')
+    }
   }
 
   return (
     <>
       <PageHeader
         title="Engines"
-        description="Discover installed engines, test them under the Manager service identity, then register explicitly."
+        description="Discover engines and register them through a Manager-owned UCI verification."
         actions={
           <Group>
             <Button
@@ -134,6 +155,13 @@ export function EnginesPage() {
               onClick={refresh}
             >
               Auto-detect
+            </Button>
+            <Button
+              variant="default"
+              leftSection={<IconFolderSearch size={16} />}
+              onClick={() => void scanFolder()}
+            >
+              Scan folder
             </Button>
             <Button leftSection={<IconPlus size={16} />} onClick={open}>
               Add external engine
@@ -161,11 +189,43 @@ export function EnginesPage() {
               {candidates.error.message}
             </Alert>
           )}
+          {scanError && <Alert color="red" mb="md">{scanError}</Alert>}
+          {scanRoot && (
+            <Alert color="blue" mb="md">
+              Showing normal discovery plus the selected bounded root: <Code>{scanRoot}</Code>
+            </Alert>
+          )}
+          {arenaComponent?.package_state === 'missing' && (
+            <Alert color="blue" mb="md" title="Install the preferred UCI Arena Engine">
+              <Stack gap="sm">
+                <Text>
+                  External engines remain available, but UCI Arena Engine with its verified
+                  default model is the preferred suite engine.
+                </Text>
+                {!arenaComponent.downloadable && (
+                  <Text size="sm">
+                    Repair UCI Arena Suite Setup to restore the retained verified installer
+                    media.
+                  </Text>
+                )}
+                <Group>
+                  <ComponentSetupButton
+                    componentId="uci_arena.engine"
+                    label="UCI Arena Engine"
+                    available={arenaComponent.downloadable}
+                    onCompleted={async () => {
+                      await new Promise((resolve) => window.setTimeout(resolve, 1000))
+                      await Promise.all([components.refetch(), candidates.refetch()])
+                    }}
+                  />
+                </Group>
+              </Stack>
+            </Alert>
+          )}
           {!candidates.isLoading && !candidates.data?.candidates.length ? (
             <Alert color="gray">
-              No installed engine receipts or saved engine locators were found. Run Complete
-              Arena setup, use <Code>arena-setup import --kind uci_engine --path PATH</Code>,
-              or add an external engine.
+              No installed engine receipts or saved engine locators were found. Scan a
+              selected folder or add an external engine.
             </Alert>
           ) : (
             <SimpleGrid cols={{ base: 1, lg: 2 }}>
@@ -225,14 +285,14 @@ export function EnginesPage() {
                           disabled={candidate.state !== 'ready_to_probe' || registered}
                           onClick={() => probeCandidate.mutate(candidate)}
                         >
-                          Test engine
+                          Test only
                         </Button>
                         <Button
                           loading={registering}
-                          disabled={!tested || registered}
+                          disabled={candidate.state !== 'ready_to_probe' || registered}
                           onClick={() => registerCandidate.mutate(candidate)}
                         >
-                          Register
+                          {candidate.recommended ? 'Use this engine' : 'Register engine'}
                         </Button>
                       </Group>
                     </Stack>
@@ -247,7 +307,7 @@ export function EnginesPage() {
           {!engines.data?.length ? (
             <EmptyState
               title="No engines registered"
-              detail="Test a detected engine above or add an external UCI executable."
+              detail="Register a detected engine above or add an external UCI executable."
               action="Add external engine"
               onAction={open}
             />
@@ -274,6 +334,17 @@ export function EnginesPage() {
                             <Text size="xs" c="dimmed">
                               {engine.data.executable}
                             </Text>
+                            {engine.data.component_id === 'uci_arena.engine' &&
+                              engine.data.recommended && (
+                                <Badge size="xs" color="blue" variant="light" mt={4}>
+                                  Preferred UCI Arena engine
+                                </Badge>
+                              )}
+                            {engine.data.default_model && (
+                              <Text size="xs" c="dimmed">
+                                Model package: {engine.data.default_model.display_name}
+                              </Text>
+                            )}
                           </div>
                         </Group>
                       </Table.Td>

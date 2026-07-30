@@ -48,6 +48,26 @@ engine_identity_experience:
       or status labels.
     - Show the model package as separate metadata only when reported by the
       registered engine.
+    - Put the receipt-verified uci_arena.engine candidate first and offer one
+      explicit Use this engine action; that action performs the complete
+      bounded UCI interrogation before creating the registration and does not
+      require a redundant probe-confirm-register sequence.
+    - Auto-detect searches only receipts, saved locators, provider manifests,
+      PATH, and bounded standard roots. Scan folder uses the native picker and
+      inspects only the selected root and direct children.
+    - Persist the verified component id, candidate source, recommendation flag,
+      and separate default-model metadata on a registered candidate so planner
+      ordering never depends on enumeration order or a model-branded label.
+    - Preserved registrations lacking verified component identity remain
+      available as external peers but are never selected as the preferred
+      product engine.
+    - When the retained catalog offers a missing UCI Arena Engine, the native
+      desktop view offers a reviewed Download and install action; an external
+      browser never claims that a copied command performed installation.
+      This preferred-engine callout remains visible when unrelated external
+      candidates are discovered. If retained verified media is unavailable,
+      show a Suite Setup repair action instead of an install control that will
+      inevitably fail.
 
 managed_service_experience:
   catalog_cards:
@@ -75,15 +95,37 @@ managed_service_experience:
       activity as separate states on the catalog card.
     - When a signed component is missing, offer a reviewed foreground
       download/install plan without granting package authority to the service.
+      If retained verified media is unavailable, identify Suite Setup repair as
+      the prerequisite rather than launching a known-failing setup plan.
+  runtime_and_outputs:
+    - Show desired state, provider-observed activity, health, and the last
+      successful status sample as separate values.
+    - Show Book Forge integration and qualified snapshot identities from the
+      bounded Manager output projection without opening Book Forge storage.
+    - Show Evidence dataset and qualified timing-profile identities from the
+      bounded Manager output projection without opening Evidence storage.
+    - Reports and configuration surfaces consume only these projected public
+      outputs and visibly distinguish unavailable, incompatible, empty, and
+      ready output sets.
+    - Every configure, control, import, install, and output-selection mutation
+      emits a durable audit record or returns an explicit failure; successful
+      UI state must not exist only in transient React state.
 
 local_path_picker:
-  owner: arena_ui_session_helper
-  transport: token_scoped_loopback_http
-  lifetime: foreground_arena_ui_process
+  owner: interactive_desktop_host
+  transport:
+    native_desktop: token_scoped_loopback_helper_inside_native_host_lifetime
+    external_browser: token_scoped_loopback_http
+  lifetime: foreground_desktop_or_arena_ui_process
   requirements:
     - The Manager service never opens a desktop dialog or impersonates the interactive user.
+    - The installed desktop host owns the normal file and directory picker
+      path through the existing narrow typed interactive-user helper. The
+      helper accepts only picker mode, display text, and extension filters and
+      never arbitrary filesystem, process, argv, or shell requests.
     - `arena ui` starts the picker only on loopback and puts an unguessable
-      per-process bearer token in browser session storage during pairing.
+      per-process bearer token in browser session storage during pairing when
+      the operator explicitly chooses the external-browser surface.
     - Picker requests declare file or directory mode plus display-only hints
       and extension filters; they never supply a command, executable, or shell string.
     - Windows uses the native common item dialog in the logged-in session.
@@ -99,10 +141,24 @@ desktop_launcher:
   executable: uci-arena-manager
   behavior:
     - Runs without a console window.
-    - Verifies the local service, establishes pairing, starts the authenticated
-      interactive-user helper, and opens the dashboard in the default browser.
-    - Installs product-neutral application, installer, shortcut, and browser icons.
-    - A second invocation reuses the per-user launcher and opens the dashboard.
+    - Verifies the local service, obtains a one-use pairing URL, and hosts the
+      packaged React dashboard inside a thin native desktop window.
+    - The Manager service remains the sole runtime and persistence authority;
+      the native host owns only window lifecycle, pairing, native dialogs, and
+      typed setup handoff.
+    - Normal startup does not open the default browser and does not require a
+      terminal. `arena ui` remains the explicit optional external-browser
+      monitoring and troubleshooting surface.
+    - Installs product-neutral application, installer, shortcut, window, and
+      browser icons.
+    - A second invocation activates the existing per-user native window
+      instead of opening a duplicate host or browser tab.
+    - The native host allocates its own loopback helper port so an optional
+      concurrent `arena ui` browser session cannot disable native picker or
+      typed setup authority through a fixed-port collision.
+    - Navigation failures, missing WebView runtime support, unavailable
+      Manager service, and pairing failures produce an actionable native error
+      without silently falling back to an unauthenticated browser.
   setup_helper:
     - Accepts only typed inventory, plan, and apply requests for catalog component ids.
     - Uses only the adjacent verified arena-setup, retained signed catalog, and fixed roots.
@@ -126,6 +182,11 @@ bot_experience:
   requirements:
     - Replace the generic bot table with install, detection, account probe,
       readiness, options, and lifecycle views.
+    - When the retained catalog offers a missing adapter, offer a reviewed
+      native Download and install action that resolves its declared
+      dependencies before token-file onboarding.
+      If the adapter is missing but retained media is unavailable, keep an
+      explicit Suite Setup repair prerequisite visible.
     - Use an operator-owned token-file path permanently. Local installations
       provide their own credential; repositories, packages, tests, and Manager
       state never contain one.
@@ -154,15 +215,22 @@ knowledge_asset_setup:
     - Explain that importing a Lichess single-game profile creates a bounded
       immutable managed copy of the profile and its hash-verified evidence
       closure; timing, capacity, transport, and Syzygy assets remain in place.
-    - Offer copyable arena-setup commands for importing the selected existing
-      paths and for downloading the exact signed missing-book or bounded
-      tablebase components.
+    - In the authenticated desktop host, offer reviewed typed arena-setup plans
+      for importing selected existing paths and installing the exact signed
+      missing-book or bounded tablebase components. Show components, bytes,
+      disk impact, elevation, and service restarts before confirmation.
+    - In the optional external-browser surface, offer the equivalent copyable
+      arena-setup commands because a browser session has no installer authority.
     - Generated commands place global arena-setup options before the selected
       subcommand so the copied command is directly executable.
-    - The dashboard and Manager service never execute arena-setup package
-      operations or acquire package-install authority. The token-reference
-      mutation is the sole locator-only exception: it reuses path-metadata
-      validation and cannot download, activate, repair, or remove a component.
+    - The Manager service never executes arena-setup package operations or
+      acquires package-install authority. The native desktop host may invoke
+      only the adjacent verified arena-setup through the typed setup helper;
+      the React view cannot provide an executable, argv array, shell string,
+      catalog path, or install root.
+    - Buttons distinguish Download and install, Import existing, and Copy
+      command. A control must not claim to download or install when it only
+      copies a command.
     - Lichess token contents are never read, previewed, copied, or placed in
       the generated command; only the selected path is present.
 

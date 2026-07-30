@@ -246,6 +246,16 @@ setup:
   operations: [inventory, import, plan, apply, verify, repair, upgrade, uninstall]
   presets: [complete_arena, manager_only, custom]
   machine_output: json
+  elevated_result_handoff:
+    option: --result-file
+    owner: native_desktop_setup_helper
+    requirements:
+      - The helper creates the exact private temporary path and the React
+        caller cannot supply or observe a different destination.
+      - Success and structured failure write one bounded JSON document before
+        process exit so an elevated Windows commit never requires shell
+        redirection or stdout capture.
+      - The helper removes the result file after one bounded read.
   linux_noninteractive: [yes, offline]
   discovery_is_read_only: true
   apply_requires_explicit_confirmation: true
@@ -290,6 +300,9 @@ packaging:
   clean_build:
     authority: iteathen/uci-arena-manager
     suite_command: protected .github/workflows/release.yml workflow_dispatch
+    local_complete_candidate_command: >
+      node tools/release/clean-build.mjs --complete-development
+      --platform <target>
     manager_component_command: >
       node tools/release/clean-build.mjs --manager-only --platform <target>
     output_manifest:
@@ -340,6 +353,25 @@ packaging:
       - Local and CI Manager-Core builds use the same explicit --manager-only
         command and artifact verifier. Omitting that scope fails closed rather
         than claiming native Manager packages are Complete Arena media.
+      - The explicit --complete-development path composes only the
+        release-ready digest-pinned lock and its verified provider Sigstore
+        bundles. It may emit an unsigned development bootstrapper, but it
+        cannot bypass provider attestation verification, synthesize a
+        component, accept an unreviewed source checkout, or label the result
+        official.
+      - When that bootstrapper's initial elevated transaction explicitly
+        accepts an unsigned development catalog, retained release media records
+        the exact catalog digest in the same administrator-protected release
+        directory. Later plan, Modify, repair, and component-install actions may
+        reuse only that exact retained catalog and digest marker; the marker
+        cannot authorize external media, a changed catalog, or an official
+        release without TUF metadata.
+      - A Windows complete development build emits the Manager MSI and the
+        default-on online and offline UCI Arena Suite Setup executables. The
+        bootstrapper contains or can acquire UCI Arena Engine, private Node,
+        Stockfish, Book Forge, standard opening book, Evidence runtime,
+        Evidence Service, and the Lichess adapter according to the exact
+        reviewed catalog.
       - The protected suite workflow is the canonical complete clean build. It
         requires a release-ready lock, builds Manager-Core on both platforms,
         assembles exact provider candidates, runs the acceptance gates, and
@@ -411,6 +443,10 @@ packaging:
         through its public status contract even when its immutable component
         digest is unchanged.
       - The suite bundle is the only visible Programs and Features entry.
+      - Installing a bare Manager-Core MSI is a developer-only operation. User
+        documentation and normal release handoff point to UCI Arena Suite
+        Setup so an operator cannot reasonably mistake Manager Core for a
+        Complete Arena installation.
       - Bundle uninstall invokes arena-setup suite uninstall before removing
         the Manager MSI so provider startup registrations cannot be stranded.
       - MSI major upgrades require a strictly greater three-field product

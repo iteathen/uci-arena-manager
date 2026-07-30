@@ -28,6 +28,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api, makeCommand } from '../api/client'
 import type { ManagedServiceData } from '../api/types'
 import { PageHeader } from '../components/PageHeader'
+import { ComponentSetupButton } from '../components/ComponentSetupButton'
 import { PathPickerInput } from '../components/PathPickerInput'
 import { StatusPill } from '../components/StatusPill'
 
@@ -168,7 +169,23 @@ export function ServicesPage() {
           id,
         ),
       ),
-    onSuccess: async () => {
+    onSuccess: async (_result, variables) => {
+      if (variables.action === 'start' || variables.action === 'restart') {
+        await new Promise((resolve) => window.setTimeout(resolve, 350))
+        try {
+          await api.command(
+            makeCommand(
+              'service.status',
+              'managed_service',
+              {},
+              false,
+              variables.id,
+            ),
+          )
+        } catch {
+          // The subsequent resource refresh presents the launch/status failure.
+        }
+      }
       await queryClient.invalidateQueries({ queryKey: ['resources', 'managed_service'] })
     },
   })
@@ -218,13 +235,28 @@ export function ServicesPage() {
           >
             {bookService ? 'Edit locator' : 'Detect or configure'}
           </Button>
-          {bookPackage?.package_state !== 'installed' && (
-            <Text size="xs" c="dimmed" mt="sm">
-              Reopen UCI Arena Suite Setup and choose Modify to install Book Forge.
-            </Text>
+          {bookPackage && bookPackage.package_state !== 'installed' && (
+            <Stack gap="xs" mt="sm">
+              <Text size="xs" c="dimmed">
+                {bookPackage.downloadable
+                  ? 'Install the signed Book Forge package and its declared private runtime.'
+                  : 'Repair UCI Arena Suite Setup to restore retained verified installer media.'}
+              </Text>
+              <Group>
+                <ComponentSetupButton
+                  componentId="book_forge.service"
+                  label="Book Forge"
+                  available={bookPackage.downloadable}
+                  onCompleted={async () => {
+                    await new Promise((resolve) => window.setTimeout(resolve, 1000))
+                    await Promise.all([components.refetch(), services.refetch()])
+                  }}
+                />
+              </Group>
+            </Stack>
           )}
         </Paper>
-        <Paper withBorder className="service-profile profile-planned">
+        <Paper withBorder className="service-profile profile-live">
           <Group justify="space-between" align="flex-start">
             <ThemeIcon size={46} radius="md" variant="light" color="violet">
               <IconClockHour4 size={24} />
@@ -263,10 +295,25 @@ export function ServicesPage() {
           >
             {evidenceService ? 'Edit locator' : 'Detect or configure'}
           </Button>
-          {evidencePackage?.package_state !== 'installed' && (
-            <Text size="xs" c="dimmed" mt="sm">
-              Reopen UCI Arena Suite Setup and choose Modify to install Evidence Service.
-            </Text>
+          {evidencePackage && evidencePackage.package_state !== 'installed' && (
+            <Stack gap="xs" mt="sm">
+              <Text size="xs" c="dimmed">
+                {evidencePackage.downloadable
+                  ? 'Install the signed Evidence Service package and its declared runtime.'
+                  : 'Repair UCI Arena Suite Setup to restore retained verified installer media.'}
+              </Text>
+              <Group>
+                <ComponentSetupButton
+                  componentId="uci_arena_evidence.service"
+                  label="UCI Arena Evidence Service"
+                  available={evidencePackage.downloadable}
+                  onCompleted={async () => {
+                    await new Promise((resolve) => window.setTimeout(resolve, 1000))
+                    await Promise.all([components.refetch(), services.refetch()])
+                  }}
+                />
+              </Group>
+            </Stack>
           )}
         </Paper>
       </SimpleGrid>
@@ -344,6 +391,15 @@ export function ServicesPage() {
                           Stop
                         </Button>
                       </>
+                    ) : service.data.observed_state === 'starting' ? (
+                      <Button
+                        size="xs"
+                        color="red"
+                        variant="light"
+                        onClick={() => control.mutate({ id: service.id, action: 'stop' })}
+                      >
+                        Stop
+                      </Button>
                     ) : (
                       <Button
                         size="xs"
@@ -360,6 +416,28 @@ export function ServicesPage() {
                 )}
               </Grid.Col>
             </Grid>
+            {service.data.output_integration &&
+              typeof service.data.output_integration === 'object' && (
+                <Paper withBorder mt="md" p="sm" bg="var(--mantine-color-dark-7)">
+                  <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
+                    Provider outputs
+                  </Text>
+                  {service.data.profile_id === 'book_forge' ? (
+                    <Text size="sm" mt={4}>
+                      {Array.isArray(service.data.output_integration.snapshots)
+                        ? `${service.data.output_integration.snapshots.length} validated opening-book snapshot(s)`
+                        : 'No validated opening-book snapshots'}
+                    </Text>
+                  ) : (
+                    <Text size="sm" mt={4}>
+                      {Number(service.data.output_integration.dataset_count ?? 0)}{' '}
+                      dataset(s) ·{' '}
+                      {Number(service.data.output_integration.timing_profile_count ?? 0)}{' '}
+                      qualified timing profile(s)
+                    </Text>
+                  )}
+                </Paper>
+              )}
           </Paper>
         ))}
         {!services.data?.length && (

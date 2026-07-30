@@ -10,6 +10,12 @@ arena doctor
 arena ui
 ```
 
+Normal desktop startup does not require this command: open **UCI Arena
+Manager** from the Windows Start menu or Linux application menu. `arena ui`
+opens the same paired view in an external browser for monitoring and
+troubleshooting; native setup and account-control authority remain in the
+desktop host.
+
 Global flags must precede the command:
 
 - `--endpoint URL` selects the loopback Manager endpoint.

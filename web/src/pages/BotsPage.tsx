@@ -6,11 +6,16 @@ import { api, controlLocalBot, probeLocalBot } from '../api/client'
 import type { BotCandidate } from '../api/types'
 import { PageHeader } from '../components/PageHeader'
 import { PathPickerInput } from '../components/PathPickerInput'
+import { ComponentSetupButton } from '../components/ComponentSetupButton'
 
 export function BotsPage() {
   const queryClient = useQueryClient()
   const profiles = useQuery({ queryKey: ['bot-profiles'], queryFn: api.botProfiles })
   const candidates = useQuery({ queryKey: ['bot-candidates'], queryFn: api.botCandidates })
+  const components = useQuery({ queryKey: ['components'], queryFn: api.components })
+  const adapterComponent = components.data?.components.find(
+    (component) => component.component_id === 'lichess.adapter',
+  )
   const [tokenPath, setTokenPath] = useState('')
   const saveToken = useMutation({
     mutationFn: api.saveBotTokenReference,
@@ -96,6 +101,19 @@ export function BotsPage() {
               <Text size="sm">Adapter package</Text>
               <Code>{candidate?.package_state ?? 'checking'}</Code>
             </Group>
+            {candidate?.package_state === 'missing' && adapterComponent && (
+                <Group justify="flex-end">
+                  <ComponentSetupButton
+                    componentId="lichess.adapter"
+                    label="Lichess Bot adapter"
+                    available={adapterComponent.downloadable}
+                    onCompleted={async () => {
+                      await new Promise((resolve) => window.setTimeout(resolve, 1000))
+                      await Promise.all([components.refetch(), candidates.refetch()])
+                    }}
+                  />
+                </Group>
+              )}
             <Group justify="space-between">
               <Text size="sm">Configuration</Text>
               <Code>{candidate?.configuration_state ?? 'checking'}</Code>

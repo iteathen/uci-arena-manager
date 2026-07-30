@@ -1174,15 +1174,50 @@ TEST_CASE("verified release media is retained for later repair and downloads") {
     };
     std::ofstream(media / "catalog.json") << catalog.dump(2);
     const json loaded = SetupEngine::load_catalog(media / "catalog.json", {}, true);
-    const json retained = SetupEngine::persist_release_media(loaded, paths, media / "catalog.json");
+    const json retained = SetupEngine::persist_release_media(
+        loaded, paths, media / "catalog.json", {}, true);
     REQUIRE(retained.at("schema") == "arena_retained_release_media_v1");
     REQUIRE(fs::is_regular_file(paths.data_root / "release" / "catalog.json"));
     REQUIRE(fs::is_regular_file(paths.data_root / "release" / "payloads" / "manager.tar.gz"));
+    REQUIRE(
+        fs::is_regular_file(
+            paths.data_root / "release" /
+            "development-trust.json"));
+    REQUIRE_THROWS(
+        SetupEngine::load_catalog(
+            media / "catalog.json",
+            {},
+            false,
+            {},
+            paths.data_root / "release" /
+                "development-trust.json"));
 
     fs::remove_all(media);
     const json reloaded =
-        SetupEngine::load_catalog(paths.data_root / "release" / "catalog.json", {}, true);
+        SetupEngine::load_catalog(
+            paths.data_root / "release" / "catalog.json",
+            {},
+            false,
+            {},
+            paths.data_root / "release" /
+                "development-trust.json");
     REQUIRE(reloaded.at("suite_version") == "1.0.0");
+    REQUIRE(
+        reloaded.at("_catalog_trust") ==
+        "retained_unsigned_development");
+
+    std::ofstream(
+        paths.data_root / "release" / "catalog.json",
+        std::ios::app)
+        << ' ';
+    REQUIRE_THROWS(
+        SetupEngine::load_catalog(
+            paths.data_root / "release" / "catalog.json",
+            {},
+            false,
+            {},
+            paths.data_root / "release" /
+                "development-trust.json"));
     fs::remove_all(root);
 }
 

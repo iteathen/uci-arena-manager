@@ -134,7 +134,11 @@ test("manual release delegates platform packaging to the canonical clean build",
   );
   assert.match(
     managerJob,
-    /sudo apt-get install --yes autoconf autoconf-archive automake libtool ninja-build lintian rpm rpmlint/u,
+    /sudo apt-get install --yes autoconf autoconf-archive automake libtool ninja-build lintian rpm rpmlint libwebkit2gtk-4\.1-dev/u,
+  );
+  assert.match(
+    managerJob,
+    /WixToolset\.BootstrapperApplications\.wixext\/6\.0\.2/u,
   );
   assert.ok(
     managerJob.indexOf(

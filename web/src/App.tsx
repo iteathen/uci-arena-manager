@@ -43,6 +43,8 @@ import { MatchPlannerPage } from './pages/MatchPlannerPage'
 import { OverviewPage } from './pages/OverviewPage'
 import { ResourcePage } from './pages/ResourcePage'
 import { ServicesPage } from './pages/ServicesPage'
+import { AuditPage } from './pages/AuditPage'
+import { ReportsPage } from './pages/ReportsPage'
 
 const StatisticsPage = lazy(() =>
   import('./pages/StatisticsPage').then((module) => ({ default: module.StatisticsPage })),
@@ -161,23 +163,11 @@ export default function App() {
           </Suspense>
         )
       case 'reports':
-        return (
-          <ResourcePage
-            title="Reports"
-            description="Immutable HTML, PDF, CSV, JSON, and PGN evidence."
-            kind="report"
-          />
-        )
+        return <ReportsPage />
       case 'configuration':
         return <ConfigurationPage />
       case 'audit':
-        return (
-          <ResourcePage
-            title="Audit"
-            description="Authenticated actors, command correlation, and durable state transitions."
-            kind="audit"
-          />
-        )
+        return <AuditPage />
       default:
         return <OverviewPage navigate={navigate} />
     }

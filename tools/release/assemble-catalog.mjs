@@ -34,8 +34,14 @@ function parse(argv) {
 }
 
 const args = parse(process.argv.slice(2));
-for (const required of ["lock", "provider-dir", "output-dir", "manager-windows", "manager-linux"]) {
+for (const required of ["lock", "provider-dir", "output-dir"]) {
   if (!args[required]) throw new Error(`--${required} is required`);
+}
+if (!args["manager-windows"] && !args["manager-linux"]) {
+  throw new Error("--manager-windows or --manager-linux is required");
+}
+if (args.target && !["windows-x86_64", "linux-x86_64"].includes(args.target)) {
+  throw new Error("--target must be windows-x86_64 or linux-x86_64");
 }
 const lock = JSON.parse(readFileSync(args.lock, "utf8"));
 const validation = validateReleaseLock(lock);
@@ -93,11 +99,29 @@ const managedRows = lock.managed_components.map((component) => {
     result,
   };
 });
-const rows = [...providerRows, ...managedRows];
+const rows = [...providerRows, ...managedRows].filter(
+  (row) =>
+    !args.target ||
+    row.target_triple === args.target ||
+    row.target_triple === "any-any",
+);
 const managerArtifacts = [
-  { target_triple: "windows-x86_64", path: path.resolve(args["manager-windows"]) },
-  { target_triple: "linux-x86_64", path: path.resolve(args["manager-linux"]) },
-];
+  ...(args["manager-windows"]
+    ? [{
+        target_triple: "windows-x86_64",
+        path: path.resolve(args["manager-windows"]),
+      }]
+    : []),
+  ...(args["manager-linux"]
+    ? [{
+        target_triple: "linux-x86_64",
+        path: path.resolve(args["manager-linux"]),
+      }]
+    : []),
+].filter((artifact) => !args.target || artifact.target_triple === args.target);
+if (managerArtifacts.length === 0) {
+  throw new Error(`no Manager artifact was supplied for ${args.target}`);
+}
 const output = path.resolve(args["output-dir"]);
 const payloads = path.join(output, "payloads");
 mkdirSync(payloads, { recursive: true });

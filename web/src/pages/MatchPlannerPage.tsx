@@ -17,7 +17,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { api, makeCommand } from '../api/client'
-import type { EngineData, MatchPlanData } from '../api/types'
+import type { EngineData, MatchPlanData, Resource } from '../api/types'
 import { PageHeader } from '../components/PageHeader'
 
 export function MatchPlannerPage() {
@@ -39,12 +39,26 @@ export function MatchPlannerPage() {
   const [initial, setInitial] = useState<number | string>(60)
   const [increment, setIncrement] = useState<number | string>(0.6)
   const [seed, setSeed] = useState<number | string>(1)
+  const [dryRunPreview, setDryRunPreview] = useState<MatchPlanData | null>(null)
   const options = useMemo(
     () =>
-      engines.data?.map((engine) => ({
-        value: engine.id,
-        label: engine.data.display_name,
-      })) ?? [],
+      [...(engines.data ?? [])]
+        .sort((left, right) => {
+          const leftPreferred =
+            left.data.component_id === 'uci_arena.engine' && left.data.recommended === true
+          const rightPreferred =
+            right.data.component_id === 'uci_arena.engine' && right.data.recommended === true
+          if (leftPreferred !== rightPreferred) return leftPreferred ? -1 : 1
+          return left.data.display_name.localeCompare(right.data.display_name)
+        })
+        .map((engine) => ({
+          value: engine.id,
+          label:
+            engine.data.component_id === 'uci_arena.engine' &&
+            engine.data.recommended === true
+              ? `${engine.data.display_name} · preferred`
+              : engine.data.display_name,
+        })),
     [engines.data],
   )
   const selectedPairs =
@@ -62,7 +76,7 @@ export function MatchPlannerPage() {
 
   const create = useMutation({
     mutationFn: (dryRun: boolean) =>
-      api.command(
+      api.command<Resource<MatchPlanData>>(
         makeCommand(
           'match.plan',
           'match_plan',
@@ -83,8 +97,13 @@ export function MatchPlannerPage() {
           dryRun,
         ),
       ),
-    onSuccess: async (_, dryRun) => {
-      if (!dryRun) await queryClient.invalidateQueries({ queryKey: ['resources', 'match_plan'] })
+    onSuccess: async (result, dryRun) => {
+      if (dryRun) {
+        setDryRunPreview(result.resource.data)
+      } else {
+        setDryRunPreview(null)
+        await queryClient.invalidateQueries({ queryKey: ['resources', 'match_plan'] })
+      }
     },
   })
   const validCount =
@@ -189,6 +208,12 @@ export function MatchPlannerPage() {
                 </Grid>
               </div>
               {create.error && <Alert color="red">{create.error.message}</Alert>}
+              {dryRunPreview && (
+                <Alert color="teal" title="Dry run passed">
+                  The backend normalized {dryRunPreview.pairings.length} deterministic
+                  pairing(s). Nothing was saved.
+                </Alert>
+              )}
               <Group justify="flex-end">
                 <Button
                   variant="default"

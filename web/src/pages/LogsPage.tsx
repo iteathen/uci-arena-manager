@@ -1,70 +1,116 @@
-import { IconSearch } from '@tabler/icons-react'
-import { Group, Paper, Select, Text, TextInput } from '@mantine/core'
+import { IconRefresh, IconSearch } from '@tabler/icons-react'
+import { Alert, Button, Group, Paper, Select, Text, TextInput } from '@mantine/core'
+import { useQuery } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useRef } from 'react'
+import { useMemo, useRef, useState } from 'react'
+import { api } from '../api/client'
+import { EmptyState } from '../components/EmptyState'
 import { PageHeader } from '../components/PageHeader'
-
-const previewLines = [
-  ['INFO', 'control', 'Control plane initialized; SQLite WAL ready'],
-  ['INFO', 'auth', 'Local authenticated session established'],
-  ['INFO', 'events', 'Durable event stream awaiting subscribers'],
-  ['DEBUG', 'scheduler', 'No queued match plans'],
-  ['INFO', 'health', 'Local host health is ready'],
-]
 
 export function LogsPage() {
   const parent = useRef<HTMLDivElement>(null)
-  const virtualizer = useVirtualizer({
-    count: previewLines.length,
-    getScrollElement: () => parent.current,
-    estimateSize: () => 42,
+  const [query, setQuery] = useState('')
+  const [source, setSource] = useState<string | null>('all')
+  const events = useQuery({
+    queryKey: ['events', 'logs'],
+    queryFn: () => api.events(0),
   })
+  const lines = useMemo(
+    () =>
+      [...(events.data ?? [])]
+        .reverse()
+        .filter((event) => {
+          if (source !== 'all' && event.resource?.kind !== source) return false
+          if (!query.trim()) return true
+          const searchable = `${event.kind} ${event.stream} ${event.resource?.kind ?? ''} ${
+            event.resource?.id ?? ''
+          }`.toLowerCase()
+          return searchable.includes(query.trim().toLowerCase())
+        }),
+    [events.data, query, source],
+  )
+  const virtualizer = useVirtualizer({
+    count: lines.length,
+    getScrollElement: () => parent.current,
+    estimateSize: () => 46,
+  })
+
   return (
     <>
       <PageHeader
         title="Logs"
-        description="Structured critical events and bounded, rotated process output."
+        description="Durable Manager events. Provider output remains bounded by its public contract."
+        actions={
+          <Button
+            variant="default"
+            leftSection={<IconRefresh size={16} />}
+            loading={events.isFetching}
+            onClick={() => events.refetch()}
+          >
+            Refresh
+          </Button>
+        }
       />
+      {events.error && (
+        <Alert color="red" mb="lg">
+          {events.error.message}
+        </Alert>
+      )}
       <Paper withBorder className="panel" p={0}>
         <Group p="md" className="log-toolbar">
-          <TextInput leftSection={<IconSearch size={15} />} placeholder="Filter messages" />
+          <TextInput
+            leftSection={<IconSearch size={15} />}
+            placeholder="Filter transitions"
+            value={query}
+            onChange={(event) => setQuery(event.currentTarget.value)}
+          />
           <Select
-            defaultValue="all"
+            value={source}
+            onChange={setSource}
             data={[
-              { value: 'all', label: 'All sources' },
-              { value: 'control', label: 'Control plane' },
+              { value: 'all', label: 'All resources' },
               { value: 'engine', label: 'Engines' },
-              { value: 'service', label: 'Services' },
+              { value: 'managed_service', label: 'Services' },
+              { value: 'bot', label: 'Bots' },
+              { value: 'match_plan', label: 'Match plans' },
+              { value: 'tournament', label: 'Tournaments' },
             ]}
           />
         </Group>
-        <div ref={parent} className="log-viewport">
-          <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
-            {virtualizer.getVirtualItems().map((row) => {
-              const line = previewLines[row.index]
-              return (
-                <div
-                  className="log-line"
-                  key={row.key}
-                  style={{ transform: `translateY(${row.start}px)` }}
-                >
-                  <Text size="xs" c="dimmed" ff="monospace">
-                    {new Date().toISOString()}
-                  </Text>
-                  <Text size="xs" className={`log-level level-${line[0].toLowerCase()}`}>
-                    {line[0]}
-                  </Text>
-                  <Text size="xs" c="dimmed" ff="monospace">
-                    {line[1]}
-                  </Text>
-                  <Text size="sm" ff="monospace">
-                    {line[2]}
-                  </Text>
-                </div>
-              )
-            })}
+        {!lines.length ? (
+          <EmptyState
+            title={events.data?.length ? 'No matching events' : 'No durable events yet'}
+            detail="Change the filter or perform an operation through the shared Manager command contract."
+          />
+        ) : (
+          <div ref={parent} className="log-viewport">
+            <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+              {virtualizer.getVirtualItems().map((row) => {
+                const event = lines[row.index]
+                return (
+                  <div
+                    className="log-line"
+                    key={event.event_id}
+                    style={{ transform: `translateY(${row.start}px)` }}
+                  >
+                    <Text size="xs" c="dimmed" ff="monospace">
+                      {new Date(event.timestamp).toISOString()}
+                    </Text>
+                    <Text size="xs" className="log-level level-info">
+                      EVENT
+                    </Text>
+                    <Text size="xs" c="dimmed" ff="monospace">
+                      {event.resource?.kind ?? event.stream}
+                    </Text>
+                    <Text size="sm" ff="monospace">
+                      {event.kind}
+                    </Text>
+                  </div>
+                )
+              })}
+            </div>
           </div>
-        </div>
+        )}
       </Paper>
     </>
   )

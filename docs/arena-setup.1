@@ -10,9 +10,9 @@ is the typed, noninteractive-capable lifecycle client used by the platform
 installers. It verifies signed catalogs and component payloads, maintains
 receipts, and invokes only declared provider lifecycle entrypoints.
 .PP
-For ordinary desktop setup, use the Windows installer Modify action or the
-distribution package workflow. Direct use is intended for automation and
-advanced administration.
+For ordinary desktop setup, use the reviewed install actions inside UCI Arena
+Manager, the Windows installer Modify action, or the distribution package
+workflow. Direct use is intended for automation and advanced administration.
 .SH COMMON OPTIONS
 .TP
 .BR \-\-catalog " " \fIPATH\fR
@@ -36,6 +36,11 @@ Override the opening-book and tablebase activation root.
 .TP
 .B \-\-json
 Emit machine-readable JSON.
+.TP
+.BR \-\-result-file " " \fIPATH\fR
+Write the final machine-readable result to the native desktop helper's private
+one-use result path. This option is for the authenticated desktop setup bridge;
+ordinary CLI use should read standard output.
 .SH COMMANDS
 .TP
 .B inventory

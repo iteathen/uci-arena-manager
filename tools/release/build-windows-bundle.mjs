@@ -59,7 +59,7 @@ function payloadName(relative) {
   return normalized;
 }
 
-export function buildPayloadFragment(mediaRoot) {
+export function buildPayloadFragment(mediaRoot, { development = false } = {}) {
   const root = path.resolve(mediaRoot);
   const setup = path.normalize(path.join("bin", "arena-setup.exe"));
   const payloads = files(root)
@@ -71,7 +71,7 @@ export function buildPayloadFragment(mediaRoot) {
     path.normalize(relative) === path.normalize("release/catalog.json"))) {
     throw new Error("suite media is missing release/catalog.json");
   }
-  if (!payloads.some((relative) =>
+  if (!development && !payloads.some((relative) =>
     path.normalize(relative) === path.normalize("release/tuf/root.json"))) {
     throw new Error("suite media is missing release/tuf/root.json");
   }
@@ -105,7 +105,13 @@ export function main(argv = process.argv.slice(2)) {
   }
   const output = path.resolve(args.output);
   mkdirSync(path.dirname(output), { recursive: true });
-  writeFileSync(output, buildPayloadFragment(args["media-root"]), "utf8");
+  writeFileSync(
+    output,
+    buildPayloadFragment(args["media-root"], {
+      development: args.development === "true",
+    }),
+    "utf8",
+  );
 }
 
 if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
