@@ -187,12 +187,64 @@ endif()
 install(DIRECTORY web/dist/ DESTINATION share/uci-arena/web)
 install(DIRECTORY specs/ DESTINATION share/uci-arena/specs)
 if(NOT WIN32)
+  find_program(ARENA_GZIP_EXECUTABLE gzip REQUIRED)
+  set(ARENA_GENERATED_LINUX_DOC_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/packaging/linux")
+  file(MAKE_DIRECTORY "${ARENA_GENERATED_LINUX_DOC_DIR}")
+  configure_file(
+    docs/arena.1
+    "${ARENA_GENERATED_LINUX_DOC_DIR}/arena.1"
+    COPYONLY
+  )
+  configure_file(
+    docs/arena-setup.1
+    "${ARENA_GENERATED_LINUX_DOC_DIR}/arena-setup.1"
+    COPYONLY
+  )
+  configure_file(
+    packaging/linux/changelog.in
+    "${ARENA_GENERATED_LINUX_DOC_DIR}/changelog"
+    @ONLY
+  )
+  foreach(ARENA_LINUX_DOC arena.1 arena-setup.1 changelog)
+    execute_process(
+      COMMAND
+        "${ARENA_GZIP_EXECUTABLE}" -9 -n -c
+        "${ARENA_GENERATED_LINUX_DOC_DIR}/${ARENA_LINUX_DOC}"
+      OUTPUT_FILE
+        "${ARENA_GENERATED_LINUX_DOC_DIR}/${ARENA_LINUX_DOC}.gz"
+      COMMAND_ERROR_IS_FATAL ANY
+    )
+  endforeach()
+
   install(FILES packaging/linux/uci-arena-manager.service DESTINATION lib/systemd/system)
   install(FILES packaging/linux/uci-arena-broker.service DESTINATION lib/systemd/system)
   install(FILES packaging/linux/uci-arena-manager.desktop DESTINATION share/applications)
   install(FILES packaging/icons/uci-arena-manager.svg DESTINATION share/icons/hicolor/scalable/apps)
   install(FILES packaging/icons/uci-arena-manager.png DESTINATION share/icons/hicolor/256x256/apps)
-  install(FILES docs/arena.1 docs/arena-setup.1 DESTINATION share/man/man1)
+  install(
+    FILES
+      "${ARENA_GENERATED_LINUX_DOC_DIR}/arena.1.gz"
+      "${ARENA_GENERATED_LINUX_DOC_DIR}/arena-setup.1.gz"
+    DESTINATION share/man/man1
+  )
+  install(
+    FILES
+      packaging/linux/copyright
+      "${ARENA_GENERATED_LINUX_DOC_DIR}/changelog.gz"
+    DESTINATION share/doc/uci-arena-manager
+  )
+  install(
+    FILES packaging/linux/uci-arena-manager.lintian-overrides
+    DESTINATION share/lintian/overrides
+    RENAME uci-arena-manager
+  )
+  install(
+    DIRECTORY
+      "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/"
+    DESTINATION share/doc/uci-arena-manager/third-party
+    FILES_MATCHING PATTERN "copyright"
+  )
 endif()
 install(FILES docs/cli.md DESTINATION share/doc/uci-arena-manager)
 
@@ -228,7 +280,12 @@ if(ARENA_ENABLE_PACKAGING)
   set(CPACK_PACKAGE_NAME "uci-arena-manager")
   set(CPACK_PACKAGE_VENDOR "UCI Arena Manager contributors")
   set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
-  set(CPACK_PACKAGE_CONTACT "https://github.com/iteathen/uci-arena-manager")
+  set(CPACK_PACKAGE_CONTACT
+    "UCI Arena Manager contributors <iteathen@users.noreply.github.com>")
+  set(CPACK_PACKAGE_HOMEPAGE_URL
+    "https://github.com/iteathen/uci-arena-manager")
+  set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
+    "Local-first UCI chess arena control plane")
   set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
   if(WIN32)
     configure_file(
@@ -251,18 +308,35 @@ if(ARENA_ENABLE_PACKAGING)
       "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/ServicePatch.xml")
   else()
     set(CPACK_GENERATOR "DEB;RPM;TGZ")
+    set(CPACK_STRIP_FILES TRUE)
     set(CPACK_PACKAGE_FILE_NAME
       "uci-arena-manager-${PROJECT_VERSION}-linux-x86_64")
     set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+    set(CPACK_DEBIAN_PACKAGE_SECTION "games")
+    set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+    set(CPACK_DEBIAN_PACKAGE_DESCRIPTION
+"Local-first UCI chess arena control plane
+ UCI Arena Manager provides the native service, authenticated CLI, desktop
+ launcher, and typed installer for local UCI engine matches.
+ .
+ It manages engines, optional arena services, immutable component receipts,
+ and retained operator data through one loopback-only control plane.")
     set(CPACK_RPM_FILE_NAME
       "uci-arena-manager-${PROJECT_VERSION}-1.x86_64.rpm")
-    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libc6, libstdc++6, systemd")
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS
+      "libc6, libstdc++6, systemd, init-system-helpers, passwd")
     set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
-      "${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/postinst"
-      "${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/prerm"
-      "${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/postrm"
+      "${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/debian/postinst"
+      "${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/debian/prerm"
+      "${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/debian/postrm"
     )
     set(CPACK_RPM_PACKAGE_REQUIRES "systemd")
+    set(CPACK_RPM_PACKAGE_LICENSE "AGPL-3.0-or-later")
+    set(CPACK_RPM_PACKAGE_GROUP "Applications/Engineering")
+    set(CPACK_RPM_PACKAGE_URL
+      "https://github.com/iteathen/uci-arena-manager")
+    set(CPACK_RPM_PACKAGE_DESCRIPTION
+      "Local-first native control plane for UCI engine matches and services.")
     set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE
       "${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/postinst")
     set(CPACK_RPM_PRE_UNINSTALL_SCRIPT_FILE

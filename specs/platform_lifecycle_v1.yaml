@@ -32,6 +32,18 @@ packages:
   official_build_location: protected_ci_only
   windows: [signed_setup_exe, msi, zip]
   linux: [deb, rpm, signed_portable_run, tar_gz]
+  linux_validation:
+    blocking: [lintian, rpmlint, systemd_analyze]
+    before_provenance: true
+    maintainer_scripts: distro_specific_and_executable
+    release_binaries: stripped
+    public_manual_pages: reproducibly_gzip_compressed
+    policy_metadata: [maintainer, description, license, copyright, changelog]
+    standalone_static_linkage:
+      allowed: reviewed_exact_executable_and_library_pairs_only
+      lintian_override: exact_context_with_review_comment
+      bundled_license_evidence: required
+      broad_override: forbidden
   normal_uninstall: preserve_data
   purge: explicit_preview_confirm_optional_export
   self_update: false

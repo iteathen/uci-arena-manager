@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+if [ "${1:-}" = "remove" ] && [ -d /run/systemd/system ]; then
+  deb-systemd-invoke stop uci-arena-manager.service >/dev/null
+fi
+
+exit 0
