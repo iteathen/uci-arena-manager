@@ -72,7 +72,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes autoconf autoconf-archive automake libtool ninja-build lintian rpm rpmlint libwebkit2gtk-4.1-dev
+          sudo apt-get install --yes acl autoconf autoconf-archive automake libtool ninja-build lintian rpm rpmlint libwebkit2gtk-4.1-dev
       - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
         with:
           vcpkgGitCommitId: cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3

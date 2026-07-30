@@ -859,6 +859,35 @@ transaction:
     owner: arena_setup
     location: selected_service_workspace
     inputs: exact_receipt_verified_dependency_entrypoints
+    managed_workspace_access:
+      purpose: >
+        Let the least-privilege Manager service invoke each provider's public
+        CLI against its exact managed workspace without changing provider
+        ownership or granting access outside that workspace.
+      windows:
+        principal: NT AUTHORITY\LOCAL SERVICE
+        permission: modify
+        inheritance: selected_workspace_children_only
+        implementation: native_dacl_adapter
+      linux:
+        principal: uci-arena
+        permission: read_write_traverse
+        inheritance: selected_workspace_default_acl
+        implementation: fixed_setfacl_adapter
+        package_dependency: acl
+      scope:
+        - book_forge_workspace
+        - evidence_service_workspace
+        - lichess_adapter_workspace
+      rules:
+        - Access is granted only after the normalized workspace is selected
+          beneath workspace_root and before Manager-owned configuration is
+          written.
+        - No permission is granted to an external Lichess token file, imported
+          asset, provider source tree, or the operator profile as a whole.
+        - Permission setup is fail-closed; an installed service may not be
+          reported as integrated when Manager cannot access its public CLI
+          workspace.
     managed_dependency_entrypoints:
       canonical:
         node_runtime.private: node

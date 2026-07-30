@@ -106,12 +106,14 @@ if(WIN32)
   target_sources(arena_core PRIVATE
     src/platform/windows/process_platform.cpp
     src/platform/windows/service_control.cpp
+    src/platform/windows/workspace_permissions.cpp
   )
   target_link_libraries(arena_core PRIVATE advapi32 bcrypt shell32 userenv)
 else()
   target_sources(arena_core PRIVATE
     src/platform/linux/process_platform.cpp
     src/platform/linux/service_control.cpp
+    src/platform/linux/workspace_permissions.cpp
   )
   target_link_libraries(arena_core PRIVATE pthread)
 endif()
@@ -366,13 +368,13 @@ if(ARENA_ENABLE_PACKAGING)
     set(CPACK_RPM_FILE_NAME
       "uci-arena-manager-${PROJECT_VERSION}-1.x86_64.rpm")
     set(CPACK_DEBIAN_PACKAGE_DEPENDS
-      "libc6, libstdc++6, systemd, init-system-helpers, passwd, libwebkit2gtk-4.1-0, zenity")
+      "libc6, libstdc++6, systemd, init-system-helpers, passwd, acl, libwebkit2gtk-4.1-0, zenity")
     set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
       "${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/debian/postinst"
       "${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/debian/prerm"
       "${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/debian/postrm"
     )
-    set(CPACK_RPM_PACKAGE_REQUIRES "systemd, webkit2gtk4.1, zenity")
+    set(CPACK_RPM_PACKAGE_REQUIRES "systemd, acl, webkit2gtk4.1, zenity")
     set(CPACK_RPM_PACKAGE_LICENSE "AGPL-3.0-or-later")
     set(CPACK_RPM_PACKAGE_GROUP "Applications/Engineering")
     set(CPACK_RPM_PACKAGE_URL

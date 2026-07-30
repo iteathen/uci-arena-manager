@@ -178,6 +178,11 @@ the bounded receipt/configuration commit, applies or removes verified payloads,
 then starts Manager and verifies the resulting state. Linux DEB/RPM lifecycle
 scripts perform the equivalent systemd stop, daemon-reload, enable, and start;
 portable `.run` installers use the same `arena-setup` operations and catalog.
+For each generated Book Forge, Evidence Service, or Lichess workspace,
+`arena-setup` grants only the Manager service account inherited workspace
+access: `LOCAL SERVICE` on Windows or `uci-arena` through the packaged `acl`
+dependency on Linux. Provider ownership is unchanged, and token files or other
+operator-profile paths are never included in that permission grant.
 
 Installer sources and official output locations are:
 
