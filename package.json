@@ -4,9 +4,11 @@
   "type": "module",
   "scripts": {
     "spec:check": "node tools/spec-check.mjs",
+    "automation:check": "node tools/check-github-automation.mjs",
+    "audit:production": "npm audit --omit=dev --prefix web",
     "naming:check": "node tools/check-model-product-naming.mjs",
     "clean-build": "node tools/release/clean-build.mjs",
-    "check": "npm run spec:check && npm run naming:check && npm test --prefix web && npm run build --prefix web"
+    "check": "npm run spec:check && npm run automation:check && npm run audit:production && npm run naming:check && npm test --prefix web && npm run build --prefix web"
   },
   "engines": {
     "node": ">=22"

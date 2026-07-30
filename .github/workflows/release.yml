@@ -28,6 +28,8 @@ jobs:
         with:
           node-version: 24.15.0
       - run: node tools/spec-check.mjs
+      - run: npm audit --omit=dev
+        working-directory: web
       - run: node --test tools/release/*.test.mjs
       - run: node tools/release/validate-lock.mjs release/catalog.lock.json
       - id: lock
