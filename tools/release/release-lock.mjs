@@ -471,6 +471,23 @@ export function validateLockedProviderResult(
   }
 }
 
+export function validateLockedProviderResultForLock(
+  lock,
+  component,
+  result,
+  artifactSize,
+) {
+  const errors = [];
+  const provider = providerFor(lock, component, errors);
+  if (!provider || errors.length > 0) {
+    throw new Error(
+      errors.join("\n")
+        || `component ${component.component_id} has no trusted provider`,
+    );
+  }
+  validateLockedProviderResult(component, result, artifactSize, provider);
+}
+
 export function validateLockedManagedResult(component, result, artifactSize) {
   if (result.schema !== "arena_managed_component_release_result_v1"
       || result.release_authority !== "manager_managed_component_only"
