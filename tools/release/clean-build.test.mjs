@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -110,7 +111,7 @@ test("installer verification rejects missing, empty, and stale outputs", () => {
   }
 });
 
-test("release workflow delegates platform packaging to the canonical clean build", () => {
+test("manual release delegates platform packaging to the canonical clean build", () => {
   const repositoryRoot = path.resolve(import.meta.dirname, "../..");
   const releaseWorkflow = readFileSync(
     path.join(repositoryRoot, ".github", "workflows", "release.yml"),
@@ -143,33 +144,14 @@ test("release workflow delegates platform packaging to the canonical clean build
   );
   assert.doesNotMatch(managerJob, /^\s+cpack /mu);
 
-  const integrationWorkflow = readFileSync(
-    path.join(repositoryRoot, ".github", "workflows", "ci.yml"),
-    "utf8",
+  assert.equal(
+    existsSync(path.join(repositoryRoot, ".github", "workflows", "ci.yml")),
+    false,
+    "automatic CI workflow must remain absent",
   );
-  assert.match(
-    integrationWorkflow,
-    /concurrency:\s+group: ci-\$\{\{ github\.workflow \}\}-\$\{\{ github\.event\.pull_request\.number \|\| github\.ref \}\}\s+cancel-in-progress: true/u,
+  assert.match(releaseWorkflow, /^on:\s+workflow_dispatch:/mu);
+  assert.doesNotMatch(
+    releaseWorkflow,
+    /^ {2}(?:pull_request|push|merge_group|schedule):/mu,
   );
-  const nativeJob = integrationWorkflow.match(
-    /^  native:[\s\S]*?(?=^  dependency-review:)/mu,
-  )?.[0] ?? "";
-  assert.match(
-    nativeJob,
-    /node tools\/release\/clean-build\.mjs --manager-only --platform '\$\{\{ matrix\.target \}\}'/,
-  );
-  assert.match(nativeJob, /name: clean-build-\$\{\{ matrix\.target \}\}/);
-  assert.match(
-    nativeJob,
-    /name: native \(\$\{\{ matrix\.os \}\}, \$\{\{ matrix\.preset \}\}\)/,
-  );
-  assert.match(
-    nativeJob,
-    /os: windows-latest\s+preset: windows-release\s+target: windows-x86_64/u,
-  );
-  assert.match(
-    nativeJob,
-    /os: ubuntu-latest\s+preset: linux-release\s+target: linux-x86_64/u,
-  );
-  assert.doesNotMatch(nativeJob, /lukka\/run-cmake/);
 });

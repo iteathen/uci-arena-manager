@@ -23,8 +23,8 @@ authority:
       repository: iteathen/uci-arena-evidence-service
       components: [uci_arena_evidence.service]
   release_steward: "@iteathen"
-  official_builder: protected_manager_ci
-  stable_publisher: protected_manager_ci_after_production_environment_approval
+  official_builder: explicitly_dispatched_protected_manager_release_workflow
+  stable_publisher: explicitly_dispatched_manager_release_after_production_environment_approval
   forbidden_release_authorities:
     - manager_runtime_service
     - manager_broker
@@ -40,10 +40,10 @@ authority:
       replaces original-provider identity or attestation verification.
     - Stable promotion republishes the exact tested candidate bytes and never rebuilds.
     - Build identities never receive private signing keys.
-    - Private-repository CI always runs the lockfile-backed npm audit. GitHub
-      dependency review runs only when the account has enabled that private
-      repository feature and DEPENDENCY_REVIEW_ENABLED is explicitly true;
-      feature unavailability must not make every private pull request fail.
+    - Local pre-merge validation and the explicitly dispatched suite release
+      always run the lockfile-backed npm audit. Automatic GitHub dependency
+      review is disabled with continuous integration; feature availability
+      must never create an implicit hosted pull-request job.
 
 signed_provenance:
   repository_visibility: private
@@ -306,10 +306,14 @@ packaging:
     source_requirement: clean_tracked_worktree
     behavior:
       - Run specification and model/product naming gates before compilation.
-      - Pull-request CI groups runs by workflow and pull-request number and
-        cancels superseded commits. The newest commit still runs the complete
-        Windows and Linux clean-build matrix; release workflow runs are never
-        cancelled merely because another release was requested.
+      - Automatic GitHub Actions validation is disabled for pull requests,
+        pushes, merge queues, and schedules in every private UCI Arena
+        repository. Required checks run locally before a pull request is
+        merged, and the pull request records the exact commands and outcomes.
+      - Release and provenance workflows are separate from continuous
+        integration. They accept workflow_dispatch only, run solely after an
+        explicit operator request, and are never configured as automatically
+        required pull-request status checks.
       - Build the dashboard, configure the native release preset, clean native
         outputs before rebuilding, run native tests, and invoke the existing
         CPack deployment generators.

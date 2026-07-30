@@ -285,8 +285,12 @@ test("release workflow uses only pinned fail-closed Sigstore provenance", () => 
     new URL("../../specs/installation_contract_v1.yaml", import.meta.url),
     "utf8",
   );
-  const continuousIntegration = readFileSync(
-    new URL("../../.github/workflows/ci.yml", import.meta.url),
+  const automationPolicy = readFileSync(
+    new URL("../check-github-automation.mjs", import.meta.url),
+    "utf8",
+  );
+  const packageManifest = readFileSync(
+    new URL("../../package.json", import.meta.url),
     "utf8",
   );
   const catalogAssembler = readFileSync(
@@ -320,16 +324,13 @@ test("release workflow uses only pinned fail-closed Sigstore provenance", () => 
   assert.doesNotMatch(workflow, /insecure-ignore|check-claims=false|ignore-sct/u);
   assert.match(specification, /repository_visibility:\s*private/u);
   assert.match(specification, /Repository visibility is[\s\S]*never weakened/u);
-  assert.match(
-    continuousIntegration,
-    /node --test tools\/release\/\*\.test\.mjs/u,
-  );
-  assert.match(continuousIntegration, /npm audit --omit=dev/u);
-  assert.match(
-    continuousIntegration,
-    /vars\.DEPENDENCY_REVIEW_ENABLED == 'true'/u,
-  );
-  assert.doesNotMatch(continuousIntegration, /continue-on-error:\s*true/u);
+  assert.match(workflow, /npm audit --omit=dev/u);
+  assert.match(packageManifest, /npm audit --omit=dev --prefix web/u);
+  assert.match(automationPolicy, /"pull_request"/u);
+  assert.match(automationPolicy, /"push"/u);
+  assert.match(automationPolicy, /"merge_group"/u);
+  assert.match(automationPolicy, /"schedule"/u);
+  assert.match(automationPolicy, /workflow_dispatch/u);
   assert.match(catalogAssembler, /validateLockedManagedResult/u);
   assert.match(catalogAssembler, /managed_result_sha256/u);
   assert.match(catalogAssembler, /provenance_bundle_sha256/u);
