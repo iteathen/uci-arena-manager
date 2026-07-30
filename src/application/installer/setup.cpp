@@ -27,6 +27,7 @@
 #include "arena/adapters/uci_process.hpp"
 #include "arena/application/broker_policy.hpp"
 #include "arena/application/process_supervisor.hpp"
+#include "arena/platform/workspace_permissions.hpp"
 
 #ifndef _WIN32
 #include <sys/stat.h>
@@ -3677,6 +3678,7 @@ json SetupEngine::apply(const json&, const json& plan, const SetupPaths& paths,
                 if (action.value("enabled", true) ||
                     id == "lichess.adapter") {
                     fs::create_directories(workspace);
+                    arena::platform::grant_manager_workspace_access(workspace);
                     const fs::path config_path = workspace / "manager-config.json";
                     journal["actions"].back()["configuration_path"] = config_path.string();
                     if (fs::is_regular_file(config_path)) {
