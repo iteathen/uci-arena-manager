@@ -859,6 +859,23 @@ transaction:
     owner: arena_setup
     location: selected_service_workspace
     inputs: exact_receipt_verified_dependency_entrypoints
+    managed_dependency_entrypoints:
+      canonical:
+        node_runtime.private: node
+        stockfish.engine: stockfish
+      legacy_managed_candidate_compatibility:
+        accepted_key: executable
+        scope:
+          - node_runtime.private:node
+          - stockfish.engine:stockfish
+        rules:
+          - The alias is accepted only when the requested canonical entrypoint
+            is absent from the exact verified managed-component manifest.
+          - The aliased path must still be a safe relative path listed with an
+            exact size and SHA-256 in that same manifest.
+          - New managed-component candidates emit the canonical key; the alias
+            exists only so already locked and attested candidates remain
+            installable without weakening their content verification.
     book_forge:
       - stockfish
       - saved_lichess_token_path_reference_when_available

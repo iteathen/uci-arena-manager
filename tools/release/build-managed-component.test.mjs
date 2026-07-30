@@ -70,6 +70,14 @@ test("managed Node candidate is native-smoked, licensed, and reproducible", () =
     assert.equal(result.artifact_sha256, sha256(firstArtifact));
     assert.equal(result.validation_evidence.executable_smoke.status, "passed");
     assert.equal(result.validation_evidence.executable_smoke.protocol, "node_version");
+    const manifest = JSON.parse(execFileSync(
+      "tar",
+      ["-xOzf", firstArtifact, "arena-component.json"],
+      { encoding: "utf8" },
+    ));
+    assert.deepEqual(manifest.entrypoints, {
+      node: `bin/${process.platform === "win32" ? "node.exe" : "node"}`,
+    });
     assert.deepEqual(result.upstream_inputs, [{
       role: "source",
       url: "https://nodejs.org/test-input",
