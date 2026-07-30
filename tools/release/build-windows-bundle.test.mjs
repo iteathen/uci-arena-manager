@@ -172,6 +172,16 @@ test("Windows Manager MSI patches the complete staged tree with service lifecycl
     path.join(repositoryRoot, "packaging", "windows", "Package.wxs.in"),
     "utf8",
   );
+  const setupEngine = readFileSync(
+    path.join(
+      repositoryRoot,
+      "src",
+      "application",
+      "installer",
+      "setup.cpp",
+    ),
+    "utf8",
+  );
   assert.match(cmake, /CPACK_RESOURCE_FILE_LICENSE "\$\{CMAKE_CURRENT_BINARY_DIR\}\/LICENSE\.txt"/);
   assert.match(cmake, /CPACK_WIX_TEMPLATE/);
   assert.match(cmake, /CPACK_WIX_PATCH_FILE/);
@@ -202,4 +212,20 @@ test("Windows Manager MSI patches the complete staged tree with service lifecycl
   assert.match(patch, /Name="UCI Arena Manager"/);
   assert.match(patch, /Target="\[INSTALL_ROOT\]bin\\uci-arena-manager\.exe"/);
   assert.match(cmake, /CPACK_WIX_PRODUCT_ICON/);
+  const startupStop = setupEngine.indexOf(
+    'invoke_provider_startup(paths, previous_receipt, "uninstall")',
+  );
+  const payloadRename = setupEngine.indexOf(
+    "rename_managed_component_tree_with_retry(target, replaced, id)",
+  );
+  const configurationRollback = setupEngine.indexOf(
+    'action->contains("active_model_pointer_path")',
+  );
+  const startupRestore = setupEngine.indexOf(
+    'action->at("previous_startup_receipt"), "install")',
+  );
+  assert.ok(startupStop >= 0 && startupStop < payloadRename);
+  assert.ok(
+    configurationRollback >= 0 && configurationRollback < startupRestore,
+  );
 });

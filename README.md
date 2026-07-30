@@ -173,11 +173,17 @@ are persisted across upgrades. The Lichess adapter is installed disabled until
 its token-file reference and evidence gates are explicitly completed.
 
 Component changes are executed by `arena-setup`, not by direct file deletion.
-The installer stops affected provider startup registrations, stops Manager for
-the bounded receipt/configuration commit, applies or removes verified payloads,
-then starts Manager and verifies the resulting state. Linux DEB/RPM lifecycle
-scripts perform the equivalent systemd stop, daemon-reload, enable, and start;
-portable `.run` installers use the same `arena-setup` operations and catalog.
+Before repair or upgrade replaces an active component root, the installer uses
+that receipt's verified public startup adapter to stop and unregister the
+affected provider, then waits a bounded time for operating-system process
+teardown. It stops Manager for the bounded receipt/configuration commit, applies
+or removes verified payloads, then starts Manager and verifies the resulting
+state. A failed transaction restores the prior payload, receipt, and generated
+configuration before reinstalling its previous startup registration; an
+incomplete startup restoration is reported as `rollback_failed`. Linux DEB/RPM
+lifecycle scripts perform the equivalent systemd stop, daemon-reload, enable,
+and start; portable `.run` installers use the same `arena-setup` operations and
+catalog.
 For each generated Book Forge, Evidence Service, or Lichess workspace,
 `arena-setup` grants only the Manager service account inherited workspace
 access: `LOCAL SERVICE` on Windows or `uci-arena` through the packaged `acl`
