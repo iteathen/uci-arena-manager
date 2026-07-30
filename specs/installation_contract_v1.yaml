@@ -313,6 +313,10 @@ packaging:
       - Build the dashboard, configure the native release preset, clean native
         outputs before rebuilding, run native tests, and invoke the existing
         CPack deployment generators.
+      - Pull-request CI and the protected suite release workflow install the
+        same explicit Linux native-build prerequisite set before vcpkg
+        dependency bootstrap. Release-only package validators may extend that
+        set, but they never replace it or run after dependency bootstrap.
       - A successful build emits a digest-bound
         arena_clean_build_result_v1 manifest and cannot succeed when any
         required installer is missing, empty, ambiguously named, or accompanied

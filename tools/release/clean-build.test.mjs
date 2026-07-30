@@ -131,6 +131,16 @@ test("release workflow delegates platform packaging to the canonical clean build
     managerJob,
     /if \(\$rootSha256 -match '\^\[0-9a-f\]\{64\}\$'\)[\s\S]*--tuf-root-sha256/u,
   );
+  assert.match(
+    managerJob,
+    /sudo apt-get install --yes autoconf autoconf-archive automake libtool ninja-build lintian rpm rpmlint/u,
+  );
+  assert.ok(
+    managerJob.indexOf(
+      "name: Install Linux native build prerequisites and package validators",
+    ) < managerJob.indexOf("uses: lukka/run-vcpkg@"),
+    "Linux native prerequisites must be installed before vcpkg bootstrap",
+  );
   assert.doesNotMatch(managerJob, /^\s+cpack /mu);
 
   const integrationWorkflow = readFileSync(
