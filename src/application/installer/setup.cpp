@@ -2760,7 +2760,8 @@ bool supports_startup_capability(const json& receipt, const std::string_view cap
 }
 
 json invoke_provider_startup(const SetupPaths& paths, const json& receipt,
-                             const std::string& action) {
+                             const std::string& action,
+                             const bool trusted_existing_receipt_workspace = false) {
     const std::string component_id = receipt.at("component_id").get<std::string>();
     const fs::path active_root = receipt.at("active_root").get<std::string>();
     const json manifest =
@@ -2787,8 +2788,17 @@ json invoke_provider_startup(const SetupPaths& paths, const json& receipt,
         throw std::runtime_error("startup-capable component has no managed workspace: " +
                                  component_id);
     }
-    const fs::path workspace = normalized_absolute(data_paths.at(0).get<std::string>());
-    if (!within(paths.workspace_root, workspace)) {
+    const fs::path recorded_workspace = data_paths.at(0).get<std::string>();
+    if (!recorded_workspace.is_absolute()) {
+        throw std::runtime_error("startup-capable component workspace is not absolute: " +
+                                 component_id);
+    }
+    const fs::path workspace = normalized_absolute(recorded_workspace);
+    const bool trusted_receipt_workspace =
+        trusted_existing_receipt_workspace && receipt.contains("startup") &&
+        receipt.at("startup").is_object() &&
+        receipt.at("startup").value("installed", false);
+    if (!within(paths.workspace_root, workspace) && !trusted_receipt_workspace) {
         throw std::runtime_error(
             "startup-capable component workspace is outside the selected workspace "
             "root");
@@ -3638,8 +3648,8 @@ json SetupEngine::apply(const json&, const json& plan, const SetupPaths& paths,
                         previous_receipt;
                     journal["actions"].back()["previous_startup_transition_started"] = true;
                     write_json_atomic(journal_path, journal);
-                    static_cast<void>(
-                        invoke_provider_startup(paths, previous_receipt, "uninstall"));
+                    static_cast<void>(invoke_provider_startup(
+                        paths, previous_receipt, "uninstall", true));
                     journal["actions"].back()["previous_startup_uninstalled"] = true;
                     write_json_atomic(journal_path, journal);
                 }
@@ -3950,7 +3960,7 @@ json SetupEngine::apply(const json&, const json& plan, const SetupPaths& paths,
                 action->contains("previous_startup_receipt")) {
                 try {
                     static_cast<void>(invoke_provider_startup(
-                        paths, action->at("previous_startup_receipt"), "install"));
+                        paths, action->at("previous_startup_receipt"), "install", true));
                     (*action)["previous_startup_restored"] = true;
                 } catch (const std::exception& startup_error) {
                     append_startup_rollback_failure(startup_error.what());

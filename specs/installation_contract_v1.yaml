@@ -280,6 +280,13 @@ setup:
       - Upgrade carries the installed selection forward, restages every
         selected component from the new signed catalog, and does not silently
         reinstall a component the operator previously removed.
+      - Upgrade preserves the exact workspace recorded by a validated existing
+        provider receipt even when shell-folder redirection or a corrected
+        installer default resolves a different workspace root. This narrow
+        compatibility authority applies only while uninstalling or restoring
+        that receipt's already-installed startup registration; it never
+        authorizes a browser, catalog, or new component to select an arbitrary
+        outside-root path.
       - Linux packages carry arena-setup, the retained signed catalog, and
         lifecycle integration; distro-native service scripts and arena-setup
         provide equivalent component install, repair, upgrade, and removal.
@@ -501,6 +508,10 @@ packaging:
       - The arena-setup executable package uses no Burn console-redirection
         protocol so inherited standard handles cannot keep the bootstrapper
         blocked after arena-setup exits.
+      - Every Burn arena-setup invocation passes its package log path through
+        the typed --result-file option. Success or failure leaves one bounded
+        JSON result at that path, including the actionable setup error instead
+        of reducing every provider transition failure to an EXE exit code.
       - Install, repair, and uninstall resolve the embedded catalog and TUF
         metadata from the currently executing Burn package cache directory.
         They never depend on the bootstrapper launch directory or a retained
@@ -533,6 +544,10 @@ packaging:
       - The bundle feature-selection state is default-on for Engine, Book
         Forge, Evidence Service, and Lichess adapter, is available again from
         Modify, and is preserved across a major upgrade.
+      - The bundle's default workspace root matches arena-setup's native
+        user-profile default and is not redirected through Documents or
+        OneDrive. Existing receipt-owned workspaces remain authoritative on
+        upgrade regardless of either default.
   artifact_names:
     - UCI-Arena-Setup-<version>-windows-x64-user-online.exe
     - UCI-Arena-Setup-<version>-windows-x64-user-offline.exe
@@ -1061,6 +1076,10 @@ transaction:
       - If the operating system refuses the final Manager service restoration,
         setup returns an error and leaves verified receipts as the authoritative
         recovery state; it never claims an exact rollback that did not occur.
+      - Windows Manager stop/start transitions wait for the requested SCM state
+        within a bounded deadline. A service stop that arrives while the HTTP
+        event loop is starting is latched and completed rather than leaving an
+        unchanging STOP_PENDING service for MSI or arena-setup to force-kill.
   installed_engine_handoff:
     owner: arena_setup
     rules:

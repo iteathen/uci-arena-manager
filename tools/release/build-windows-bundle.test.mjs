@@ -79,6 +79,14 @@ test("Windows per-machine bundle owns complete elevated lifecycle", () => {
     /--bundle-owner &quot;\[WixBundleProviderKey\]&quot;/,
   );
   assert.match(source, /--install-scope per-machine/);
+  assert.match(
+    source,
+    /ArenaWorkspaceRoot="\[UserProfileFolder\]UCI Arena Workspaces"/,
+  );
+  assert.equal(
+    source.match(/--result-file &quot;\[WixBundleLog_SuiteComponents\]&quot;/g)?.length,
+    3,
+  );
   for (const root of [
     "--install-root",
     "--data-root",
@@ -159,6 +167,14 @@ test("Windows per-user bundle remains fixed-scope and non-elevated", () => {
   assert.doesNotMatch(source, /PerMachine="yes"/);
   assert.doesNotMatch(source, /--restart-manager-service/);
   assert.match(source, /--install-scope per-user/);
+  assert.match(
+    source,
+    /ArenaWorkspaceRoot="\[UserProfileFolder\]UCI Arena Workspaces"/,
+  );
+  assert.equal(
+    source.match(/--result-file &quot;\[WixBundleLog_SuiteComponents\]&quot;/g)?.length,
+    3,
+  );
   assert.match(source, /--install-root[^\n]*ArenaInstallRoot/);
   assert.match(source, /--cache-root[^\n]*ArenaCacheRoot/);
   assert.match(source, /--workspace-root[^\n]*ArenaWorkspaceRoot/);
@@ -310,8 +326,8 @@ test("Windows Manager MSI patches the complete staged tree with service lifecycl
     /86e5fcafb38bdf58346a78b187c7b6b4f252ae5242cffe24c463a92bbd2e77d1/,
   );
   assert.match(cmake, /packaging\/windows\/UserPatch\.xml/);
-  const startupStop = setupEngine.indexOf(
-    'invoke_provider_startup(paths, previous_receipt, "uninstall")',
+  const startupStop = setupEngine.search(
+    /invoke_provider_startup\(\s*paths,\s*previous_receipt,\s*"uninstall",\s*true\)/,
   );
   const payloadRename = setupEngine.indexOf(
     "rename_managed_component_tree_with_retry(target, replaced, id)",
@@ -319,11 +335,46 @@ test("Windows Manager MSI patches the complete staged tree with service lifecycl
   const configurationRollback = setupEngine.indexOf(
     'action->contains("active_model_pointer_path")',
   );
-  const startupRestore = setupEngine.indexOf(
-    'action->at("previous_startup_receipt"), "install")',
+  const startupRestore = setupEngine.search(
+    /action->at\("previous_startup_receipt"\),\s*"install",\s*true\)/,
   );
   assert.ok(startupStop >= 0 && startupStop < payloadRename);
+  assert.match(
+    setupEngine,
+    /trusted_existing_receipt_workspace && receipt\.contains\("startup"\)/,
+  );
   assert.ok(
     configurationRollback >= 0 && configurationRollback < startupRestore,
+  );
+});
+
+test("Windows service transitions are bounded and startup-stop safe", () => {
+  const service = readFileSync(
+    path.join(repositoryRoot, "apps", "service", "main.cpp"),
+    "utf8",
+  );
+  const control = readFileSync(
+    path.join(
+      repositoryRoot,
+      "src",
+      "platform",
+      "windows",
+      "service_control.cpp",
+    ),
+    "utf8",
+  );
+  assert.match(service, /std::atomic_bool service_stop_requested/);
+  assert.match(service, /registerBeginningAdvice/);
+  assert.match(service, /service_status\.dwCurrentState = SERVICE_START_PENDING/);
+  assert.match(service, /service_stop_requested\.load/);
+  assert.match(control, /transition_timeout_ms = 30'000/);
+  assert.match(control, /wait_for_start_resolution/);
+  assert.match(
+    control,
+    /wait_for_service_state\(\s*service, SERVICE_STOPPED,[\s\S]*?"stop"\)/,
+  );
+  assert.match(
+    control,
+    /wait_for_service_state\(\s*service, SERVICE_RUNNING,[\s\S]*?"start"\)/,
   );
 });

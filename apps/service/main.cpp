@@ -9,6 +9,7 @@
 #include <drogon/drogon.h>
 #include <nlohmann/json.hpp>
 
+#include <atomic>
 #include <charconv>
 #include <filesystem>
 #include <iostream>
@@ -34,6 +35,12 @@ struct Options {
     std::uint16_t port{47831};
     bool windows_service{false};
 };
+
+#ifdef _WIN32
+std::atomic_bool service_stop_requested{false};
+std::atomic_bool service_status_failed{false};
+void report_windows_service_running();
+#endif
 
 Options parse_options(int argc, char** argv) {
     Options options;
@@ -512,7 +519,23 @@ int run_control_plane(const Options& options) {
 
         std::cout << "UCI Arena Manager listening on http://127.0.0.1:" << options.port
                   << "\nClient key: " << auth->client_key_path().string() << '\n';
+#ifdef _WIN32
+        if (options.windows_service) {
+            app.registerBeginningAdvice([] {
+                if (service_stop_requested.load()) {
+                    drogon::app().quit();
+                    return;
+                }
+                report_windows_service_running();
+            });
+        }
+#endif
         app.run();
+#ifdef _WIN32
+        if (options.windows_service && service_status_failed.load()) {
+            return 1;
+        }
+#endif
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "arena-service: " << error.what() << '\n';
@@ -533,10 +556,23 @@ SERVICE_STATUS service_status{
     .dwWaitHint = 10'000,
 };
 
+void report_windows_service_running() {
+    service_status.dwCurrentState = SERVICE_RUNNING;
+    service_status.dwControlsAccepted = SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN;
+    service_status.dwCheckPoint = 0;
+    service_status.dwWaitHint = 0;
+    if (!SetServiceStatus(service_status_handle, &service_status)) {
+        service_status_failed.store(true);
+        drogon::app().quit();
+    }
+}
+
 void WINAPI service_control_handler(const DWORD control) {
     if (control == SERVICE_CONTROL_STOP || control == SERVICE_CONTROL_SHUTDOWN) {
+        service_stop_requested.store(true);
         service_status.dwCurrentState = SERVICE_STOP_PENDING;
         service_status.dwControlsAccepted = 0;
+        service_status.dwCheckPoint = 1;
         service_status.dwWaitHint = 10'000;
         SetServiceStatus(service_status_handle, &service_status);
         drogon::app().quit();
@@ -553,16 +589,23 @@ void WINAPI service_entry(DWORD argc, wchar_t** argv) {
     if (service_status_handle == nullptr) {
         return;
     }
-    service_status.dwCurrentState = SERVICE_RUNNING;
-    service_status.dwControlsAccepted = SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN;
-    service_status.dwWaitHint = 0;
-    SetServiceStatus(service_status_handle, &service_status);
+    service_stop_requested.store(false);
+    service_status_failed.store(false);
+    service_status.dwCurrentState = SERVICE_START_PENDING;
+    service_status.dwControlsAccepted = 0;
+    service_status.dwCheckPoint = 1;
+    service_status.dwWaitHint = 30'000;
+    if (!SetServiceStatus(service_status_handle, &service_status)) {
+        return;
+    }
 
     const int result = run_control_plane(service_options);
     service_status.dwCurrentState = SERVICE_STOPPED;
     service_status.dwControlsAccepted = 0;
     service_status.dwWin32ExitCode = result == 0 ? NO_ERROR : ERROR_SERVICE_SPECIFIC_ERROR;
     service_status.dwServiceSpecificExitCode = static_cast<DWORD>(result);
+    service_status.dwCheckPoint = 0;
+    service_status.dwWaitHint = 0;
     SetServiceStatus(service_status_handle, &service_status);
 }
 

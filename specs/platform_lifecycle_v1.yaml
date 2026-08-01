@@ -16,6 +16,15 @@ main_service:
       lifecycle: windows_service
       elevation: required_for_install_modify_update_uninstall
   linux_account: uci-arena
+  windows_stop_contract:
+    - Service startup remains START_PENDING until the loopback control plane
+      has entered its event loop; it never reports RUNNING before stop control
+      can be honored.
+    - A stop requested during startup remains latched and is honored as soon
+      as the event loop begins, so package replacement cannot strand the
+      service in STOP_PENDING.
+    - Typed service-control callers wait for the requested terminal SCM state
+      with a bounded deadline and report the observed state on failure.
 
 broker:
   privilege: root_or_local_system

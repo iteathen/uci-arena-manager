@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <winsvc.h>
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 
@@ -27,6 +28,98 @@ std::wstring wide(const std::string& value) {
     return result;
 }
 
+constexpr DWORD transition_timeout_ms = 30'000;
+
+SERVICE_STATUS_PROCESS query_service_status(const SC_HANDLE service) {
+    SERVICE_STATUS_PROCESS status{};
+    DWORD required = 0;
+    if (!QueryServiceStatusEx(
+            service,
+            SC_STATUS_PROCESS_INFO,
+            reinterpret_cast<LPBYTE>(&status),
+            sizeof(status),
+            &required)) {
+        throw std::runtime_error("Windows service status query failed with error " +
+                                 std::to_string(GetLastError()));
+    }
+    return status;
+}
+
+void wait_for_service_state(const SC_HANDLE service, const DWORD expected_state,
+                            const std::string& action) {
+    const ULONGLONG deadline = GetTickCount64() + transition_timeout_ms;
+    SERVICE_STATUS_PROCESS status = query_service_status(service);
+    while (status.dwCurrentState != expected_state) {
+        if (GetTickCount64() >= deadline) {
+            throw std::runtime_error(
+                "Windows service " + action + " timed out in SCM state " +
+                std::to_string(status.dwCurrentState));
+        }
+        const DWORD delay = std::clamp(status.dwWaitHint / 10, 50UL, 250UL);
+        Sleep(delay);
+        status = query_service_status(service);
+    }
+}
+
+SERVICE_STATUS_PROCESS wait_for_start_resolution(const SC_HANDLE service) {
+    const ULONGLONG deadline = GetTickCount64() + transition_timeout_ms;
+    SERVICE_STATUS_PROCESS status = query_service_status(service);
+    while (status.dwCurrentState == SERVICE_START_PENDING) {
+        if (GetTickCount64() >= deadline) {
+            throw std::runtime_error("Windows service start timed out in SCM state " +
+                                     std::to_string(status.dwCurrentState));
+        }
+        const DWORD delay = std::clamp(status.dwWaitHint / 10, 50UL, 250UL);
+        Sleep(delay);
+        status = query_service_status(service);
+    }
+    return status;
+}
+
+void start_service(const SC_HANDLE service) {
+    SERVICE_STATUS_PROCESS status = query_service_status(service);
+    if (status.dwCurrentState == SERVICE_RUNNING) {
+        return;
+    }
+    if (status.dwCurrentState == SERVICE_START_PENDING) {
+        status = wait_for_start_resolution(service);
+        if (status.dwCurrentState == SERVICE_RUNNING) {
+            return;
+        }
+    }
+    if (status.dwCurrentState == SERVICE_STOP_PENDING) {
+        wait_for_service_state(service, SERVICE_STOPPED, "stop");
+        status = query_service_status(service);
+    }
+    if (status.dwCurrentState != SERVICE_STOPPED) {
+        throw std::runtime_error("Windows service cannot start from SCM state " +
+                                 std::to_string(status.dwCurrentState));
+    }
+    if (!StartServiceW(service, 0, nullptr)) {
+        throw std::runtime_error("Windows service start failed with error " +
+                                 std::to_string(GetLastError()));
+    }
+    wait_for_service_state(service, SERVICE_RUNNING, "start");
+}
+
+void stop_service(const SC_HANDLE service) {
+    SERVICE_STATUS_PROCESS status = wait_for_start_resolution(service);
+    if (status.dwCurrentState == SERVICE_STOPPED) {
+        return;
+    }
+    if (status.dwCurrentState == SERVICE_STOP_PENDING) {
+        wait_for_service_state(service, SERVICE_STOPPED, "stop");
+        return;
+    }
+    SERVICE_STATUS control_status{};
+    if (!ControlService(service, SERVICE_CONTROL_STOP, &control_status) &&
+        GetLastError() != ERROR_SERVICE_NOT_ACTIVE) {
+        throw std::runtime_error("Windows service stop failed with error " +
+                                 std::to_string(GetLastError()));
+    }
+    wait_for_service_state(service, SERVICE_STOPPED, "stop");
+}
+
 }  // namespace
 
 int perform_service_action(const std::string& platform_name, const std::string& action) {
@@ -45,63 +138,30 @@ int perform_service_action(const std::string& platform_name, const std::string& 
         throw std::runtime_error("allowlisted Windows service cannot be opened");
     }
 
-    SERVICE_STATUS status{};
-    BOOL ok = TRUE;
-    if (action == "start") {
-        ok = StartServiceW(service, 0, nullptr);
-        if (!ok && GetLastError() == ERROR_SERVICE_ALREADY_RUNNING) {
-            ok = TRUE;
-        }
-    } else if (action == "stop") {
-        ok = ControlService(service, SERVICE_CONTROL_STOP, &status);
-        if (!ok && GetLastError() == ERROR_SERVICE_NOT_ACTIVE) {
-            ok = TRUE;
-        }
-    } else if (action == "restart") {
-        ok = ControlService(service, SERVICE_CONTROL_STOP, &status);
-        if (!ok && GetLastError() != ERROR_SERVICE_NOT_ACTIVE) {
+    try {
+        if (action == "start") {
+            start_service(service);
+        } else if (action == "stop") {
+            stop_service(service);
+        } else if (action == "restart") {
+            stop_service(service);
+            start_service(service);
+        } else if (action == "status") {
+            const int state = static_cast<int>(query_service_status(service).dwCurrentState);
             CloseServiceHandle(service);
             CloseServiceHandle(manager);
-            throw std::runtime_error("Windows service stop failed");
+            return state;
+        } else {
+            throw std::runtime_error("unsupported Windows service action: " + action);
         }
-        for (int attempt = 0; attempt < 100; ++attempt) {
-            SERVICE_STATUS_PROCESS current{};
-            DWORD required = 0;
-            QueryServiceStatusEx(
-                service,
-                SC_STATUS_PROCESS_INFO,
-                reinterpret_cast<LPBYTE>(&current),
-                sizeof(current),
-                &required);
-            if (current.dwCurrentState == SERVICE_STOPPED) {
-                break;
-            }
-            Sleep(50);
-        }
-        ok = StartServiceW(service, 0, nullptr);
-    } else {
-        SERVICE_STATUS_PROCESS current{};
-        DWORD required = 0;
-        ok = QueryServiceStatusEx(
-            service,
-            SC_STATUS_PROCESS_INFO,
-            reinterpret_cast<LPBYTE>(&current),
-            sizeof(current),
-            &required);
-        if (ok) {
-            CloseServiceHandle(service);
-            CloseServiceHandle(manager);
-            return static_cast<int>(current.dwCurrentState);
-        }
+        CloseServiceHandle(service);
+        CloseServiceHandle(manager);
+        return 0;
+    } catch (...) {
+        CloseServiceHandle(service);
+        CloseServiceHandle(manager);
+        throw;
     }
-    const DWORD error = ok ? ERROR_SUCCESS : GetLastError();
-    CloseServiceHandle(service);
-    CloseServiceHandle(manager);
-    if (!ok) {
-        throw std::runtime_error("Windows service action failed with error " +
-                                 std::to_string(error));
-    }
-    return 0;
 }
 
 }  // namespace arena::application
