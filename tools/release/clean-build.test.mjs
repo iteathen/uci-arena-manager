@@ -73,6 +73,26 @@ test("Complete acceptance uses the installed engine model contract", () => {
   );
 });
 
+test("Complete acceptance inspects each packaged service output by named id", () => {
+  const acceptance = readFileSync(new URL(
+    "../../tests/e2e/windows-complete-suite.ps1",
+    import.meta.url,
+  ), "utf8");
+  assert.match(
+    acceptance,
+    /\$bookCli, "api", "outputs", "inspect", "--id", \$bookApiOutput\.output_id/u,
+  );
+  assert.match(
+    acceptance,
+    /\$evidenceCli, "api", "outputs", "inspect", "--id", \$evidenceOutputId/u,
+  );
+  assert.equal(
+    acceptance.match(/operation -ne "outputs_inspect"/gu)?.length,
+    4,
+    "both positive and negative package checks must preserve the typed operation",
+  );
+});
+
 test("clean build requires an explicit Manager-Core scope locally", () => {
   assert.throws(
     () => cleanBuild({
