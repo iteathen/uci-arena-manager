@@ -14,6 +14,9 @@ resource_contract:
     - labels
   host_id_v1: local
   ids: uuid_v7
+  runtime_version:
+    authority: configured_suite_build_version
+    invariant: Manager status reports the version compiled into the running binary, never a source-level placeholder.
 
 resources:
   - host
@@ -50,6 +53,11 @@ engine_contract:
   rule: >
     UCI Arena Engine, LC0, Stockfish, and every other registered UCI engine use
     this same resource and interrogation path. Engine names never dispatch code.
+  installed_candidate_entrypoints:
+    rules:
+      - A verified managed-component receipt contributes an engine candidate through an explicit `uci` entrypoint.
+      - A component that declares the `uci_engine` capability may instead expose the same boundary through its managed `executable` entrypoint, as Stockfish packages do.
+      - Discovery never guesses from an arbitrary manifest entrypoint, filename, model label, or enumeration order.
   naming_boundary:
     product_engine_executable: uci_arena_engine
     requirements:
@@ -110,6 +118,9 @@ bot_contract:
     - Provider-owned bot policy configuration crosses Manager only as
       uci_arena_lichess_manager_options_v1. Unknown fields and arbitrary raw
       configuration are forbidden.
+    - A reserved opponent must be selected from the current provider-owned
+      owner projection. The dashboard rejects an absent owner before invoking
+      the adapter and refreshes provider state after every mutation.
     - Configuration mutation is atomically validated by the provider. Rated or
       newly enabled automatic outbound play requires separate explicit
       confirmation, and capacity cannot exceed qualified evidence.
@@ -191,6 +202,10 @@ canonical_game:
       and Chess960-aware legality and castling parsing.
     - Opening-suite plies, engine centipawn or mate projections, and principal
       variations remain aligned with the canonical move list.
+    - Live-game projections contain only running or interrupted game resources.
+      History contains terminal game resources and reconstructs replay solely
+      from persisted starting_fen and per_ply_fen snapshots; browser chess
+      rules never invent a position.
 
 tournament_contract:
   formats: [match, round_robin, gauntlet, swiss, sprt]
@@ -224,6 +239,11 @@ tournament_contract:
       - Opening-suite and Chess960 starting positions are validated and
         persisted before an engine process starts. Invalid input fails the
         competition without fabricating a game result.
+      - Every competition surface exposes its stable resource id so plans with
+        the same display name remain distinguishable.
+      - A never-started planned competition may be explicitly removed through
+        resource.remove with revision checking. Started or terminal
+        competitions and their game records are retained as durable history.
 
 managed_service_contract:
   identity: >
@@ -266,3 +286,15 @@ managed_service_contract:
     - Unknown future capabilities remain visible and are never assumed.
     - A not-yet-implemented service can be planned as unavailable without a fake executable.
     - Installation ownership remains with the service package unless an explicit installer capability is declared.
+
+report_contract:
+  action: report.generate
+  target: {kind: report, id: null}
+  formats: [html, pdf, csv, json, pgn]
+  scopes: [current_state, competition]
+  invariants:
+    - Generation snapshots only Manager-owned public projections at one explicit data cutoff; it never opens provider storage or includes secret values.
+    - A competition-scoped report accepts one existing match-plan or tournament UUID and includes only its persisted competition and game projections.
+    - Every report resource is immutable and records filters, generation parameters, schema version, data cutoff, source-content hashes, provenance, and fixed-format artifact metadata.
+    - A successful command renders every requested format before committing the report resource and durable event. Dry-run renders in memory and performs no filesystem or database write.
+    - Artifact downloads resolve only the report UUID and one allowlisted format, verify the persisted digest, and require the same authenticated local session as other read APIs.

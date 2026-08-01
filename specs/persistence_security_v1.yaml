@@ -21,6 +21,14 @@ persistence:
   retention:
     behavior: bounded_incremental_deletion
     active_game_protection: true
+  report_artifacts:
+    root: manager_data_root/reports/report_uuid
+    filenames: fixed_by_allowlisted_format
+    rules:
+      - Render into a unique staging directory and atomically activate the complete immutable artifact set before committing the report resource.
+      - Never accept a caller-provided output path, filename, media type, or extension.
+      - Reject symlinks, non-regular files, missing files, and digest mismatches before an artifact is served.
+      - A failed database commit removes the newly activated artifact directory; a dry-run creates no file.
 
 secrets:
   storage: libsodium_encrypted_files

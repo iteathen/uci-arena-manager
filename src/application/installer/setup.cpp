@@ -26,6 +26,7 @@
 
 #include "arena/adapters/uci_process.hpp"
 #include "arena/application/broker_policy.hpp"
+#include "arena/application/installer/credential_recovery.hpp"
 #include "arena/application/process_supervisor.hpp"
 #include "arena/platform/workspace_permissions.hpp"
 
@@ -813,8 +814,9 @@ json validate_manager_service_api(const json& declaration,
         "outputs_list",
         "status",
     };
-    if (identifier_set_field(declaration, "operations") !=
-        required_operations) {
+    const std::set<std::string> operations =
+        identifier_set_field(declaration, "operations");
+    if (!std::ranges::includes(operations, required_operations)) {
         throw std::runtime_error(
             "standalone service Manager API operations are incomplete");
     }
@@ -2553,24 +2555,15 @@ json invoke_book_forge_retry_auth(const SetupPaths& paths, const json& receipt) 
             "Book Forge credential recovery configuration is unavailable");
     }
     arena::application::ProcessSupervisor process;
-    const json response = process.run_json(
-        node, active_root,
-        {cli.string(), "acquisition", "retry-auth", "--workspace", workspace.string(),
-         "--config", configuration.string(), "--json"},
-        std::chrono::seconds(30));
-    const json acquisition = response.value("acquisition", json::object());
-    if (!response.value("ok", false) || !response.contains("retried") ||
-        !response.at("retried").is_number_unsigned() ||
-        !acquisition.value("credentialConfigured", false) ||
-        acquisition.value("authState", "") != "ready") {
-        throw std::runtime_error(
-            "Book Forge did not confirm ready credential configuration");
-    }
-    return {
-        {"retried", response.at("retried")},
-        {"credential_configured", true},
-        {"auth_state", "ready"},
-    };
+    return recover_book_forge_credential(
+        [&] {
+            return process.run_json(
+                node, active_root,
+                {cli.string(), "acquisition", "retry-auth", "--workspace", workspace.string(),
+                 "--config", configuration.string(), "--json"},
+                std::chrono::seconds(10));
+        },
+        3, std::chrono::milliseconds(250));
 }
 
 json refresh_import_consumers(const SetupPaths& paths, const std::string& kind) {
@@ -2760,7 +2753,8 @@ bool supports_startup_capability(const json& receipt, const std::string_view cap
 }
 
 json invoke_provider_startup(const SetupPaths& paths, const json& receipt,
-                             const std::string& action) {
+                             const std::string& action,
+                             const bool trusted_existing_receipt_workspace = false) {
     const std::string component_id = receipt.at("component_id").get<std::string>();
     const fs::path active_root = receipt.at("active_root").get<std::string>();
     const json manifest =
@@ -2787,8 +2781,17 @@ json invoke_provider_startup(const SetupPaths& paths, const json& receipt,
         throw std::runtime_error("startup-capable component has no managed workspace: " +
                                  component_id);
     }
-    const fs::path workspace = normalized_absolute(data_paths.at(0).get<std::string>());
-    if (!within(paths.workspace_root, workspace)) {
+    const fs::path recorded_workspace = data_paths.at(0).get<std::string>();
+    if (!recorded_workspace.is_absolute()) {
+        throw std::runtime_error("startup-capable component workspace is not absolute: " +
+                                 component_id);
+    }
+    const fs::path workspace = normalized_absolute(recorded_workspace);
+    const bool trusted_receipt_workspace =
+        trusted_existing_receipt_workspace && receipt.contains("startup") &&
+        receipt.at("startup").is_object() &&
+        receipt.at("startup").value("installed", false);
+    if (!within(paths.workspace_root, workspace) && !trusted_receipt_workspace) {
         throw std::runtime_error(
             "startup-capable component workspace is outside the selected workspace "
             "root");
@@ -3638,8 +3641,8 @@ json SetupEngine::apply(const json&, const json& plan, const SetupPaths& paths,
                         previous_receipt;
                     journal["actions"].back()["previous_startup_transition_started"] = true;
                     write_json_atomic(journal_path, journal);
-                    static_cast<void>(
-                        invoke_provider_startup(paths, previous_receipt, "uninstall"));
+                    static_cast<void>(invoke_provider_startup(
+                        paths, previous_receipt, "uninstall", true));
                     journal["actions"].back()["previous_startup_uninstalled"] = true;
                     write_json_atomic(journal_path, journal);
                 }
@@ -3950,7 +3953,7 @@ json SetupEngine::apply(const json&, const json& plan, const SetupPaths& paths,
                 action->contains("previous_startup_receipt")) {
                 try {
                     static_cast<void>(invoke_provider_startup(
-                        paths, action->at("previous_startup_receipt"), "install"));
+                        paths, action->at("previous_startup_receipt"), "install", true));
                     (*action)["previous_startup_restored"] = true;
                 } catch (const std::exception& startup_error) {
                     append_startup_rollback_failure(startup_error.what());

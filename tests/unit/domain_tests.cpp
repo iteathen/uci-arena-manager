@@ -42,10 +42,11 @@ json manager_service_api() {
         {"arguments", {"api"}},
         {"operations",
          {"describe",
-          "status",
-          "outputs_list",
-          "outputs_inspect",
-          "config_validate"}},
+           "status",
+           "outputs_list",
+           "outputs_inspect",
+           "config_validate",
+           "acquisition_retry_auth"}},
         {"output_schema", "uci_arena_service_output_v1"},
     };
 }
@@ -358,6 +359,13 @@ TEST_CASE("installed service receipts reconcile exact private runtime entrypoint
     REQUIRE(
         discovered.at("services")
             .at(0)
+            .at("manager_integration_api")
+            .at("operations")
+            .at(5) ==
+        "acquisition_retry_auth");
+    REQUIRE(
+        discovered.at("services")
+            .at(0)
             .at("manager_integration_api_source") ==
         "signed_component_manifest");
 
@@ -483,6 +491,79 @@ TEST_CASE("installed reconciliation preserves one existing manual service profil
                     return change.value("state", "") ==
                            "manual_configuration_preserved";
                 }));
+    }
+    fs::remove_all(root);
+}
+
+TEST_CASE("control-plane status reports the configured build version") {
+    const fs::path root = fs::temp_directory_path() /
+        ("arena-version-status-" + arena::domain::uuid_v7());
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(
+            root / "arena.db");
+        arena::application::ControlPlane control_plane(store);
+        control_plane.initialize();
+        REQUIRE(control_plane.status().at("version") == ARENA_VERSION);
+    }
+    fs::remove_all(root);
+}
+
+TEST_CASE("Manager reports render immutable verified artifacts without dry-run writes") {
+    const fs::path root = fs::temp_directory_path() /
+        ("arena-report-generation-" + arena::domain::uuid_v7());
+    const fs::path data = root / "data";
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(
+            data / "arena.db");
+        arena::application::ControlPlane control_plane(store);
+        control_plane.initialize();
+        control_plane.reconcile_installed_services(data);
+
+        const auto command = [](const bool dry_run) {
+            return json{
+                {"schema_version", 1},
+                {"request_id", arena::domain::uuid_v7()},
+                {"idempotency_key", arena::domain::uuid_v7()},
+                {"target", {{"kind", "report"}, {"id", nullptr}}},
+                {"action", "report.generate"},
+                {"dry_run", dry_run},
+                {"parameters",
+                 {
+                     {"display_name", "Acceptance report"},
+                     {"scope", "current_state"},
+                     {"competition_id", nullptr},
+                     {"formats", {"html", "pdf", "csv", "json", "pgn"}},
+                 }},
+            };
+        };
+
+        const json preview = control_plane.submit(command(true), "test");
+        REQUIRE(preview.at("dry_run") == true);
+        REQUIRE(control_plane.list("report").empty());
+        REQUIRE_FALSE(fs::exists(data / "reports"));
+
+        const json generated = control_plane.submit(command(false), "test");
+        const json& resource = generated.at("resource");
+        const std::string id = resource.at("id");
+        REQUIRE(resource.at("kind") == "report");
+        REQUIRE(resource.at("data").at("artifacts").size() == 5);
+        REQUIRE(control_plane.list("report").size() == 1);
+        for (const auto& format : {"html", "pdf", "csv", "json", "pgn"}) {
+            const auto artifact = control_plane.report_artifact(id, format);
+            REQUIRE_FALSE(artifact.content.empty());
+            REQUIRE(artifact.filename.find(id) != std::string::npos);
+        }
+        REQUIRE(control_plane.report_artifact(id, "pdf").content.starts_with("%PDF-"));
+
+        std::ofstream(data / "reports" / id / "report.json", std::ios::app)
+            << "tampered";
+        try {
+            static_cast<void>(control_plane.report_artifact(id, "json"));
+            FAIL("tampered report artifact was served");
+        } catch (const arena::application::CommandFailure& failure) {
+            REQUIRE(failure.code() == "report_artifact_unavailable");
+            REQUIRE(failure.http_status() == 409);
+        }
     }
     fs::remove_all(root);
 }

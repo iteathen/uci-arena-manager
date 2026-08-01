@@ -84,6 +84,7 @@ add_library(arena_core
   src/application/service_catalog.cpp
   src/application/process_supervisor.cpp
   src/application/tournament_executor.cpp
+  src/application/installer/credential_recovery.cpp
   src/application/installer/setup.cpp
   src/adapters/sqlite_store.cpp
   src/adapters/uci_process.cpp
@@ -98,6 +99,7 @@ target_include_directories(arena_core
 )
 target_compile_definitions(
   arena_core
+  PUBLIC ARENA_VERSION="${ARENA_VERSION}"
   PRIVATE ARENA_TUF_ROOT_SHA256="${ARENA_TUF_ROOT_SHA256}"
 )
 

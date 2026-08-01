@@ -706,7 +706,7 @@ json normalized_manager_service_api(const json& declaration) {
                 "installed service Manager API operations are malformed");
         }
     }
-    if (operations != expected) {
+    if (!std::ranges::includes(operations, expected)) {
         throw std::runtime_error(
             "installed service Manager API operations are incomplete");
     }

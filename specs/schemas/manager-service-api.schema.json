@@ -27,17 +27,18 @@
     "operations": {
       "type": "array",
       "items": {
-        "enum": [
-          "describe",
-          "status",
-          "outputs_list",
-          "outputs_inspect",
-          "config_validate"
-        ]
+        "type": "string",
+        "pattern": "^[A-Za-z0-9._-]+$"
       },
       "minItems": 5,
-      "maxItems": 5,
-      "uniqueItems": true
+      "uniqueItems": true,
+      "allOf": [
+        {"contains": {"const": "describe"}},
+        {"contains": {"const": "status"}},
+        {"contains": {"const": "outputs_list"}},
+        {"contains": {"const": "outputs_inspect"}},
+        {"contains": {"const": "config_validate"}}
+      ]
     },
     "output_schema": {"const": "uci_arena_service_output_v1"}
   }

@@ -42,8 +42,8 @@ import { EnginesPage } from './pages/EnginesPage'
 import { LogsPage } from './pages/LogsPage'
 import { MatchPlannerPage } from './pages/MatchPlannerPage'
 import { TournamentPage } from './pages/TournamentPage'
+import { GameResourcesPage } from './pages/GameResourcesPage'
 import { OverviewPage } from './pages/OverviewPage'
-import { ResourcePage } from './pages/ResourcePage'
 import { ServicesPage } from './pages/ServicesPage'
 import { AuditPage } from './pages/AuditPage'
 import { ReportsPage } from './pages/ReportsPage'
@@ -68,9 +68,14 @@ const nav = [
   { key: 'audit', label: 'Audit', icon: IconArchive },
 ] as const
 
-function pageFromLocation() {
+export function pageFromLocation() {
   const value = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('page')
   return nav.some((item) => item.key === value) ? value! : 'overview'
+}
+
+export function locationHasPairingToken() {
+  const value = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('pair')
+  return Boolean(value?.match(/^[a-f0-9]{64}$/))
 }
 
 export default function App() {
@@ -105,11 +110,16 @@ export default function App() {
 
   useEffect(() => {
     const initialAuthentication = window.setTimeout(authenticate, 0)
-    const handlePairingNavigation = () => authenticate()
-    window.addEventListener('hashchange', handlePairingNavigation)
+    const handleLocationChange = () => {
+      setPage(pageFromLocation())
+      if (locationHasPairingToken()) authenticate()
+    }
+    window.addEventListener('hashchange', handleLocationChange)
+    window.addEventListener('popstate', handleLocationChange)
     return () => {
       window.clearTimeout(initialAuthentication)
-      window.removeEventListener('hashchange', handlePairingNavigation)
+      window.removeEventListener('hashchange', handleLocationChange)
+      window.removeEventListener('popstate', handleLocationChange)
     }
   }, [authenticate])
 
@@ -128,7 +138,9 @@ export default function App() {
 
   const navigate = useCallback((next: string) => {
     setPage(next)
-    history.replaceState(null, '', `#page=${next}`)
+    if (pageFromLocation() !== next) {
+      history.pushState(null, '', `#page=${next}`)
+    }
     close()
   }, [close])
 
@@ -145,25 +157,11 @@ export default function App() {
       case 'bots':
         return <BotsPage navigate={navigate} />
       case 'live':
-        return (
-          <ResourcePage
-            title="Live games"
-            description="Canonical positions, clocks, evaluations, and engine state."
-            kind="game"
-            emptyAction={{ label: 'Plan a match', onClick: () => navigate('planner') }}
-          />
-        )
+        return <GameResourcesPage mode="live" navigate={navigate} />
       case 'tournaments':
         return <TournamentPage navigate={navigate} />
       case 'history':
-        return (
-          <ResourcePage
-            title="Game history & replay"
-            description="Replay persisted games from backend-authoritative FEN snapshots."
-            kind="game"
-            emptyAction={{ label: 'Plan a match', onClick: () => navigate('planner') }}
-          />
-        )
+        return <GameResourcesPage mode="history" navigate={navigate} />
       case 'logs':
         return <LogsPage />
       case 'statistics':
@@ -269,7 +267,10 @@ export default function App() {
               label={item.label}
               leftSection={<item.icon size={18} stroke={1.8} />}
               active={page === item.key}
-              onClick={() => navigate(item.key)}
+              onClick={(event) => {
+                event.preventDefault()
+                navigate(item.key)
+              }}
             />
           ))}
           <Text className="nav-section" mt="lg">
@@ -283,7 +284,10 @@ export default function App() {
               label={item.label}
               leftSection={<item.icon size={18} stroke={1.8} />}
               active={page === item.key}
-              onClick={() => navigate(item.key)}
+              onClick={(event) => {
+                event.preventDefault()
+                navigate(item.key)
+              }}
             />
           ))}
         </ScrollArea>

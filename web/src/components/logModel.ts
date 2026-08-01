@@ -1,0 +1,17 @@
+export const logResourceTypeOptions = [
+  { value: 'all', label: 'All resources' },
+  { value: 'host', label: 'Hosts' },
+  { value: 'engine', label: 'Engines' },
+  { value: 'bot', label: 'Bots' },
+  { value: 'managed_service', label: 'Services' },
+  { value: 'health_probe', label: 'Health probes' },
+  { value: 'match_plan', label: 'Match plans' },
+  { value: 'tournament', label: 'Tournaments' },
+  { value: 'game', label: 'Games' },
+  { value: 'operation', label: 'Operations' },
+  { value: 'report', label: 'Reports' },
+  { value: 'artifact', label: 'Artifacts' },
+  { value: 'secret_reference', label: 'Secret references' },
+  { value: 'log_source', label: 'Log sources' },
+  { value: 'health_snapshot', label: 'Health snapshots' },
+] as const

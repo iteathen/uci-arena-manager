@@ -1,11 +1,13 @@
 import { IconRefresh, IconSearch } from '@tabler/icons-react'
-import { Alert, Button, Group, Paper, Select, Text, TextInput } from '@mantine/core'
+import { Alert, Anchor, Button, Group, Paper, Select, Text, TextInput } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useMemo, useRef, useState } from 'react'
 import { api } from '../api/client'
 import { EmptyState } from '../components/EmptyState'
+import { logResourceTypeOptions } from '../components/logModel'
 import { PageHeader } from '../components/PageHeader'
+import { resourcePageForKind } from '../components/resourceNavigation'
 
 export function LogsPage() {
   const parent = useRef<HTMLDivElement>(null)
@@ -65,16 +67,11 @@ export function LogsPage() {
             onChange={(event) => setQuery(event.currentTarget.value)}
           />
           <Select
+            label="Resource type"
+            aria-label="Resource type"
             value={source}
             onChange={setSource}
-            data={[
-              { value: 'all', label: 'All resources' },
-              { value: 'engine', label: 'Engines' },
-              { value: 'managed_service', label: 'Services' },
-              { value: 'bot', label: 'Bots' },
-              { value: 'match_plan', label: 'Match plans' },
-              { value: 'tournament', label: 'Tournaments' },
-            ]}
+            data={[...logResourceTypeOptions]}
           />
         </Group>
         {!lines.length ? (
@@ -99,9 +96,17 @@ export function LogsPage() {
                     <Text size="xs" className="log-level level-info">
                       EVENT
                     </Text>
-                    <Text size="xs" c="dimmed" ff="monospace">
-                      {event.resource?.kind ?? event.stream}
-                    </Text>
+                    {event.resource ? (
+                      <Anchor
+                        size="xs"
+                        ff="monospace"
+                        href={`#page=${resourcePageForKind(event.resource.kind)}`}
+                      >
+                        {event.resource.kind}
+                      </Anchor>
+                    ) : (
+                      <Text size="xs" c="dimmed" ff="monospace">{event.stream}</Text>
+                    )}
                     <Text size="sm" ff="monospace">
                       {event.kind}
                     </Text>

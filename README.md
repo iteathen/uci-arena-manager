@@ -189,6 +189,13 @@ incomplete startup restoration is reported as `rollback_failed`. Linux DEB/RPM
 lifecycle scripts perform the equivalent systemd stop, daemon-reload, enable,
 and start; portable `.run` installers use the same `arena-setup` operations and
 catalog.
+
+When a saved Lichess token-file reference is available, Book Forge activation
+uses only its public `acquisition retry-auth` response. A transient `blocked`
+state is retried at most three times with a short bounded delay; malformed or
+credential-missing responses fail immediately, and the transaction restores
+the prior payload and startup state. Failure text identifies only the rejected
+public field and never includes the token path or token contents.
 For an all-users Windows or native Linux installation, `arena-setup` grants
 only the Manager service account inherited access to each generated Book Forge,
 Evidence Service, or Lichess workspace: `LOCAL SERVICE` on Windows or

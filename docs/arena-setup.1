@@ -96,5 +96,9 @@ arena-setup --json verify
 .SH SECURITY
 Lichess authentication is a token-file path reference. The Manager and
 installer do not open, copy, hash, print, or place token contents in arguments.
+Book Forge activation accepts only a typed ready response from its public
+retry-auth operation. A reported blocked state receives at most three bounded
+attempts; malformed or credential-missing responses fail immediately and the
+installer rolls back without printing the token path.
 .SH SEE ALSO
 .BR arena (1)

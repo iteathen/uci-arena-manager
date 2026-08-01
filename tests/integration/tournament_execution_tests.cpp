@@ -468,3 +468,68 @@ TEST_CASE("opening suite moves and bounded evaluation adjudication are applied")
     }
     fs::remove_all(root);
 }
+
+TEST_CASE("only never-started competition plans can be removed") {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() /
+        ("arena-competition-removal-" + arena::domain::uuid_v7());
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(root / "arena.db");
+        arena::application::ControlPlane control_plane(store);
+        control_plane.initialize();
+        const std::vector<std::string> engines{
+            register_engine(control_plane, "Removal Alpha", {"--delay-ms", "100"}),
+            register_engine(control_plane, "Removal Beta", {"--delay-ms", "100"}),
+        };
+
+        const json removable = create_competition(
+            control_plane, "match.plan", "match_plan", engines, 1);
+        const std::string removable_id = removable.at("resource").at("id");
+        static_cast<void>(control_plane.submit(
+            command(
+                "resource.remove",
+                "match_plan",
+                removable_id,
+                json::object(),
+                removable.at("resource").at("revision")),
+            "test"));
+        REQUIRE(resource_by_id(
+                    control_plane, "match_plan", removable_id).is_null());
+
+        const json retained = create_competition(
+            control_plane, "match.plan", "match_plan", engines, 1);
+        const std::string retained_id = retained.at("resource").at("id");
+        const json running = control_plane.submit(
+            command(
+                "match.start",
+                "match_plan",
+                retained_id,
+                json::object(),
+                retained.at("resource").at("revision")),
+            "test");
+        REQUIRE_THROWS_AS(
+            control_plane.submit(
+                command(
+                    "resource.remove",
+                    "match_plan",
+                    retained_id,
+                    json::object(),
+                    running.at("resource").at("revision")),
+                "test"),
+            arena::application::CommandFailure);
+        const json current = resource_by_id(
+            control_plane, "match_plan", retained_id);
+        static_cast<void>(control_plane.submit(
+            command(
+                "match.cancel",
+                "match_plan",
+                retained_id,
+                json::object(),
+                current.at("revision")),
+            "test"));
+        REQUIRE(wait_for_lifecycle(
+                    control_plane, "match_plan", retained_id, "cancelled")
+                    .at("data").at("lifecycle") == "cancelled");
+    }
+    fs::remove_all(root);
+}

@@ -13,6 +13,12 @@
 
 namespace arena::application {
 
+struct ReportArtifact final {
+    std::string content;
+    std::string media_type;
+    std::string filename;
+};
+
 class CommandFailure final : public std::runtime_error {
   public:
     CommandFailure(std::string code, std::string detail, int http_status);
@@ -51,6 +57,9 @@ class ControlPlane final {
     [[nodiscard]] nlohmann::json bot_candidates() const;
     [[nodiscard]] nlohmann::json save_bot_token_reference(
         const std::filesystem::path& path) const;
+    [[nodiscard]] ReportArtifact report_artifact(
+        const std::string& report_id,
+        const std::string& format) const;
 
   private:
     [[nodiscard]] nlohmann::json register_engine(
@@ -69,6 +78,9 @@ class ControlPlane final {
         const nlohmann::json& request,
         const std::string& actor);
     [[nodiscard]] nlohmann::json manage_competition(
+        const nlohmann::json& request,
+        const std::string& actor);
+    [[nodiscard]] nlohmann::json generate_report(
         const nlohmann::json& request,
         const std::string& actor);
 

@@ -221,8 +221,10 @@ standalone_service_contracts:
       declaration.
     - The declaration uses uci_arena_manager_service_api_v1 version 1.x over
       CLI JSON, selects the verified cli entrypoint with the argv prefix
-      [api], declares all five required operations, and emits only
-      uci_arena_service_output_v1 output records.
+      [api], declares all five required operations as a subset, and emits only
+      uci_arena_service_output_v1 output records. Additional unique typed
+      operation identifiers are permitted so service-owned capabilities can
+      extend the API without weakening the required common surface.
     - Manager service API metadata is covered by the immutable component
       manifest and provider attestation; installer or Manager code never
       synthesizes it for an installed provider.
@@ -280,6 +282,13 @@ setup:
       - Upgrade carries the installed selection forward, restages every
         selected component from the new signed catalog, and does not silently
         reinstall a component the operator previously removed.
+      - Upgrade preserves the exact workspace recorded by a validated existing
+        provider receipt even when shell-folder redirection or a corrected
+        installer default resolves a different workspace root. This narrow
+        compatibility authority applies only while uninstalling or restoring
+        that receipt's already-installed startup registration; it never
+        authorizes a browser, catalog, or new component to select an arbitrary
+        outside-root path.
       - Linux packages carry arena-setup, the retained signed catalog, and
         lifecycle integration; distro-native service scripts and arena-setup
         provide equivalent component install, repair, upgrade, and removal.
@@ -331,6 +340,14 @@ packaging:
         outputs before rebuilding, run native tests once for the shared Windows
         binary set, and invoke the existing CPack deployment generators for
         each fixed package scope.
+      - The Windows clean-build entrypoint resolves CMake, CPack, and CTest as
+        one toolchain: an explicit ARENA_CMAKE_EXECUTABLE wins, followed by the
+        newest supported repository-local portable CMake, followed by PATH.
+        Per-user packaging still fails closed below CMake 4.3.
+      - Complete development composition resolves the pinned Cosign verifier
+        from an explicit COSIGN_EXECUTABLE, then the exact repository-local
+        build/tooling/cosign-3.0.6 payload, then PATH. Missing verification
+        tooling or any provenance failure remains blocking.
       - Pull-request CI and the protected suite release workflow install the
         same explicit Linux native-build prerequisite set before vcpkg
         dependency bootstrap. Release-only package validators may extend that
@@ -457,9 +474,11 @@ packaging:
         user profile has an MSI-owned HKCU registry key path, and ICE38 is a
         blocking validation rather than a suppressed warning.
       - Burn passes the fixed package scope explicitly to arena-setup together
-        with every scope-owned root. The explicit scope must match the bundle,
-        controls service-account ACL behavior, and is preserved for Modify,
-        repair, update, and uninstall.
+        with every scope-owned root: install, data, cache, and knowledge. The
+        provider workspace is not package-scope-owned and retains arena-setup's
+        native default unless an operator explicitly selects an override. The
+        explicit scope must match the bundle, controls service-account ACL
+        behavior, and is preserved for Modify, repair, update, and uninstall.
       - The arena executable directory is added to the PATH matching the
         selected install scope through an MSI-owned Environment row and is
         removed from that same PATH on uninstall. Setup never rewrites
@@ -501,6 +520,11 @@ packaging:
       - The arena-setup executable package uses no Burn console-redirection
         protocol so inherited standard handles cannot keep the bootstrapper
         blocked after arena-setup exits.
+      - Every Burn arena-setup invocation passes an operation-specific sibling
+        of its package log path through the typed --result-file option. Install,
+        repair, and uninstall use distinct suffixes so rollback cannot overwrite
+        the forward operation's bounded JSON result or its actionable setup
+        error with a later cleanup result.
       - Install, repair, and uninstall resolve the embedded catalog and TUF
         metadata from the currently executing Burn package cache directory.
         They never depend on the bootstrapper launch directory or a retained
@@ -533,6 +557,11 @@ packaging:
       - The bundle feature-selection state is default-on for Engine, Book
         Forge, Evidence Service, and Lichess adapter, is available again from
         Modify, and is preserved across a major upgrade.
+      - The bundle does not synthesize a workspace root from Burn shell-folder
+        variables. It omits the optional override so arena-setup owns its native
+        user-profile default, which is not redirected through Documents or
+        OneDrive. Existing receipt-owned workspaces remain authoritative on
+        upgrade regardless of that default.
   artifact_names:
     - UCI-Arena-Setup-<version>-windows-x64-user-online.exe
     - UCI-Arena-Setup-<version>-windows-x64-user-offline.exe
@@ -788,8 +817,15 @@ local_import:
       never opens the referenced file, and a later token-path import
       transaction regenerates the installed Book Forge configuration and
       invokes Book Forge's bounded public acquisition retry-auth operation.
-      The provider response must confirm a ready credential configuration;
-      failure rolls back the locator and generated configuration.
+      Apply, repair, and upgrade may make at most three ten-second invocations,
+      with a 250-millisecond bounded retry delay when a well-formed response
+      reports that authentication is still blocked. A malformed response,
+      missing credential configuration, or provider command failure stops
+      immediately. The provider response must confirm a ready credential
+      configuration; exhaustion rolls back the locator, generated
+      configuration, payload, receipt, and prior startup state. Failure detail
+      identifies only the rejected public response field and never includes a
+      credential value or token-file path.
     - Restaurant remains visible as detect-only and is never registered, copied, installed, started, or controlled.
 
 vm_mounts:
@@ -1061,6 +1097,10 @@ transaction:
       - If the operating system refuses the final Manager service restoration,
         setup returns an error and leaves verified receipts as the authoritative
         recovery state; it never claims an exact rollback that did not occur.
+      - Windows Manager stop/start transitions wait for the requested SCM state
+        within a bounded deadline. A service stop that arrives while the HTTP
+        event loop is starting is latched and completed rather than leaving an
+        unchanging STOP_PENDING service for MSI or arena-setup to force-kill.
   installed_engine_handoff:
     owner: arena_setup
     rules:

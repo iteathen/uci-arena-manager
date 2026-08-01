@@ -1,9 +1,10 @@
 import { IconRefresh } from '@tabler/icons-react'
-import { Alert, Button, Code, Paper, ScrollArea, Table, Text } from '@mantine/core'
+import { Alert, Anchor, Button, Code, Paper, ScrollArea, Table, Text } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { EmptyState } from '../components/EmptyState'
 import { PageHeader } from '../components/PageHeader'
+import { resourcePageForKind } from '../components/resourceNavigation'
 
 export function AuditPage() {
   const events = useQuery({
@@ -57,9 +58,12 @@ export function AuditPage() {
                     <Table.Td fw={650}>{event.kind}</Table.Td>
                     <Table.Td>
                       {event.resource ? (
-                        <Text size="sm">
+                        <Anchor
+                          size="sm"
+                          href={`#page=${resourcePageForKind(event.resource.kind)}`}
+                        >
                           {event.resource.kind} · {event.resource.id.slice(0, 13)}…
-                        </Text>
+                        </Anchor>
                       ) : (
                         <Text size="sm" c="dimmed">system</Text>
                       )}

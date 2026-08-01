@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   availableCompetitionActions,
+  competitionPairingPreview,
   competitionPlanTarget,
   competitionScheduleSize,
 } from './competitionModel'
@@ -34,5 +35,20 @@ describe('competition operator model', () => {
     expect(competitionScheduleSize('gauntlet', 4, 2, 1)).toBe(6)
     expect(competitionScheduleSize('swiss', 5, 1, 3)).toBe(6)
     expect(competitionScheduleSize('sprt', 2, 20, 1)).toBe(20)
+  })
+
+  it('describes Swiss and color-reversed capacity truthfully', () => {
+    expect(competitionPairingPreview('swiss', 6, 5)).toEqual({
+      label: 'Games / round',
+      value: '2',
+    })
+    expect(competitionPairingPreview('round_robin', 12, 4)).toEqual({
+      label: 'Color-reversed sets',
+      value: '6',
+    })
+    expect(competitionPairingPreview('head_to_head', 3, 2)).toEqual({
+      label: 'Color-reversed sets',
+      value: '1 + 1 unpaired game',
+    })
   })
 })

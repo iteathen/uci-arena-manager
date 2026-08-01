@@ -1,5 +1,6 @@
 #include "arena/adapters/sqlite_store.hpp"
 #include "arena/application/control_plane.hpp"
+#include "arena/application/service_catalog.hpp"
 #include "arena/domain/uuid.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -107,6 +108,50 @@ void seed_managed_service(
             command_id,
             "{}",
         });
+}
+
+json register_installed_evidence_and_status(
+    arena::application::ControlPlane& control_plane,
+    const std::shared_ptr<arena::adapters::SqliteStore>& store,
+    const fs::path& root) {
+    const fs::path cli = root / "evidence-cli.mjs";
+    const fs::path workspace = root / "uci_arena_evidence-workspace";
+    fs::create_directories(workspace);
+    std::ofstream(cli) << "mock";
+    const json manager_api{
+        {"schema", "uci_arena_manager_service_api_v1"},
+        {"version", "1.0"},
+        {"transport", "cli_json"},
+        {"entrypoint", "cli"},
+        {"arguments", {"api"}},
+        {"operations",
+         {"describe",
+          "status",
+          "outputs_list",
+          "outputs_inspect",
+          "config_validate",
+          "orchestration_status",
+          "campaign_enqueue",
+          "job_control"}},
+        {"output_schema", "uci_arena_service_output_v1"},
+    };
+    const json data = arena::application::ServiceCatalog::normalize_registration({
+        {"profile_id", "uci_arena_evidence"},
+        {"node_executable", ARENA_MOCK_SERVICE_PATH},
+        {"cli_entrypoint", cli.string()},
+        {"workspace", workspace.string()},
+        {"installed_component_id", "uci_arena_evidence.service"},
+        {"installed_component_version", "0.3.0"},
+        {"manager_integration_api", manager_api},
+        {"manager_integration_api_source", "signed_component_manifest"},
+    });
+    const std::string id = arena::domain::uuid_v7();
+    seed_managed_service(store, id, data, {{"managed_by", "arena-setup"}});
+    return control_plane.submit(
+        command(
+            "service.status",
+            {{"kind", "managed_service"}, {"id", id}}),
+        "test");
 }
 
 }  // namespace
@@ -257,11 +302,8 @@ TEST_CASE("Book Forge and Evidence outputs cross only validated public contracts
                     .at("manifest_sha256") ==
             std::string(64, 'a'));
 
-        const json evidence = register_and_status(
-            control_plane,
-            root,
-            "uci_arena_evidence",
-            "evidence-cli.mjs");
+        const json evidence = register_installed_evidence_and_status(
+            control_plane, store, root);
         const json& evidence_data = evidence.at("resource").at("data");
         REQUIRE(evidence_data.at("integration_state") == "available");
         REQUIRE(evidence_data.at("observed_state") == "running");
@@ -292,6 +334,9 @@ TEST_CASE("Book Forge and Evidence outputs cross only validated public contracts
         REQUIRE(
             evidence_data.at("manager_api_projection").at("schema") ==
             "uci_arena_manager_service_api_v1");
+        REQUIRE(
+            evidence_data.at("manager_api_projection")
+                .at("operations").size() == 8);
         REQUIRE(
             evidence_data.at("orchestration_projection")
                 .at("targets").size() == 1);

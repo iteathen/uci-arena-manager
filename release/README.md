@@ -128,7 +128,14 @@ catalog; changed or external unsigned catalogs still fail closed.
 The command requires a clean tracked worktree, runs the spec and neutral naming
 gates, builds and tests the dashboard and Manager Core, cleans the native build
 before recompiling, and invokes the existing CPack generators. Windows builds
-require WiX `6.0.2`; Linux builds require the platform package toolchain.
+require WiX `6.0.2`; Linux builds require the platform package toolchain. The
+Windows clean-build entrypoint uses `ARENA_CMAKE_EXECUTABLE` when supplied,
+otherwise selects the newest supported portable CMake under
+`build/toolchain/cmake-<version>/cmake-<version>-windows-x86_64/bin`, then falls
+back to `PATH`. CMake, CPack, and CTest always come from that same toolchain.
+Complete development composition likewise uses `COSIGN_EXECUTABLE` when set,
+then the pinned `build/tooling/cosign-3.0.6/cosign-windows-amd64.exe`, then
+`PATH`; it never skips or weakens provenance verification.
 
 A successful Manager-Core Windows build emits exactly the versioned MSI and ZIP under
 `dist/windows`. A successful Linux build emits exactly the versioned DEB, RPM,

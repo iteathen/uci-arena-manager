@@ -24,6 +24,7 @@ import {
   type LocalSetupRequest,
   type LocalSetupResult,
 } from '../api/client'
+import { managerEndpointLabel } from '../components/configurationModel'
 import { PageHeader } from '../components/PageHeader'
 import { PathPickerInput } from '../components/PathPickerInput'
 
@@ -159,7 +160,7 @@ export function ConfigurationPage() {
           <Text fw={700}>Network</Text>
           <Group justify="space-between" mt="md">
             <Text c="dimmed">Listen endpoint</Text>
-            <Code>127.0.0.1:47831</Code>
+            <Code>{managerEndpointLabel(window.location)}</Code>
           </Group>
           <Group justify="space-between" mt="sm">
             <Text c="dimmed">Remote binding</Text>

@@ -1,5 +1,7 @@
-import { Alert, Button, Group, Paper, Progress, SimpleGrid, Stack, Text } from '@mantine/core'
+import { IconTrash } from '@tabler/icons-react'
+import { Alert, Button, Group, Modal, Paper, Progress, SimpleGrid, Stack, Text } from '@mantine/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 import { api, makeCommand } from '../api/client'
 import type { MatchPlanData, Resource } from '../api/types'
 import { StatusPill } from './StatusPill'
@@ -15,6 +17,7 @@ export function CompetitionList({
   navigate: (page: string) => void
 }) {
   const queryClient = useQueryClient()
+  const [pendingRemoval, setPendingRemoval] = useState<Competition | null>(null)
   const matches = useQuery({
     queryKey: ['resources', 'match_plan'],
     queryFn: () => api.resources<MatchPlanData>('match_plan'),
@@ -38,6 +41,22 @@ export function CompetitionList({
       )
     },
     onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['resources'] })
+    },
+  })
+  const removal = useMutation({
+    mutationFn: (resource: Competition) => api.command(
+      makeCommand(
+        'resource.remove',
+        resource.kind,
+        {},
+        false,
+        resource.id,
+        resource.revision,
+      ),
+    ),
+    onSuccess: async () => {
+      setPendingRemoval(null)
       await queryClient.invalidateQueries({ queryKey: ['resources'] })
     },
   })
@@ -68,6 +87,7 @@ export function CompetitionList({
   return (
     <Stack gap="md">
       {mutation.error && <Alert color="red">{mutation.error.message}</Alert>}
+      {removal.error && <Alert color="red">{removal.error.message}</Alert>}
       <SimpleGrid cols={{ base: 1, xl: 2 }}>
         {competitions.map((resource) => {
           const progress = resource.data.progress
@@ -84,6 +104,10 @@ export function CompetitionList({
                     <Text size="xs" c="dimmed">
                       {resource.data.format.replaceAll('_', ' ')} · {resource.data.engine_ids.length}{' '}
                       participants · {totalGames} scheduled games
+                    </Text>
+                    <Text size="xs" c="dimmed" ff="monospace">
+                      {resource.kind} {resource.id.slice(0, 13)}… · created{' '}
+                      {new Date(resource.created_at).toLocaleString()}
                     </Text>
                   </div>
                   <StatusPill value={resource.data.lifecycle} />
@@ -117,12 +141,23 @@ export function CompetitionList({
                   </Text>
                 )}
                 <Group gap="xs">
-                  <Button size="xs" variant="subtle" component="a" href="#page=planner" onClick={() => navigate('planner')}>Planner controls</Button>
-                  <Button size="xs" variant="subtle" component="a" href="#page=engines" onClick={() => navigate('engines')}>Engines</Button>
-                  <Button size="xs" variant="subtle" component="a" href="#page=reports" onClick={() => navigate('reports')}>Reports</Button>
+                  <Button size="xs" variant="subtle" component="a" href="#page=planner" onClick={(event) => { event.preventDefault(); navigate('planner') }}>Planner controls</Button>
+                  <Button size="xs" variant="subtle" component="a" href="#page=engines" onClick={(event) => { event.preventDefault(); navigate('engines') }}>Engines</Button>
+                  <Button size="xs" variant="subtle" component="a" href="#page=reports" onClick={(event) => { event.preventDefault(); navigate('reports') }}>Reports</Button>
                 </Group>
                 {actions.length > 0 && (
                   <Group justify="flex-end">
+                    {resource.data.lifecycle === 'planned' && (
+                      <Button
+                        variant="default"
+                        color="red"
+                        leftSection={<IconTrash size={16} />}
+                        disabled={mutation.isPending || removal.isPending}
+                        onClick={() => setPendingRemoval(resource)}
+                      >
+                        Remove plan
+                      </Button>
+                    )}
                     {actions.map((action) => (
                       <Button
                         key={action}
@@ -146,6 +181,36 @@ export function CompetitionList({
           )
         })}
       </SimpleGrid>
+      <Modal
+        opened={pendingRemoval !== null}
+        onClose={() => !removal.isPending && setPendingRemoval(null)}
+        title="Remove planned competition?"
+        centered
+      >
+        <Stack>
+          <Text size="sm">
+            This removes only the never-started plan. Started competitions and game history cannot be removed here.
+          </Text>
+          {pendingRemoval && (
+            <Text size="xs" c="dimmed" ff="monospace">
+              {pendingRemoval.data.display_name} · {pendingRemoval.id}
+            </Text>
+          )}
+          <Group justify="flex-end">
+            <Button variant="default" disabled={removal.isPending} onClick={() => setPendingRemoval(null)}>
+              Keep plan
+            </Button>
+            <Button
+              color="red"
+              loading={removal.isPending}
+              disabled={!pendingRemoval}
+              onClick={() => pendingRemoval && removal.mutate(pendingRemoval)}
+            >
+              Remove plan
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </Stack>
   )
 }

@@ -20,7 +20,11 @@ import { useMemo, useState } from 'react'
 import { api, makeCommand } from '../api/client'
 import type { EngineData, MatchPlanData, Resource } from '../api/types'
 import { CompetitionList } from '../components/CompetitionList'
-import { competitionPlanTarget, competitionScheduleSize } from '../components/competitionModel'
+import {
+  competitionPairingPreview,
+  competitionPlanTarget,
+  competitionScheduleSize,
+} from '../components/competitionModel'
 import { PageHeader } from '../components/PageHeader'
 
 export function MatchPlannerPage({ navigate }: { navigate: (page: string) => void }) {
@@ -80,6 +84,7 @@ export function MatchPlannerPage({ navigate }: { navigate: (page: string) => voi
     Number(games),
     Number(rounds),
   )
+  const pairingPreview = competitionPairingPreview(format, scheduledGames, selected.length)
   const selectedEngines = selected
     .map((id) => engines.data?.find((engine) => engine.id === id))
     .filter((engine): engine is Resource<EngineData> => engine !== undefined)
@@ -408,8 +413,8 @@ export function MatchPlannerPage({ navigate }: { navigate: (page: string) => voi
                 <Text fw={650}>{selected.length}</Text>
               </Group>
               <Group justify="space-between">
-                <Text c="dimmed">Color pairs</Text>
-                <Text fw={650}>{Math.ceil(scheduledGames / 2)}</Text>
+                <Text c="dimmed">{pairingPreview.label}</Text>
+                <Text fw={650}>{pairingPreview.value}</Text>
               </Group>
               <Group justify="space-between">
                 <Text c="dimmed">Parallel games</Text>

@@ -86,6 +86,54 @@ TEST_CASE("installed engine receipts resolve provider-declared UCI entrypoints")
     fs::remove_all(root);
 }
 
+TEST_CASE("managed UCI-engine capability resolves an executable entrypoint") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-stockfish-onboarding-" + arena::domain::uuid_v7());
+    const fs::path data_root = root / "data";
+    const fs::path active_root = root / "components" / "stockfish.engine" / "15.1";
+    const fs::path executable = executable_path(active_root / "bin", "stockfish");
+    write_executable(executable);
+    fs::create_directories(data_root / "receipts");
+
+    std::ofstream(active_root / "arena-component.json")
+        << json{
+               {"schema", "arena_install_component_v1"},
+               {"schema_version", 1},
+               {"component_id", "stockfish.engine"},
+               {"component_version", "15.1"},
+               {"entrypoints",
+                {{"executable",
+                  fs::relative(executable, active_root).generic_string()}}},
+               {"capabilities", {"uci_engine"}},
+               {"files", json::array()},
+           }
+               .dump(2);
+    std::ofstream(data_root / "receipts" / "stockfish.engine.json")
+        << json{
+               {"schema", "arena_install_receipt_v1"},
+               {"schema_version", 1},
+               {"component_id", "stockfish.engine"},
+               {"component_version", "15.1"},
+               {"state", "installed_managed"},
+               {"active_root", active_root.string()},
+               {"artifact_sha256", std::string(64, 'b')},
+           }
+               .dump(2);
+
+    const json discovered =
+        arena::application::EngineOnboarding::discover(data_root, {}, false);
+    REQUIRE(discovered.at("candidates").size() == 1);
+    const json& candidate = discovered.at("candidates").at(0);
+    REQUIRE(candidate.at("source") == "install_receipt");
+    REQUIRE(candidate.at("component_id") == "stockfish.engine");
+    REQUIRE(
+        fs::path(candidate.at("executable").get<std::string>()) ==
+        fs::weakly_canonical(executable));
+
+    fs::remove_all(root);
+}
+
 TEST_CASE("verified UCI Arena receipt is recommended without turning its model into the product") {
     const fs::path root =
         fs::temp_directory_path() /

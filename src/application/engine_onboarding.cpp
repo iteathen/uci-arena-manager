@@ -203,12 +203,31 @@ void append_receipt_candidates(
                 manifest.value("component_version", "") !=
                     receipt.value("component_version", "") ||
                 !manifest.contains("entrypoints") ||
-                !manifest.at("entrypoints").is_object() ||
-                !manifest.at("entrypoints").contains("uci")) {
+                !manifest.at("entrypoints").is_object()) {
+                continue;
+            }
+            const json& entrypoints = manifest.at("entrypoints");
+            const bool has_uci_capability =
+                manifest.contains("capabilities") &&
+                manifest.at("capabilities").is_array() &&
+                std::ranges::any_of(
+                    manifest.at("capabilities"),
+                    [](const json& capability) {
+                        return capability.is_string() &&
+                               capability.get<std::string>() == "uci_engine";
+                    });
+            const char* entrypoint_name =
+                entrypoints.contains("uci") && entrypoints.at("uci").is_string()
+                    ? "uci"
+                    : (has_uci_capability && entrypoints.contains("executable") &&
+                               entrypoints.at("executable").is_string()
+                           ? "executable"
+                           : nullptr);
+            if (entrypoint_name == nullptr) {
                 continue;
             }
             const fs::path relative =
-                manifest.at("entrypoints").at("uci").get<std::string>();
+                entrypoints.at(entrypoint_name).get<std::string>();
             if (!safe_relative_path(relative)) {
                 continue;
             }

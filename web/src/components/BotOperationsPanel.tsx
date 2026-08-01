@@ -105,6 +105,7 @@ export function BotOperationsPanel({
     }) => controlLocalBotAccount(action, parameters),
     onSuccess: async () => {
       setOwnerName('')
+      setOpponent('')
       await account.refetch()
     },
   })
@@ -209,10 +210,20 @@ export function BotOperationsPanel({
                   <Text size="sm" c="dimmed">No opponent currently has the reserved human slot.</Text>
                 )}
                 <SimpleGrid cols={{ base: 1, sm: 3 }}>
-                  <TextInput
+                  <Select
                     label="Opponent"
                     value={opponent}
-                    onChange={(event) => setOpponent(event.currentTarget.value)}
+                    onChange={(value) => setOpponent(value ?? '')}
+                    data={(account.data.owners.owners ?? []).map((owner) => ({
+                      value: owner.username,
+                      label: owner.username,
+                    }))}
+                    placeholder={account.data.owners.owners?.length
+                      ? 'Select an allowed owner'
+                      : 'Add an owner above first'}
+                    searchable
+                    clearable
+                    disabled={!account.data.owners.owners?.length || Boolean(reservation)}
                   />
                   <NumberInput
                     label="Games"
@@ -239,12 +250,12 @@ export function BotOperationsPanel({
                     Cancel reservation
                   </Button>
                   <Button
-                    disabled={!opponent.trim()}
+                    disabled={!opponent || Boolean(reservation)}
                     loading={accountControl.isPending}
                     onClick={() => accountControl.mutate({
                       action: 'reservation_create',
                       parameters: {
-                        opponent: opponent.trim(),
+                        opponent,
                         games: numberValue(reservationGames, 1),
                         minutes: numberValue(reservationMinutes, 30),
                       },
