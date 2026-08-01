@@ -5,10 +5,12 @@
 #include <sodium.h>
 
 #include <array>
+#include <cctype>
 #include <charconv>
 #include <chrono>
 #include <fstream>
 #include <iomanip>
+#include <ranges>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -115,6 +117,69 @@ std::string value_after(const std::string& line, const std::string_view prefix) 
     return line.starts_with(prefix) ? line.substr(prefix.size()) : std::string{};
 }
 
+bool safe_token(const std::string_view value, const std::size_t maximum) {
+    return !value.empty() && value.size() <= maximum &&
+           std::ranges::all_of(value, [](const unsigned char character) {
+               return std::isalnum(character) != 0 || character == '_' ||
+                      character == '-' || character == '.';
+           });
+}
+
+bool decimal_fingerprint(const std::string_view value) {
+    return !value.empty() && value.size() <= 20 &&
+           std::ranges::all_of(value, [](const unsigned char character) {
+               return std::isdigit(character) != 0;
+           });
+}
+
+void capture_runtime_model_identity(
+    const std::string& line,
+    UciProbeResult& result) {
+    constexpr std::string_view prefix = "info string model loaded:";
+    constexpr std::string_view fingerprint_marker = ":fingerprint:";
+    constexpr std::string_view provider_marker = ":provider:";
+    constexpr std::string_view provider_fingerprint_marker =
+        ":provider_numeric_fingerprint:";
+    if (!line.starts_with(prefix)) {
+        return;
+    }
+    const auto fingerprint_begin = line.rfind(fingerprint_marker);
+    const auto provider_begin = line.rfind(provider_marker);
+    if (fingerprint_begin == std::string::npos ||
+        provider_begin == std::string::npos ||
+        provider_begin <= fingerprint_begin + fingerprint_marker.size()) {
+        return;
+    }
+    const std::string model_fingerprint = line.substr(
+        fingerprint_begin + fingerprint_marker.size(),
+        provider_begin - (fingerprint_begin + fingerprint_marker.size()));
+    const auto provider_value_begin = provider_begin + provider_marker.size();
+    const auto provider_fingerprint_begin = line.find(
+        provider_fingerprint_marker, provider_value_begin);
+    const std::string provider = line.substr(
+        provider_value_begin,
+        provider_fingerprint_begin == std::string::npos
+            ? std::string::npos
+            : provider_fingerprint_begin - provider_value_begin);
+    std::string provider_fingerprint;
+    if (provider_fingerprint_begin != std::string::npos) {
+        const auto value_begin =
+            provider_fingerprint_begin + provider_fingerprint_marker.size();
+        const auto value_end = line.find(':', value_begin);
+        provider_fingerprint = line.substr(
+            value_begin,
+            value_end == std::string::npos ? std::string::npos : value_end - value_begin);
+    }
+    if (!decimal_fingerprint(model_fingerprint) || !safe_token(provider, 64) ||
+        (!provider_fingerprint.empty() &&
+         !decimal_fingerprint(provider_fingerprint))) {
+        return;
+    }
+    result.runtime_model_fingerprint = model_fingerprint;
+    result.runtime_provider = provider;
+    result.runtime_provider_fingerprint = provider_fingerprint;
+}
+
 std::string await_token(
     ports::NativeProcess& process,
     const std::string_view token,
@@ -143,6 +208,7 @@ std::string await_token(
                 }
             }
         }
+        capture_runtime_model_identity(*line, result);
         if (*line == token || line->starts_with(std::string(token) + " ")) {
             return *line;
         }
@@ -165,7 +231,8 @@ UciProbeResult UciProcess::probe(
     const std::filesystem::path& executable,
     const std::filesystem::path& working_directory,
     const std::vector<std::string>& arguments,
-    std::chrono::milliseconds timeout) {
+    std::chrono::milliseconds timeout,
+    const std::map<std::string, std::string, std::less<>>& option_overrides) {
     UciProbeResult result;
     const auto started = Clock::now();
     ports::NativeProcess process;
@@ -176,6 +243,9 @@ UciProbeResult UciProcess::probe(
 
         process.write_line("uci");
         await_token(process, "uciok", deadline, result, true);
+        for (const auto& [name, value] : option_overrides) {
+            process.write_line("setoption name " + name + " value " + value);
+        }
         process.write_line("isready");
         await_token(process, "readyok", deadline, result, false);
         process.write_line("ucinewgame");

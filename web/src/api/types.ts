@@ -82,6 +82,12 @@ export interface EngineData extends Record<string, unknown> {
     model_id: string
     display_name: string
     input_adapter_id: string
+    root: string
+  }
+  runtime_model_identity?: {
+    model_fingerprint: string
+    provider: string
+    provider_numeric_fingerprint: string
   }
 }
 
@@ -103,6 +109,7 @@ export interface EngineCandidate {
     model_id: string
     display_name: string
     input_adapter_id: string
+    root: string
   }
   fingerprint?: string
   issues: Array<{ code: string; detail: string }>

@@ -2837,6 +2837,12 @@ json invoke_provider_startup(const SetupPaths& paths, const json& receipt,
         throw std::runtime_error("provider startup adapter configuration does not match: " +
                                  component_id);
     }
+    if (expected_installed && component_id == "uci_arena_evidence.service" &&
+        (!status.contains("active") || !status.at("active").is_boolean() ||
+         !status.at("active").get<bool>())) {
+        throw std::runtime_error(
+            "Evidence Service startup adapter did not confirm a live daemon");
+    }
     return status;
 }
 

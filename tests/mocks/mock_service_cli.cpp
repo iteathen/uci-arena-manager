@@ -38,7 +38,7 @@ int main(int argc, char** argv) {
     if (operation == "describe") {
         std::cout
             << (evidence
-                    ? R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"uci_arena_evidence.service","component_version":"0.3.0","operation":"describe","ok":true,"payload":{"transport":"cli_json","invocation":["api"],"operations":["describe","status","outputs_list","outputs_inspect","config_validate","orchestration_status","campaign_enqueue","job_control"],"output_schemas":["uci_arena_service_output_v1"],"output_kinds":["evidence.dataset","timing_profile.qualified"],"configuration_schema":"uci_arena_evidence_service_config_v1","status_schema":"uci_arena_evidence_status_v1"}})"
+                    ? R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"uci_arena_evidence.service","component_version":"0.3.0","operation":"describe","ok":true,"payload":{"transport":"cli_json","invocation":["api"],"operations":["describe","status","outputs_list","outputs_inspect","config_validate","orchestration_status","target_register","campaign_enqueue","job_control"],"output_schemas":["uci_arena_service_output_v1"],"output_kinds":["evidence.dataset","timing_profile.qualified"],"configuration_schema":"uci_arena_evidence_service_config_v1","status_schema":"uci_arena_evidence_status_v1"}})"
                     : R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"book_forge.service","component_version":"0.3.0","operation":"describe","ok":true,"payload":{"transport":"cli_json","invocation":["api"],"operations":["describe","status","outputs_list","outputs_inspect","config_validate"],"output_schemas":["uci_arena_service_output_v1"],"output_kinds":["opening_book.snapshot"],"configuration_schema":"uci_arena_book_forge_config_v1","status_schema":"uci_arena_book_forge_status_v2"}})")
             << '\n';
         return 0;
@@ -62,6 +62,13 @@ int main(int argc, char** argv) {
         std::string(argv[4]) == "enqueue") {
         std::cout
             << R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"uci_arena_evidence.service","component_version":"0.3.0","operation":"campaign_enqueue","ok":true,"payload":{"schema":"uci_arena_evidence_campaign_enqueue_v1","campaign":"time_control_curve_v1","target_id":null,"jobs":[]}})"
+            << '\n';
+        return 0;
+    }
+    if (evidence && operation == "target" && argc > 4 &&
+        std::string(argv[4]) == "register") {
+        std::cout
+            << R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"uci_arena_evidence.service","component_version":"0.3.0","operation":"target_register","ok":true,"payload":{"schema":"uci_arena_evidence_target_register_v1","created":true,"target":{"id":"123e4567-e89b-42d3-a456-426614174003","label":"Example Model deployment","model_id":"example_model_v1","model_fingerprint":"8104116015256418347","engine_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","provider":"cpu","created_at":"2026-07-25T00:00:00Z"}}})"
             << '\n';
         return 0;
     }

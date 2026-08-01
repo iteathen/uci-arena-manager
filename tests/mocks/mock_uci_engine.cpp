@@ -38,6 +38,7 @@ int main(int argc, char** argv) {
                       << "id author UCI Arena Manager\n"
                       << "option name Threads type spin default 1 min 1 max 16\n"
                       << "option name Style type combo default Normal var Solid var Normal var Risky\n"
+                      << "info string model loaded:backend:onnx:path:fixture:fingerprint:8104116015256418347:provider:cpu:provider_numeric_fingerprint:5805769137532863231\n"
                       << "uciok\n"
                       << std::flush;
         } else if (line == "isready") {

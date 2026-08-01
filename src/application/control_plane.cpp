@@ -190,6 +190,48 @@ std::vector<std::string> string_array(const json& object, const char* name) {
     return values;
 }
 
+std::map<std::string, std::string, std::less<>> uci_option_overrides(
+    const json& value) {
+    if (!value.is_object() || value.size() > 128) {
+        throw CommandFailure(
+            "invalid_engine_options",
+            "registered engine option overrides must be an object with at most 128 entries",
+            422);
+    }
+    std::map<std::string, std::string, std::less<>> result;
+    for (const auto& [name, raw] : value.items()) {
+        if (name.empty() || name.size() > 128 ||
+            std::ranges::any_of(name, [](const unsigned char character) {
+                return character < 0x20 || character == 0x7f;
+            })) {
+            throw CommandFailure(
+                "invalid_engine_options", "registered UCI option name is invalid", 422);
+        }
+        std::string text;
+        if (raw.is_string()) {
+            text = raw.get<std::string>();
+        } else if (raw.is_boolean()) {
+            text = raw.get<bool>() ? "true" : "false";
+        } else if (raw.is_number_integer()) {
+            text = std::to_string(raw.get<std::int64_t>());
+        } else if (raw.is_number_unsigned()) {
+            text = std::to_string(raw.get<std::uint64_t>());
+        } else {
+            throw CommandFailure(
+                "invalid_engine_options",
+                "registered UCI option values must be strings, booleans, or integers",
+                422);
+        }
+        if (text.size() > 512 || text.find('\n') != std::string::npos ||
+            text.find('\r') != std::string::npos || text.find('\0') != std::string::npos) {
+            throw CommandFailure(
+                "invalid_engine_options", "registered UCI option value is invalid", 422);
+        }
+        result.emplace(name, std::move(text));
+    }
+    return result;
+}
+
 json labels_from(const json& parameters) {
     if (!parameters.contains("labels")) {
         return json::object();
@@ -753,6 +795,15 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
         {"desired_state", "stopped"},
         {"observed_state", "stopped"},
     };
+    if (!probe.runtime_model_fingerprint.empty() &&
+        !probe.runtime_provider.empty()) {
+        data["runtime_model_identity"] = {
+            {"model_fingerprint", probe.runtime_model_fingerprint},
+            {"provider", probe.runtime_provider},
+            {"provider_numeric_fingerprint",
+             probe.runtime_provider_fingerprint},
+        };
+    }
     if (parameters.contains("candidate_id") &&
         parameters.at("candidate_id").is_string() &&
         !parameters.at("candidate_id").get_ref<const std::string&>().empty() &&
@@ -1700,7 +1751,8 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
             arguments.insert(arguments.end(), {"--config", config_path});
         }
     };
-    if (action == "service.evidence_campaign_enqueue" ||
+    if (action == "service.evidence_target_register" ||
+        action == "service.evidence_campaign_enqueue" ||
         action == "service.evidence_job_cancel" ||
         action == "service.evidence_job_retry") {
         if (!evidence_service) {
@@ -1712,7 +1764,106 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
         const json& parameters = request.at("parameters");
         std::vector<std::string> operation_arguments;
         std::string operation;
-        if (action == "service.evidence_campaign_enqueue") {
+        if (action == "service.evidence_target_register") {
+            if (parameters.size() != 1 || !parameters.contains("engine_id")) {
+                throw CommandFailure(
+                    "invalid_evidence_target_request",
+                    "Evidence target registration accepts only engine_id",
+                    400);
+            }
+            const std::string engine_id = required_string(parameters, "engine_id");
+            if (!domain::is_uuid(engine_id)) {
+                throw CommandFailure(
+                    "invalid_engine_id",
+                    "Evidence target registration requires a registered engine UUID",
+                    400);
+            }
+            const auto engine = store_->get_resource("engine", engine_id);
+            if (!engine) {
+                throw CommandFailure(
+                    "engine_not_registered",
+                    "Evidence target registration requires an existing registered engine",
+                    422);
+            }
+            const json engine_data = json::parse(engine->data_json);
+            if (engine_data.value("component_id", "") != "uci_arena.engine" ||
+                engine_data.value("onboarding_source", "") != "install_receipt" ||
+                !engine_data.value("recommended", false) ||
+                !engine_data.contains("default_model") ||
+                !engine_data.at("default_model").is_object()) {
+                throw CommandFailure(
+                    "evidence_engine_ineligible",
+                    "register the receipt-verified UCI Arena Engine before creating an Evidence target",
+                    422);
+            }
+            const json& model = engine_data.at("default_model");
+            const std::string model_id = required_string(model, "model_id");
+            const std::filesystem::path relative_model_root =
+                required_string(model, "root");
+            if (relative_model_root.is_absolute() ||
+                std::ranges::any_of(
+                    relative_model_root,
+                    [](const auto& part) { return part == ".."; })) {
+                throw CommandFailure(
+                    "evidence_model_root_invalid",
+                    "the registered engine default-model root is not a safe component-relative path",
+                    422);
+            }
+            const std::filesystem::path executable =
+                required_string(engine_data, "executable");
+            const std::filesystem::path working_directory =
+                required_string(engine_data, "working_directory");
+            const std::filesystem::path model_root =
+                std::filesystem::weakly_canonical(
+                    working_directory / relative_model_root);
+            if (!std::filesystem::is_regular_file(executable) ||
+                !std::filesystem::is_directory(working_directory) ||
+                !std::filesystem::is_directory(model_root)) {
+                throw CommandFailure(
+                    "evidence_deployment_unavailable",
+                    "the registered engine or its default model deployment is unavailable",
+                    422);
+            }
+            const json raw_options =
+                engine_data.value("option_overrides", json::object());
+            const auto typed_options = uci_option_overrides(raw_options);
+            const auto probe = adapters::UciProcess::probe(
+                executable,
+                working_directory,
+                string_array(engine_data, "arguments"),
+                std::chrono::seconds(10),
+                typed_options);
+            if (!probe.ok) {
+                throw CommandFailure("uci_probe_failed", probe.error, 422);
+            }
+            if (probe.runtime_model_fingerprint.empty() ||
+                probe.runtime_provider.empty()) {
+                throw CommandFailure(
+                    "evidence_runtime_identity_unavailable",
+                    "the engine passed UCI readiness but did not expose a typed runtime model identity",
+                    422);
+            }
+            std::string label = model.value("display_name", model_id);
+            if (label.size() > 240) label.resize(240);
+            label += " deployment";
+            operation_arguments = {
+                "target", "register",
+                "--label", label,
+                "--model-id", model_id,
+                "--model-root", model_root.string(),
+                "--model-fingerprint", probe.runtime_model_fingerprint,
+                "--engine", std::filesystem::absolute(executable).string(),
+                "--provider", probe.runtime_provider,
+                "--uci-options-json", raw_options.dump(),
+            };
+            if (!probe.runtime_provider_fingerprint.empty()) {
+                operation_arguments.insert(
+                    operation_arguments.end(),
+                    {"--provider-fingerprint",
+                     probe.runtime_provider_fingerprint});
+            }
+            operation = "target_register";
+        } else if (action == "service.evidence_campaign_enqueue") {
             operation_arguments = {"campaign", "enqueue"};
             operation = "campaign_enqueue";
             if (parameters.contains("target_id") &&
@@ -1791,12 +1942,29 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                     "Evidence Service API does not declare the requested orchestration operation",
                     409);
             }
+            const json operation_result = manager_service_api_payload(
+                invoke_envelope(operation_arguments, std::chrono::seconds(30)),
+                operation,
+                expected_component_id,
+                expected_component_version);
+            if (operation == "target_register" &&
+                (operation_result.value("schema", "") !=
+                     "uci_arena_evidence_target_register_v1" ||
+                 !operation_result.contains("created") ||
+                 !operation_result.at("created").is_boolean() ||
+                 !operation_result.contains("target") ||
+                 !operation_result.at("target").is_object() ||
+                 !uuid_v4(operation_result.at("target").value("id", "")) ||
+                 !lowercase_hex(
+                     operation_result.at("target").value("engine_sha256", ""),
+                     64))) {
+                throw CommandFailure(
+                    "service_api_incompatible",
+                    "Evidence target registration response is malformed",
+                    409);
+            }
             data["last_control_result"] = bounded_redacted_external_value(
-                manager_service_api_payload(
-                    invoke_envelope(operation_arguments, std::chrono::seconds(30)),
-                    operation,
-                    expected_component_id,
-                    expected_component_version),
+                operation_result,
                 1024 * 1024,
                 "Evidence orchestration result");
             const json orchestration = manager_service_api_payload(
@@ -1959,6 +2127,7 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                     };
                     if (evidence_service) {
                         required_operations.insert("orchestration_status");
+                        required_operations.insert("target_register");
                         required_operations.insert("campaign_enqueue");
                         required_operations.insert("job_control");
                     }

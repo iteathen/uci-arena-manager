@@ -13,6 +13,12 @@ startup uninstall/install contracts, restarts Manager, and fails closed on a
 transition error. Major upgrades reuse the persisted selection rather than
 silently restoring a component the operator removed.
 
+Evidence Service candidates must expose the typed `target_register` Manager API
+operation and startup status fields for registration, current-configuration
+agreement, and activity. Suite upgrade acceptance must prove an existing
+Evidence task is drained, the replacement task points only at the promoted
+component root, and its daemon is live before setup reports success.
+
 The checked-in `catalog.lock.json` is deliberately non-releasable until a
 reviewed pull request pins every required platform candidate and managed
 dependency by digest. Setting `release_ready` to `true` without complete

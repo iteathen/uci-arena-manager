@@ -28,6 +28,9 @@ TEST_CASE("UCI probe discovers identity options and a legal bestmove") {
     REQUIRE(result.options.front().minimum == 1);
     REQUIRE(result.options.front().maximum == 16);
     REQUIRE(result.fingerprint.size() == 64);
+    REQUIRE(result.runtime_model_fingerprint == "8104116015256418347");
+    REQUIRE(result.runtime_provider == "cpu");
+    REQUIRE(result.runtime_provider_fingerprint == "5805769137532863231");
 }
 
 TEST_CASE("engine registration derives preferred metadata from the verified receipt") {

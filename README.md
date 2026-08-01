@@ -136,6 +136,18 @@ count. Evidence integration similarly validates the public dataset-list
 contract and projects bounded dataset identities and authority. Manager never
 opens either provider's database or rewrites provider output.
 
+When Evidence is waiting for its first exact target, the Services page offers
+**Use UCI Arena Engine** if the receipt-verified recommended engine is already
+registered. The browser sends only that engine resource id. Manager repeats
+the same universal UCI readiness probe used for every engine, obtains the
+runtime model/provider identity from the optional typed UCI info signal, and
+combines it with receipt-derived default-model metadata. Evidence validates the
+component-relative model root, hashes the engine itself, and creates or reuses
+the exact target. Paths, fingerprints, providers, UCI JSON, commands, and argv
+are never accepted from the browser. If the preferred engine is not registered,
+the prerequisite control links directly to Engines instead of leaving the
+operator at a dead end.
+
 The Bots dashboard installs and detects the packaged Lichess adapter, lets the
 operator select an existing token file, and verifies the BOT account without a
 terminal. Manager saves only normalized path metadata. The credential probe
@@ -189,6 +201,13 @@ incomplete startup restoration is reported as `rollback_failed`. Linux DEB/RPM
 lifecycle scripts perform the equivalent systemd stop, daemon-reload, enable,
 and start; portable `.run` installers use the same `arena-setup` operations and
 catalog.
+
+Evidence startup activation independently verifies registration presence,
+agreement with the current package/workspace/configuration, and a live daemon.
+Its install path first drains any previous registration and exact lock-owning
+daemon, then starts and verifies the replacement. This provider-owned check is
+what closes the short Task Scheduler/Job Object teardown race during an upgrade;
+Manager does not infer activity from a retained status file.
 
 When a saved Lichess token-file reference is available, Book Forge activation
 uses only its public `acquisition retry-auth` response. A transient `blocked`

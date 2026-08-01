@@ -29,7 +29,7 @@ import { useDisclosure } from '@mantine/hooks'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { api, makeCommand } from '../api/client'
-import type { ManagedServiceData, Resource } from '../api/types'
+import type { EngineData, ManagedServiceData, Resource } from '../api/types'
 import { PageHeader } from '../components/PageHeader'
 import { ComponentSetupButton } from '../components/ComponentSetupButton'
 import { PathPickerInput } from '../components/PathPickerInput'
@@ -48,6 +48,10 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
   const services = useQuery({
     queryKey: ['resources', 'managed_service'],
     queryFn: () => api.resources<ManagedServiceData>('managed_service'),
+  })
+  const engines = useQuery({
+    queryKey: ['resources', 'engine'],
+    queryFn: () => api.resources<EngineData>('engine'),
   })
   const automaticallyProbed = useRef(new Set<string>())
   useEffect(() => {
@@ -122,6 +126,13 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
   )
   const bookLocatorMode = serviceLocatorMode(bookService)
   const evidenceLocatorMode = serviceLocatorMode(evidenceService)
+  const preferredEvidenceEngine = (engines.data ?? []).find(
+    (engine) =>
+      engine.data.component_id === 'uci_arena.engine' &&
+      engine.data.onboarding_source === 'install_receipt' &&
+      engine.data.recommended === true &&
+      Boolean(engine.data.default_model?.root),
+  )
   const save = useMutation({
     mutationFn: ({
       parameters,
@@ -221,23 +232,32 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
       service,
       action,
       jobId,
+      engineId,
     }: {
       service: Resource<ManagedServiceData>
-      action: 'campaign_enqueue' | 'job_cancel' | 'job_retry'
+      action: 'target_register' | 'campaign_enqueue' | 'job_cancel' | 'job_retry'
       jobId?: string
+      engineId?: string
     }) =>
       api.command(
         makeCommand(
           `service.evidence_${action}`,
           'managed_service',
-          jobId ? { job_id: jobId } : { target_id: null },
+          jobId
+            ? { job_id: jobId }
+            : engineId
+              ? { engine_id: engineId }
+              : { target_id: null },
           false,
           service.id,
           service.revision,
         ),
       ),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['resources', 'managed_service'] })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['resources', 'managed_service'] }),
+        queryClient.invalidateQueries({ queryKey: ['resources', 'engine'] }),
+      ])
     },
   })
   const [removeTarget, setRemoveTarget] =
@@ -632,15 +652,38 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                           {service.data.status_projection.collection.reason ??
                             'No exact compatible model deployment target is available yet.'}
                         </Text>
-                        <Button
-                          component="a"
-                          href="#page=engines"
-                          size="xs"
-                          variant="default"
-                          onClick={() => navigate('engines')}
-                        >
-                          Open engines
-                        </Button>
+                        {preferredEvidenceEngine ? (
+                          <Button
+                            size="xs"
+                            color="violet"
+                            loading={
+                              evidenceControl.isPending &&
+                              evidenceControl.variables?.action === 'target_register'
+                            }
+                            disabled={evidenceControl.isPending}
+                            title="Repeat the complete UCI probe and register this exact deployment with Evidence Service."
+                            onClick={() =>
+                              evidenceControl.mutate({
+                                service,
+                                action: 'target_register',
+                                engineId: preferredEvidenceEngine.id,
+                              })
+                            }
+                          >
+                            Use UCI Arena Engine
+                          </Button>
+                        ) : (
+                          <Button
+                            component="a"
+                            href="#page=engines"
+                            size="xs"
+                            variant="default"
+                            title="Register the recommended UCI Arena Engine, then return here."
+                            onClick={() => navigate('engines')}
+                          >
+                            Register an engine
+                          </Button>
+                        )}
                       </Group>
                     </Alert>
                   )}
