@@ -462,8 +462,8 @@ try {
         maxPlies = 4
         adjudicationCp = 0
         adjudicationDepth = 1
-        candidateOptions = @("TimePolicy=RelativeClockV3")
-        controlOptions = @()
+        candidateOptions = @("McgsTemporalWeightProfile=AdaptiveCurveV1")
+        controlOptions = @("McgsTemporalWeightProfile=EarlyCurrent")
     } | ConvertTo-Json -Compress
     $job = Invoke-JsonCommand $node @(
         $evidenceCli, "job", "enqueue",

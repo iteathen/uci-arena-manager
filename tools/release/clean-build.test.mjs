@@ -17,6 +17,22 @@ import {
   writeCleanBuildResult,
 } from "./clean-build.mjs";
 
+test("Complete acceptance uses the current MCGS timing experiment contract", () => {
+  const acceptance = readFileSync(new URL(
+    "../../tests/e2e/windows-complete-suite.ps1",
+    import.meta.url,
+  ), "utf8");
+  assert.match(
+    acceptance,
+    /candidateOptions = @\("McgsTemporalWeightProfile=AdaptiveCurveV1"\)/u,
+  );
+  assert.match(
+    acceptance,
+    /controlOptions = @\("McgsTemporalWeightProfile=EarlyCurrent"\)/u,
+  );
+  assert.doesNotMatch(acceptance, /TimePolicy=RelativeClockV3/u);
+});
+
 test("clean build requires an explicit Manager-Core scope locally", () => {
   assert.throws(
     () => cleanBuild({
