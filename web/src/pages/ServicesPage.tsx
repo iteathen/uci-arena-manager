@@ -598,7 +598,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                       <Group justify="space-between" align="center">
                         <Text size="sm">
                           {service.data.status_projection.collection.reason ??
-                            'No exact LatticeKnight deployment target is available yet.'}
+                            'No exact compatible model deployment target is available yet.'}
                         </Text>
                         <Button
                           component="a"
