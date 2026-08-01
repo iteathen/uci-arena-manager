@@ -65,7 +65,7 @@ test("suite composition uses the private Manager mirror without an App key", () 
     resolveProviderAssetSource(lock, component),
     {
       repository: "iteathen/uci-arena-manager",
-      releaseTag: "provider-mirror/v0.3.2",
+      releaseTag: "provider-mirror/v0.3.3",
       tokenKind: "manager",
       providerRepository: "iteathen/uci-arena-book-forge",
     },
