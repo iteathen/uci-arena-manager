@@ -340,6 +340,10 @@ packaging:
         outputs before rebuilding, run native tests once for the shared Windows
         binary set, and invoke the existing CPack deployment generators for
         each fixed package scope.
+      - The Windows clean-build entrypoint resolves CMake, CPack, and CTest as
+        one toolchain: an explicit ARENA_CMAKE_EXECUTABLE wins, followed by the
+        newest supported repository-local portable CMake, followed by PATH.
+        Per-user packaging still fails closed below CMake 4.3.
       - Pull-request CI and the protected suite release workflow install the
         same explicit Linux native-build prerequisite set before vcpkg
         dependency bootstrap. Release-only package validators may extend that

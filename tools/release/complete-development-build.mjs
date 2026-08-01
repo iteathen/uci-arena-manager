@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { resolveCMakeTool } from "./cmake-toolchain.mjs";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "../..");
 
@@ -26,7 +27,8 @@ function run(command, args, {
   cwd = repositoryRoot,
   env = process.env,
 } = {}) {
-  const result = spawnSync(command, args, {
+  const executable = resolveCMakeTool(command, { repositoryRoot, env });
+  const result = spawnSync(executable, args, {
     cwd,
     env,
     encoding: "utf8",

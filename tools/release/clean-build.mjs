@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { resolveCMakeTool } from "./cmake-toolchain.mjs";
 import { completeDevelopmentBuild } from "./complete-development-build.mjs";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "../..");
@@ -58,7 +59,7 @@ function sha256(filename) {
 }
 
 function run(command, args, options = {}) {
-  let executable = command;
+  let executable = resolveCMakeTool(command, { repositoryRoot });
   let commandArguments = args;
   if (process.platform === "win32" && command === "npm") {
     const npmCli = path.join(
