@@ -464,9 +464,11 @@ packaging:
         user profile has an MSI-owned HKCU registry key path, and ICE38 is a
         blocking validation rather than a suppressed warning.
       - Burn passes the fixed package scope explicitly to arena-setup together
-        with every scope-owned root. The explicit scope must match the bundle,
-        controls service-account ACL behavior, and is preserved for Modify,
-        repair, update, and uninstall.
+        with every scope-owned root: install, data, cache, and knowledge. The
+        provider workspace is not package-scope-owned and retains arena-setup's
+        native default unless an operator explicitly selects an override. The
+        explicit scope must match the bundle, controls service-account ACL
+        behavior, and is preserved for Modify, repair, update, and uninstall.
       - The arena executable directory is added to the PATH matching the
         selected install scope through an MSI-owned Environment row and is
         removed from that same PATH on uninstall. Setup never rewrites
@@ -508,10 +510,11 @@ packaging:
       - The arena-setup executable package uses no Burn console-redirection
         protocol so inherited standard handles cannot keep the bootstrapper
         blocked after arena-setup exits.
-      - Every Burn arena-setup invocation passes its package log path through
-        the typed --result-file option. Success or failure leaves one bounded
-        JSON result at that path, including the actionable setup error instead
-        of reducing every provider transition failure to an EXE exit code.
+      - Every Burn arena-setup invocation passes an operation-specific sibling
+        of its package log path through the typed --result-file option. Install,
+        repair, and uninstall use distinct suffixes so rollback cannot overwrite
+        the forward operation's bounded JSON result or its actionable setup
+        error with a later cleanup result.
       - Install, repair, and uninstall resolve the embedded catalog and TUF
         metadata from the currently executing Burn package cache directory.
         They never depend on the bootstrapper launch directory or a retained
@@ -544,10 +547,11 @@ packaging:
       - The bundle feature-selection state is default-on for Engine, Book
         Forge, Evidence Service, and Lichess adapter, is available again from
         Modify, and is preserved across a major upgrade.
-      - The bundle's default workspace root matches arena-setup's native
-        user-profile default and is not redirected through Documents or
+      - The bundle does not synthesize a workspace root from Burn shell-folder
+        variables. It omits the optional override so arena-setup owns its native
+        user-profile default, which is not redirected through Documents or
         OneDrive. Existing receipt-owned workspaces remain authoritative on
-        upgrade regardless of either default.
+        upgrade regardless of that default.
   artifact_names:
     - UCI-Arena-Setup-<version>-windows-x64-user-online.exe
     - UCI-Arena-Setup-<version>-windows-x64-user-offline.exe

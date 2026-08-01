@@ -79,19 +79,19 @@ test("Windows per-machine bundle owns complete elevated lifecycle", () => {
     /--bundle-owner &quot;\[WixBundleProviderKey\]&quot;/,
   );
   assert.match(source, /--install-scope per-machine/);
-  assert.match(
-    source,
-    /ArenaWorkspaceRoot="\[UserProfileFolder\]UCI Arena Workspaces"/,
-  );
-  assert.equal(
-    source.match(/--result-file &quot;\[WixBundleLog_SuiteComponents\]&quot;/g)?.length,
-    3,
-  );
+  assert.doesNotMatch(source, /ArenaWorkspaceRoot|--workspace-root/);
+  for (const operation of ["install", "repair", "uninstall"]) {
+    assert.match(
+      source,
+      new RegExp(
+        `--result-file &quot;\\[WixBundleLog_SuiteComponents\\]\\.${operation}\\.json&quot;`,
+      ),
+    );
+  }
   for (const root of [
     "--install-root",
     "--data-root",
     "--cache-root",
-    "--workspace-root",
     "--knowledge-root",
   ]) {
     assert.match(source, new RegExp(root));
@@ -143,6 +143,7 @@ test("Windows per-machine bundle owns complete elevated lifecycle", () => {
     path.join(repositoryRoot, "apps", "setup", "main.cpp"),
     "utf8",
   );
+  assert.match(setupSource, /user_profile \/ "UCI Arena Workspaces"/);
   assert.match(setupSource, /bool manager_service_running\(\)/);
   assert.match(
     setupSource,
@@ -167,17 +168,17 @@ test("Windows per-user bundle remains fixed-scope and non-elevated", () => {
   assert.doesNotMatch(source, /PerMachine="yes"/);
   assert.doesNotMatch(source, /--restart-manager-service/);
   assert.match(source, /--install-scope per-user/);
-  assert.match(
-    source,
-    /ArenaWorkspaceRoot="\[UserProfileFolder\]UCI Arena Workspaces"/,
-  );
-  assert.equal(
-    source.match(/--result-file &quot;\[WixBundleLog_SuiteComponents\]&quot;/g)?.length,
-    3,
-  );
+  assert.doesNotMatch(source, /ArenaWorkspaceRoot|--workspace-root/);
+  for (const operation of ["install", "repair", "uninstall"]) {
+    assert.match(
+      source,
+      new RegExp(
+        `--result-file &quot;\\[WixBundleLog_SuiteComponents\\]\\.${operation}\\.json&quot;`,
+      ),
+    );
+  }
   assert.match(source, /--install-root[^\n]*ArenaInstallRoot/);
   assert.match(source, /--cache-root[^\n]*ArenaCacheRoot/);
-  assert.match(source, /--workspace-root[^\n]*ArenaWorkspaceRoot/);
   assert.match(source, /--knowledge-root[^\n]*ArenaKnowledgeRoot/);
   for (const variable of [
     "InstallUciArenaEngine",
