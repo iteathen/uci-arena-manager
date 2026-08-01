@@ -84,6 +84,7 @@ add_library(arena_core
   src/application/service_catalog.cpp
   src/application/process_supervisor.cpp
   src/application/tournament_executor.cpp
+  src/application/installer/credential_recovery.cpp
   src/application/installer/setup.cpp
   src/adapters/sqlite_store.cpp
   src/adapters/uci_process.cpp

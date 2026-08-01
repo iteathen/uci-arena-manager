@@ -807,8 +807,15 @@ local_import:
       never opens the referenced file, and a later token-path import
       transaction regenerates the installed Book Forge configuration and
       invokes Book Forge's bounded public acquisition retry-auth operation.
-      The provider response must confirm a ready credential configuration;
-      failure rolls back the locator and generated configuration.
+      Apply, repair, and upgrade may make at most three ten-second invocations,
+      with a 250-millisecond bounded retry delay when a well-formed response
+      reports that authentication is still blocked. A malformed response,
+      missing credential configuration, or provider command failure stops
+      immediately. The provider response must confirm a ready credential
+      configuration; exhaustion rolls back the locator, generated
+      configuration, payload, receipt, and prior startup state. Failure detail
+      identifies only the rejected public response field and never includes a
+      credential value or token-file path.
     - Restaurant remains visible as detect-only and is never registered, copied, installed, started, or controlled.
 
 vm_mounts:

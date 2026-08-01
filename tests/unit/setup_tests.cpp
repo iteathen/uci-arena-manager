@@ -8,6 +8,7 @@
 #include <string_view>
 #include <tuple>
 
+#include "arena/application/installer/credential_recovery.hpp"
 #include "arena/application/installer/setup.hpp"
 #include "arena/domain/uuid.hpp"
 
@@ -16,6 +17,8 @@ namespace {
 namespace fs = std::filesystem;
 using arena::application::installer::SetupEngine;
 using arena::application::installer::SetupPaths;
+using arena::application::installer::assess_book_forge_credential_recovery;
+using arena::application::installer::recover_book_forge_credential;
 using nlohmann::json;
 
 fs::path temporary_directory() {
@@ -750,6 +753,93 @@ TEST_CASE("Lichess token path imports refresh installed Book Forge configuration
     REQUIRE(generated.dump().find(token_contents) == std::string::npos);
     generated_input.close();
     fs::remove_all(root);
+}
+
+TEST_CASE("Book Forge credential recovery accepts only typed ready responses") {
+    const auto ready = assess_book_forge_credential_recovery({
+        {"ok", true},
+        {"retried", 0},
+        {"acquisition", {{"credentialConfigured", true}, {"authState", "ready"}}},
+    });
+    REQUIRE(ready.ready);
+    REQUIRE_FALSE(ready.retryable);
+    REQUIRE(ready.retried == 0);
+
+    const auto blocked = assess_book_forge_credential_recovery({
+        {"ok", true},
+        {"retried", 7U},
+        {"acquisition", {{"credentialConfigured", true}, {"authState", "blocked"}}},
+    });
+    REQUIRE_FALSE(blocked.ready);
+    REQUIRE(blocked.retryable);
+    REQUIRE(blocked.retried == 7);
+    REQUIRE(blocked.failure_detail == "authState remained blocked");
+
+    const auto missing_credential = assess_book_forge_credential_recovery({
+        {"ok", true},
+        {"retried", 0},
+        {"acquisition", {{"credentialConfigured", false}, {"authState", "blocked"}}},
+    });
+    REQUIRE_FALSE(missing_credential.ready);
+    REQUIRE_FALSE(missing_credential.retryable);
+    REQUIRE(missing_credential.failure_detail == "credentialConfigured was not true");
+
+    const auto malformed_count = assess_book_forge_credential_recovery({
+        {"ok", true},
+        {"retried", -1},
+        {"acquisition", {{"credentialConfigured", true}, {"authState", "ready"}}},
+    });
+    REQUIRE_FALSE(malformed_count.ready);
+    REQUIRE_FALSE(malformed_count.retryable);
+    REQUIRE(malformed_count.failure_detail == "retried was not a non-negative integer");
+}
+
+TEST_CASE("Book Forge credential recovery retries only a well-formed blocked state") {
+    int calls = 0;
+    const json recovered = recover_book_forge_credential(
+        [&] {
+            ++calls;
+            return json{
+                {"ok", true},
+                {"retried", calls == 1 ? 4 : 0},
+                {"acquisition",
+                 {{"credentialConfigured", true},
+                  {"authState", calls == 1 ? "blocked" : "ready"}}},
+            };
+        },
+        3, std::chrono::milliseconds::zero());
+    REQUIRE(calls == 2);
+    REQUIRE(recovered.at("attempts") == 2);
+    REQUIRE(recovered.at("retried") == 4);
+    REQUIRE(recovered.at("auth_state") == "ready");
+
+    calls = 0;
+    REQUIRE_THROWS(recover_book_forge_credential(
+        [&] {
+            ++calls;
+            return json{
+                {"ok", true},
+                {"retried", 0},
+                {"acquisition",
+                 {{"credentialConfigured", false}, {"authState", "blocked"}}},
+            };
+        },
+        3, std::chrono::milliseconds::zero()));
+    REQUIRE(calls == 1);
+
+    calls = 0;
+    REQUIRE_THROWS(recover_book_forge_credential(
+        [&] {
+            ++calls;
+            return json{
+                {"ok", true},
+                {"retried", 0},
+                {"acquisition",
+                 {{"credentialConfigured", true}, {"authState", "blocked"}}},
+            };
+        },
+        3, std::chrono::milliseconds::zero()));
+    REQUIRE(calls == 3);
 }
 
 TEST_CASE("profile imports refresh a safely disabled installed Lichess adapter") {

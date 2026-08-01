@@ -26,6 +26,7 @@
 
 #include "arena/adapters/uci_process.hpp"
 #include "arena/application/broker_policy.hpp"
+#include "arena/application/installer/credential_recovery.hpp"
 #include "arena/application/process_supervisor.hpp"
 #include "arena/platform/workspace_permissions.hpp"
 
@@ -2553,24 +2554,15 @@ json invoke_book_forge_retry_auth(const SetupPaths& paths, const json& receipt) 
             "Book Forge credential recovery configuration is unavailable");
     }
     arena::application::ProcessSupervisor process;
-    const json response = process.run_json(
-        node, active_root,
-        {cli.string(), "acquisition", "retry-auth", "--workspace", workspace.string(),
-         "--config", configuration.string(), "--json"},
-        std::chrono::seconds(30));
-    const json acquisition = response.value("acquisition", json::object());
-    if (!response.value("ok", false) || !response.contains("retried") ||
-        !response.at("retried").is_number_unsigned() ||
-        !acquisition.value("credentialConfigured", false) ||
-        acquisition.value("authState", "") != "ready") {
-        throw std::runtime_error(
-            "Book Forge did not confirm ready credential configuration");
-    }
-    return {
-        {"retried", response.at("retried")},
-        {"credential_configured", true},
-        {"auth_state", "ready"},
-    };
+    return recover_book_forge_credential(
+        [&] {
+            return process.run_json(
+                node, active_root,
+                {cli.string(), "acquisition", "retry-auth", "--workspace", workspace.string(),
+                 "--config", configuration.string(), "--json"},
+                std::chrono::seconds(10));
+        },
+        3, std::chrono::milliseconds(250));
 }
 
 json refresh_import_consumers(const SetupPaths& paths, const std::string& kind) {
