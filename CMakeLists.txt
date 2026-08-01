@@ -99,6 +99,7 @@ target_include_directories(arena_core
 )
 target_compile_definitions(
   arena_core
+  PUBLIC ARENA_VERSION="${ARENA_VERSION}"
   PRIVATE ARENA_TUF_ROOT_SHA256="${ARENA_TUF_ROOT_SHA256}"
 )
 

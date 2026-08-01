@@ -37,6 +37,10 @@ common_contract:
       - API describe must confirm the required operations, transport,
         invocation prefix, output schema, configuration schema, and status
         schema before status or output metadata is integrated.
+      - The five common operations are a required subset of a bounded unique
+        operation list. Signed provider-specific typed operations may extend
+        that list; Manager retains them and invokes only explicitly supported
+        operations that API describe also confirms.
       - Unknown major versions, component substitution, missing operations,
         malformed envelopes, oversized projections, and output path escape
         evidence mark the integration incompatible.

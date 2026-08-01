@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { ManagedServiceData, Resource } from '../api/types'
-import { selectPreferredService } from './serviceSelection'
+import {
+  canEnqueueEvidenceCampaign,
+  selectPreferredService,
+  serviceCardStates,
+  serviceLocatorMode,
+} from './serviceSelection'
 
 function service(
   id: string,
@@ -44,6 +49,51 @@ describe('managed-service catalog selection', () => {
         'book_forge.service',
       )?.id,
     ).toBe('installed')
+  })
+
+  it('blocks a known-impossible first Evidence campaign until a target exists', () => {
+    const evidence = service('evidence', 'uci_arena_evidence')
+    evidence.data.status_projection = {
+      collection: { state: 'waiting_for_target' },
+    }
+    evidence.data.orchestration_projection = {
+      schema: 'uci_arena_evidence_orchestration_v1',
+      targets: [],
+      jobs: [],
+    }
+
+    expect(canEnqueueEvidenceCampaign(evidence.data)).toBe(false)
+    evidence.data.orchestration_projection.targets.push({
+      id: '01900000-0000-7000-8000-000000000001',
+      label: 'active deployment',
+      model_id: 'model',
+      model_fingerprint: 'fingerprint',
+      engine_sha256: 'sha256:fixture',
+      provider: 'DirectML',
+      created_at: '2026-01-01T00:00:00.000Z',
+    })
+    expect(canEnqueueEvidenceCampaign(evidence.data)).toBe(true)
+  })
+
+  it('keeps package locator and runtime truth separate during loading', () => {
+    expect(serviceCardStates(undefined, false, undefined, true, true)).toEqual({
+      package: 'PACKAGE CHECKING',
+      locator: 'LOCATOR CHECKING',
+      runtime: 'RUNTIME CHECKING',
+    })
+    expect(serviceCardStates('installed', true, 'running', false, false)).toEqual({
+      package: 'PACKAGE INSTALLED',
+      locator: 'LOCATOR CONFIGURED',
+      runtime: 'RUNTIME RUNNING',
+    })
+  })
+
+  it('keeps receipt-owned locators read-only and manual locators editable', () => {
+    expect(serviceLocatorMode()).toBe('configure')
+    expect(serviceLocatorMode(service('manual', 'book_forge'))).toBe('edit_manual')
+    expect(serviceLocatorMode(
+      service('installed', 'book_forge', 'book_forge.service'),
+    )).toBe('view_installed')
   })
 
   it('keeps the configured manual service when no receipt-owned service exists', () => {

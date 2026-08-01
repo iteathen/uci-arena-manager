@@ -12,15 +12,18 @@ import {
   Code,
   Group,
   Paper,
+  Select,
   SimpleGrid,
   Stack,
   Table,
   Text,
+  TextInput,
   Title,
 } from '@mantine/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMemo, useState } from 'react'
 import { api, makeCommand } from '../api/client'
-import type { ManagedServiceData, Resource } from '../api/types'
+import type { ManagedServiceData, MatchPlanData, ReportData, Resource } from '../api/types'
 import { PageHeader } from '../components/PageHeader'
 import { StatusPill } from '../components/StatusPill'
 
@@ -30,13 +33,48 @@ function shortHash(value: string | undefined) {
 
 export function ReportsPage() {
   const queryClient = useQueryClient()
+  const [reportName, setReportName] = useState('UCI Arena Manager report')
+  const [reportScope, setReportScope] = useState<'current_state' | 'competition'>('current_state')
+  const [competitionId, setCompetitionId] = useState<string | null>(null)
   const services = useQuery({
     queryKey: ['resources', 'managed_service'],
     queryFn: () => api.resources<ManagedServiceData>('managed_service'),
   })
   const reports = useQuery({
     queryKey: ['resources', 'report'],
-    queryFn: () => api.resources('report'),
+    queryFn: () => api.resources<ReportData>('report'),
+  })
+  const matches = useQuery({
+    queryKey: ['resources', 'match_plan'],
+    queryFn: () => api.resources<MatchPlanData>('match_plan'),
+  })
+  const tournaments = useQuery({
+    queryKey: ['resources', 'tournament'],
+    queryFn: () => api.resources<MatchPlanData>('tournament'),
+  })
+  const competitionOptions = useMemo(
+    () => [...(matches.data ?? []), ...(tournaments.data ?? [])].map((competition) => ({
+      value: competition.id,
+      label: `${competition.data.display_name} · ${competition.kind} ${competition.id.slice(0, 13)}…`,
+    })),
+    [matches.data, tournaments.data],
+  )
+  const generate = useMutation({
+    mutationFn: () => api.command<Resource<ReportData>>(
+      makeCommand(
+        'report.generate',
+        'report',
+        {
+          display_name: reportName.trim(),
+          scope: reportScope,
+          competition_id: reportScope === 'competition' ? competitionId : null,
+          formats: ['html', 'pdf', 'csv', 'json', 'pgn'],
+        },
+      ),
+    ),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['resources', 'report'] })
+    },
   })
   const refresh = useMutation({
     mutationFn: async (items: Array<Resource<ManagedServiceData>>) => {
@@ -241,6 +279,58 @@ export function ReportsPage() {
           </div>
           <Badge variant="light">{reports.data?.length ?? 0}</Badge>
         </Group>
+        <Paper withBorder p="md" mt="lg">
+          <Stack gap="sm">
+            <SimpleGrid cols={{ base: 1, md: 3 }}>
+              <TextInput
+                label="Report name"
+                value={reportName}
+                maxLength={120}
+                onChange={(event) => setReportName(event.currentTarget.value)}
+              />
+              <Select
+                label="Report scope"
+                value={reportScope}
+                allowDeselect={false}
+                data={[
+                  { value: 'current_state', label: 'All current Manager state' },
+                  { value: 'competition', label: 'One saved competition' },
+                ]}
+                onChange={(value) => {
+                  setReportScope(value === 'competition' ? 'competition' : 'current_state')
+                  if (value !== 'competition') setCompetitionId(null)
+                }}
+              />
+              {reportScope === 'competition' && (
+                <Select
+                  searchable
+                  label="Competition"
+                  placeholder="Select a saved competition"
+                  value={competitionId}
+                  data={competitionOptions}
+                  onChange={setCompetitionId}
+                  nothingFoundMessage="No saved competitions"
+                />
+              )}
+            </SimpleGrid>
+            <Group justify="space-between">
+              <Text size="sm" c="dimmed">
+                Generates immutable HTML, PDF, CSV, JSON, and PGN artifacts from one backend snapshot.
+              </Text>
+              <Button
+                loading={generate.isPending}
+                disabled={!reportName.trim() || (reportScope === 'competition' && !competitionId)}
+                onClick={() => generate.mutate()}
+              >
+                Generate report
+              </Button>
+            </Group>
+          </Stack>
+        </Paper>
+        {generate.error && <Alert color="red" mt="lg">{generate.error.message}</Alert>}
+        {generate.isSuccess && (
+          <Alert color="teal" mt="lg">Report generated and verified in all five formats.</Alert>
+        )}
         {reports.error && <Alert color="red" mt="lg">{reports.error.message}</Alert>}
         {!reports.isLoading && !reports.data?.length && (
           <Alert color="gray" mt="lg">
@@ -249,10 +339,31 @@ export function ReportsPage() {
         )}
         {reports.data?.map((report) => (
           <Paper withBorder p="sm" mt="sm" key={report.id}>
-            <Text fw={650}>{String(report.data.display_name ?? report.id)}</Text>
-            <Text size="xs" c="dimmed">
-              revision {report.revision} · {report.updated_at}
-            </Text>
+            <Group justify="space-between" align="flex-start">
+              <div>
+                <Text fw={650}>{report.data.display_name}</Text>
+                <Text size="xs" c="dimmed">
+                  {report.data.scope.replaceAll('_', ' ')} · cutoff {report.data.data_cutoff} · Manager {report.data.provenance.producer_version}
+                </Text>
+                <Text size="xs" c="dimmed" ff="monospace">
+                  {report.data.content_hashes.source_projection_sha256.slice(0, 24)}…
+                </Text>
+              </div>
+              <Group gap="xs">
+                {report.data.artifacts.map((artifact) => (
+                  <Button
+                    key={artifact.format}
+                    component="a"
+                    href={artifact.download_url}
+                    download={artifact.filename}
+                    variant="default"
+                    size="xs"
+                  >
+                    {artifact.format.toUpperCase()}
+                  </Button>
+                ))}
+              </Group>
+            </Group>
           </Paper>
         ))}
       </Paper>

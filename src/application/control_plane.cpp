@@ -1,5 +1,6 @@
 #include "arena/application/control_plane.hpp"
 
+#include "arena/adapters/report_renderer.hpp"
 #include "arena/adapters/uci_process.hpp"
 #include "arena/application/engine_onboarding.hpp"
 #include "arena/application/installer/setup.hpp"
@@ -12,7 +13,11 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <map>
 #include <set>
+#include <sodium.h>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
@@ -21,6 +26,135 @@ namespace arena::application {
 namespace {
 
 using nlohmann::json;
+
+std::vector<std::string> string_array(const json& object, const char* name);
+
+struct RenderedReportArtifact final {
+    std::string format;
+    std::string extension;
+    std::string media_type;
+    std::string content;
+};
+
+std::string sha256_text(const std::string_view value) {
+    std::array<unsigned char, crypto_hash_sha256_BYTES> digest{};
+    crypto_hash_sha256(
+        digest.data(),
+        reinterpret_cast<const unsigned char*>(value.data()),
+        static_cast<unsigned long long>(value.size()));
+    std::array<char, crypto_hash_sha256_BYTES * 2 + 1> encoded{};
+    sodium_bin2hex(encoded.data(), encoded.size(), digest.data(), digest.size());
+    return encoded.data();
+}
+
+const std::map<std::string, std::pair<std::string, std::string>, std::less<>>&
+report_format_contract() {
+    static const std::map<std::string, std::pair<std::string, std::string>, std::less<>>
+        formats{
+            {"html", {"html", "text/html; charset=utf-8"}},
+            {"pdf", {"pdf", "application/pdf"}},
+            {"csv", {"csv", "text/csv; charset=utf-8"}},
+            {"json", {"json", "application/json; charset=utf-8"}},
+            {"pgn", {"pgn", "application/x-chess-pgn; charset=utf-8"}},
+        };
+    return formats;
+}
+
+std::vector<std::string> requested_report_formats(const json& parameters) {
+    std::vector<std::string> formats =
+        parameters.contains("formats")
+            ? string_array(parameters, "formats")
+            : std::vector<std::string>{"html", "pdf", "csv", "json", "pgn"};
+    if (formats.empty()) {
+        throw CommandFailure(
+            "invalid_report_formats", "at least one report format is required", 400);
+    }
+    std::set<std::string, std::less<>> unique;
+    for (const auto& format : formats) {
+        if (!report_format_contract().contains(format) || !unique.insert(format).second) {
+            throw CommandFailure(
+                "invalid_report_formats",
+                "formats must be unique members of html, pdf, csv, json, and pgn",
+                400);
+        }
+    }
+    return formats;
+}
+
+std::vector<RenderedReportArtifact> render_report_artifacts(
+    const json& document,
+    const std::vector<std::string>& formats) {
+    std::vector<RenderedReportArtifact> rendered;
+    rendered.reserve(formats.size());
+    for (const auto& format : formats) {
+        const auto& contract = report_format_contract().at(format);
+        std::string content;
+        if (format == "html") {
+            content = adapters::ReportRenderer::html(document);
+        } else if (format == "pdf") {
+            content = adapters::ReportRenderer::pdf(document);
+        } else if (format == "csv") {
+            content = adapters::ReportRenderer::csv(document);
+        } else if (format == "json") {
+            content = adapters::ReportRenderer::json(document);
+        } else {
+            content = adapters::ReportRenderer::pgn(document);
+        }
+        if (content.empty()) {
+            throw std::runtime_error("report renderer returned an empty " + format + " artifact");
+        }
+        rendered.push_back({format, contract.first, contract.second, std::move(content)});
+    }
+    return rendered;
+}
+
+std::string pgn_escape(std::string value) {
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (const char character : value) {
+        if (character == '\\' || character == '"') escaped.push_back('\\');
+        if (character == '\r' || character == '\n') continue;
+        escaped.push_back(character);
+    }
+    return escaped;
+}
+
+std::string games_pgn(
+    const json& games,
+    const std::map<std::string, std::string, std::less<>>& engine_names) {
+    std::string output;
+    for (const auto& game : games) {
+        const auto& white = game.value("white_engine", json::object());
+        const auto& black = game.value("black_engine", json::object());
+        const std::string white_id = white.value("id", "unknown");
+        const std::string black_id = black.value("id", "unknown");
+        const auto white_name = engine_names.find(white_id);
+        const auto black_name = engine_names.find(black_id);
+        const std::string result = game.value("result", "*");
+        output += "[Event \"" + pgn_escape(game.value("display_name", "UCI Arena game")) + "\"]\n";
+        output += "[Site \"UCI Arena Manager\"]\n";
+        output += "[Round \"" + std::to_string(game.value("round", 1U)) + "\"]\n";
+        output += "[White \"" + pgn_escape(white_name == engine_names.end() ? white_id : white_name->second) + "\"]\n";
+        output += "[Black \"" + pgn_escape(black_name == engine_names.end() ? black_id : black_name->second) + "\"]\n";
+        output += "[Result \"" + pgn_escape(result) + "\"]\n";
+        if (game.value("variant", "standard") == "chess960") {
+            output += "[Variant \"Chess960\"]\n";
+        }
+        const std::string starting_fen = game.value("starting_fen", "");
+        if (!starting_fen.empty() && starting_fen !=
+                "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1") {
+            output += "[SetUp \"1\"]\n[FEN \"" + pgn_escape(starting_fen) + "\"]\n";
+        }
+        output += "\n";
+        const auto moves = game.value("san_moves", std::vector<std::string>{});
+        for (std::size_t index = 0; index < moves.size(); ++index) {
+            if (index % 2 == 0) output += std::to_string(index / 2 + 1) + ". ";
+            output += moves[index] + " ";
+        }
+        output += result + "\n\n";
+    }
+    return output;
+}
 
 std::string required_string(const json& object, const char* name) {
     if (!object.contains(name) || !object.at(name).is_string() ||
@@ -225,7 +359,9 @@ json manager_service_api_declaration(const json& data) {
         "outputs_list",
         "status",
     };
-    if (string_set(declaration, "operations", 5) != required) {
+    const std::set<std::string> operations =
+        string_set(declaration, "operations", 32);
+    if (!std::ranges::includes(operations, required)) {
         throw std::runtime_error(
             "service Manager API declaration is missing required operations");
     }
@@ -490,7 +626,7 @@ json ControlPlane::status() const {
     return {
         {"schema_version", 1},
         {"service", "uci-arena-manager"},
-        {"version", "0.1.0"},
+        {"version", ARENA_VERSION},
         {"host_id", "local"},
         {"started_at", started_at_},
         {"database", "ready"},
@@ -553,6 +689,9 @@ json ControlPlane::submit(const json& raw_request, const std::string& actor) {
         }
         if (action == "resource.remove") {
             return remove_resource(request, actor);
+        }
+        if (action == "report.generate") {
+            return generate_report(request, actor);
         }
         if (action.starts_with("service.")) {
             return manage_service(request, actor);
@@ -1088,6 +1227,280 @@ json ControlPlane::save_bot_token_reference(
     }
 }
 
+json ControlPlane::generate_report(const json& request, const std::string& actor) {
+    if (required_string(request.at("target"), "kind") != "report" ||
+        (request.at("target").contains("id") &&
+         !request.at("target").at("id").is_null())) {
+        throw CommandFailure(
+            "invalid_target", "report.generate requires a new report target", 400);
+    }
+    if (manager_data_root_.empty()) {
+        throw CommandFailure(
+            "report_storage_unavailable",
+            "Manager data storage is not initialized",
+            409);
+    }
+
+    const json& parameters = request.at("parameters");
+    const std::string display_name = required_string(parameters, "display_name");
+    if (display_name.size() > 120 ||
+        std::any_of(display_name.begin(), display_name.end(), [](const unsigned char value) {
+            return value < 0x20;
+        })) {
+        throw CommandFailure(
+            "invalid_report_name",
+            "display_name must be at most 120 printable characters",
+            400);
+    }
+    const std::vector<std::string> formats = requested_report_formats(parameters);
+    const std::string scope = parameters.value("scope", "current_state");
+    if (parameters.contains("competition_id") &&
+        !parameters.at("competition_id").is_null() &&
+        !parameters.at("competition_id").is_string()) {
+        throw CommandFailure(
+            "invalid_report_scope", "competition_id must be a UUID or null", 400);
+    }
+    const std::string competition_id =
+        parameters.contains("competition_id") &&
+                parameters.at("competition_id").is_string()
+            ? parameters.at("competition_id").get<std::string>()
+            : "";
+    if (scope != "current_state" && scope != "competition") {
+        throw CommandFailure(
+            "invalid_report_scope",
+            "scope must be current_state or competition",
+            400);
+    }
+    if ((scope == "competition") != !competition_id.empty()) {
+        throw CommandFailure(
+            "invalid_report_scope",
+            "competition scope requires exactly one competition_id",
+            400);
+    }
+    if (!competition_id.empty() && !domain::is_uuid(competition_id)) {
+        throw CommandFailure(
+            "invalid_report_scope", "competition_id must be a UUID", 400);
+    }
+
+    const std::string data_cutoff = domain::utc_now();
+    json source_projection{
+        {"manager", status()},
+        {"services", json::array()},
+        {"competitions", json::array()},
+        {"games", json::array()},
+    };
+    for (const auto& service : store_->list_resources("managed_service", 10'000, 0)) {
+        const json data = json::parse(service.data_json);
+        source_projection["services"].push_back({
+            {"id", service.id},
+            {"profile_id", data.value("profile_id", "")},
+            {"display_name", data.value("display_name", "")},
+            {"integration_state", data.value("integration_state", "unavailable")},
+            {"desired_state", data.value("desired_state", "stopped")},
+            {"observed_state", data.value("observed_state", "unknown")},
+            {"output_integration", data.value("output_integration", json::object())},
+        });
+    }
+
+    std::map<std::string, std::string, std::less<>> engine_names;
+    for (const auto& engine : store_->list_resources("engine", 10'000, 0)) {
+        const json data = json::parse(engine.data_json);
+        engine_names.emplace(engine.id, data.value("display_name", engine.id));
+    }
+
+    if (scope == "competition") {
+        std::optional<ports::ResourceRecord> selected =
+            store_->get_resource("match_plan", competition_id);
+        if (!selected) selected = store_->get_resource("tournament", competition_id);
+        if (!selected) {
+            throw CommandFailure(
+                "resource_not_found", "competition report target does not exist", 404);
+        }
+        source_projection["competitions"].push_back(resource_json(*selected));
+    } else {
+        for (const auto* kind : {"match_plan", "tournament"}) {
+            for (const auto& competition : store_->list_resources(kind, 10'000, 0)) {
+                source_projection["competitions"].push_back(resource_json(competition));
+            }
+        }
+    }
+
+    const auto game_records = store_->list_resources("game", 10'001, 0);
+    bool games_truncated = false;
+    for (const auto& game : game_records) {
+        const json data = json::parse(game.data_json);
+        if (scope == "competition" &&
+            data.value("competition_id", "") != competition_id) {
+            continue;
+        }
+        if (source_projection["games"].size() == 10'000) {
+            games_truncated = true;
+            break;
+        }
+        source_projection["games"].push_back(data);
+    }
+
+    const std::string source_digest = "sha256:" + sha256_text(source_projection.dump());
+    json filters{
+        {"scope", scope},
+        {"competition_id", competition_id.empty() ? json(nullptr) : json(competition_id)},
+    };
+    json generation_parameters{
+        {"formats", formats},
+        {"maximum_games", 10'000},
+    };
+    json document{
+        {"schema", "arena_report_document_v1"},
+        {"schema_version", 1},
+        {"title", display_name},
+        {"data_cutoff", data_cutoff},
+        {"filters", filters},
+        {"generation_parameters", generation_parameters},
+        {"content_hashes", {{"source_projection_sha256", source_digest}}},
+        {"provenance",
+         {
+             {"producer", "uci-arena-manager"},
+             {"producer_version", ARENA_VERSION},
+             {"host_id", "local"},
+             {"service_outputs", "bounded_public_projections"},
+         }},
+        {"games_truncated", games_truncated},
+        {"snapshot", source_projection},
+    };
+    const std::string pgn = games_pgn(source_projection.at("games"), engine_names);
+    if (!pgn.empty()) document["pgn"] = pgn;
+
+    const std::vector<RenderedReportArtifact> rendered =
+        render_report_artifacts(document, formats);
+    const std::string id = domain::uuid_v7();
+    json artifacts = json::array();
+    for (const auto& artifact : rendered) {
+        artifacts.push_back({
+            {"format", artifact.format},
+            {"filename", "uci-arena-report-" + id + "." + artifact.extension},
+            {"media_type", artifact.media_type},
+            {"size_bytes", artifact.content.size()},
+            {"sha256", "sha256:" + sha256_text(artifact.content)},
+            {"download_url", "/api/v1/reports/" + id + "/artifacts/" + artifact.format},
+        });
+    }
+    json data{
+        {"display_name", display_name},
+        {"schema", "arena_report_document_v1"},
+        {"schema_version", 1},
+        {"scope", scope},
+        {"filters", filters},
+        {"generation_parameters", generation_parameters},
+        {"data_cutoff", data_cutoff},
+        {"content_hashes", {{"source_projection_sha256", source_digest}}},
+        {"provenance", document.at("provenance")},
+        {"artifacts", artifacts},
+    };
+    const std::string now = domain::utc_now();
+    ports::ResourceRecord resource{
+        id,
+        "report",
+        "local",
+        1,
+        now,
+        now,
+        labels_from(parameters).dump(),
+        data.dump(),
+    };
+    if (request.at("dry_run").get<bool>()) {
+        return complete_create(request, actor, std::move(resource));
+    }
+
+    const std::filesystem::path reports_root = manager_data_root_ / "reports";
+    const std::filesystem::path staging = reports_root / (".tmp-" + id);
+    const std::filesystem::path destination = reports_root / id;
+    std::error_code error;
+    std::filesystem::create_directories(reports_root, error);
+    if (error || std::filesystem::is_symlink(std::filesystem::symlink_status(reports_root))) {
+        throw CommandFailure(
+            "report_storage_unavailable", "report storage root is not safe", 409);
+    }
+    std::filesystem::create_directory(staging, error);
+    if (error) {
+        throw CommandFailure(
+            "report_storage_unavailable", "cannot create report staging directory", 409);
+    }
+    try {
+        for (const auto& artifact : rendered) {
+            const std::filesystem::path path =
+                staging / ("report." + artifact.extension);
+            std::ofstream output(path, std::ios::binary | std::ios::trunc);
+            output.write(
+                artifact.content.data(),
+                static_cast<std::streamsize>(artifact.content.size()));
+            output.close();
+            if (!output || std::filesystem::file_size(path) != artifact.content.size()) {
+                throw std::runtime_error("cannot persist " + artifact.format + " report artifact");
+            }
+        }
+        std::filesystem::rename(staging, destination);
+        try {
+            return complete_create(request, actor, std::move(resource));
+        } catch (...) {
+            std::filesystem::remove_all(destination, error);
+            throw;
+        }
+    } catch (...) {
+        std::filesystem::remove_all(staging, error);
+        throw;
+    }
+}
+
+ReportArtifact ControlPlane::report_artifact(
+    const std::string& report_id,
+    const std::string& format) const {
+    if (!domain::is_uuid(report_id) || !report_format_contract().contains(format)) {
+        throw CommandFailure(
+            "report_artifact_not_found", "report artifact does not exist", 404);
+    }
+    const auto resource = store_->get_resource("report", report_id);
+    if (!resource) {
+        throw CommandFailure(
+            "report_artifact_not_found", "report artifact does not exist", 404);
+    }
+    const json data = json::parse(resource->data_json);
+    json metadata;
+    for (const auto& candidate : data.value("artifacts", json::array())) {
+        if (candidate.value("format", "") == format) {
+            metadata = candidate;
+            break;
+        }
+    }
+    if (!metadata.is_object()) {
+        throw CommandFailure(
+            "report_artifact_not_found", "report format was not generated", 404);
+    }
+    const auto& contract = report_format_contract().at(format);
+    const std::filesystem::path path =
+        manager_data_root_ / "reports" / report_id / ("report." + contract.first);
+    std::error_code error;
+    const auto file_status = std::filesystem::symlink_status(path, error);
+    const auto size = std::filesystem::file_size(path, error);
+    if (error || !std::filesystem::is_regular_file(file_status) ||
+        std::filesystem::is_symlink(file_status) || size > 64ULL * 1024ULL * 1024ULL) {
+        throw CommandFailure(
+            "report_artifact_unavailable", "report artifact storage is invalid", 409);
+    }
+    std::ifstream input(path, std::ios::binary);
+    std::string content{
+        std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+    if (input.bad() || content.size() != size ||
+        metadata.value("sha256", "") != "sha256:" + sha256_text(content)) {
+        throw CommandFailure(
+            "report_artifact_unavailable", "report artifact digest validation failed", 409);
+    }
+    return {
+        std::move(content),
+        metadata.value("media_type", contract.second),
+        metadata.value("filename", "uci-arena-report-" + report_id + "." + contract.first),
+    };
+}
+
 json ControlPlane::complete_create(
     const json& request,
     const std::string& actor,
@@ -1550,11 +1963,13 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                                   "timing_profile.qualified"}
                             : std::set<std::string>{
                                   "opening_book.snapshot"};
+                    const std::set<std::string> described_operations =
+                        string_set(describe, "operations", 32);
                     if (describe.value("transport", "") != "cli_json" ||
                         describe.value("invocation", json::array()) !=
                             json::array({"api"}) ||
-                        string_set(describe, "operations", 32) !=
-                            required_operations ||
+                        !std::ranges::includes(
+                            described_operations, required_operations) ||
                         string_set(describe, "output_schemas", 8) !=
                             std::set<std::string>{
                                 "uci_arena_service_output_v1"} ||
@@ -2456,6 +2871,24 @@ json ControlPlane::remove_resource(const json& request, const std::string& actor
                 "service_active",
                 "stop the manual service before removing its locator",
                 409);
+        }
+    }
+    if (kind == "match_plan" || kind == "tournament") {
+        const json data = json::parse(existing->data_json);
+        if (data.value("lifecycle", "planned") != "planned") {
+            throw CommandFailure(
+                "competition_history_retained",
+                "only a never-started planned competition can be removed",
+                409);
+        }
+        for (const auto& game : store_->list_resources("game", 10'000, 0)) {
+            const json game_data = json::parse(game.data_json);
+            if (game_data.value("competition_id", "") == id) {
+                throw CommandFailure(
+                    "competition_history_retained",
+                    "a competition with admitted games cannot be removed",
+                    409);
+            }
         }
     }
     const std::uint64_t expected_revision =

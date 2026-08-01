@@ -1,4 +1,5 @@
 export type ResourceKind =
+  | 'host'
   | 'engine'
   | 'bot'
   | 'managed_service'
@@ -9,8 +10,9 @@ export type ResourceKind =
   | 'operation'
   | 'report'
   | 'artifact'
+  | 'secret_reference'
+  | 'log_source'
   | 'health_snapshot'
-  | 'audit'
 
 export interface Resource<T extends Record<string, unknown> = Record<string, unknown>> {
   id: string
@@ -177,6 +179,60 @@ export interface MatchPlanData extends Record<string, unknown> {
     black_engine_id: string
     round: number
     opening_index?: number
+  }>
+}
+
+export interface GameData extends Record<string, unknown> {
+  display_name: string
+  competition_kind: 'match_plan' | 'tournament'
+  competition_id: string
+  sequence: number
+  round: number
+  board: number
+  starting_fen: string
+  variant: 'standard' | 'chess960'
+  uci_moves: string[]
+  san_moves: string[]
+  per_ply_fen: string[]
+  evaluations_cp: Array<number | null>
+  principal_variations: string[][]
+  clocks: { white_ms: number; black_ms: number }
+  result: string
+  termination: string
+  lifecycle: 'running' | 'completed' | 'cancelled' | 'failed' | 'interrupted'
+  white_engine: { id: string; fingerprint: string; options: Record<string, unknown> }
+  black_engine: { id: string; fingerprint: string; options: Record<string, unknown> }
+  failure_detail?: string
+}
+
+export interface ReportData extends Record<string, unknown> {
+  display_name: string
+  schema: 'arena_report_document_v1'
+  schema_version: 1
+  scope: 'current_state' | 'competition'
+  filters: {
+    scope: 'current_state' | 'competition'
+    competition_id: string | null
+  }
+  generation_parameters: {
+    formats: Array<'html' | 'pdf' | 'csv' | 'json' | 'pgn'>
+    maximum_games: number
+  }
+  data_cutoff: string
+  content_hashes: { source_projection_sha256: string }
+  provenance: {
+    producer: 'uci-arena-manager'
+    producer_version: string
+    host_id: 'local'
+    service_outputs: 'bounded_public_projections'
+  }
+  artifacts: Array<{
+    format: 'html' | 'pdf' | 'csv' | 'json' | 'pgn'
+    filename: string
+    media_type: string
+    size_bytes: number
+    sha256: string
+    download_url: string
   }>
 }
 

@@ -26,3 +26,23 @@ export function competitionScheduleSize(
     : (participants * (participants - 1)) / 2
   return pairs * gamesPerPair
 }
+
+export function competitionPairingPreview(
+  format: string,
+  scheduledGames: number,
+  participants: number,
+) {
+  if (format === 'swiss') {
+    return {
+      label: 'Games / round',
+      value: String(Math.floor(participants / 2)),
+    }
+  }
+  const completeSets = Math.floor(scheduledGames / 2)
+  return {
+    label: 'Color-reversed sets',
+    value: scheduledGames % 2 === 0
+      ? String(completeSets)
+      : `${completeSets} + 1 unpaired game`,
+  }
+}

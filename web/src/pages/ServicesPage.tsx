@@ -34,7 +34,12 @@ import { PageHeader } from '../components/PageHeader'
 import { ComponentSetupButton } from '../components/ComponentSetupButton'
 import { PathPickerInput } from '../components/PathPickerInput'
 import { StatusPill } from '../components/StatusPill'
-import { selectPreferredService } from './serviceSelection'
+import {
+  canEnqueueEvidenceCampaign,
+  selectPreferredService,
+  serviceCardStates,
+  serviceLocatorMode,
+} from './serviceSelection'
 
 export function ServicesPage({ navigate }: { navigate: (page: string) => void }) {
   const queryClient = useQueryClient()
@@ -101,15 +106,22 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
   )
   const bookPackage = packageById.get('book_forge.service')
   const evidencePackage = packageById.get('uci_arena_evidence.service')
-  const serviceBadge = (
-    packageState: string | undefined,
-    configured: boolean,
-    observed: string | undefined,
-  ) => {
-    if (packageState !== 'installed') return 'MISSING · INSTALL WITH SETUP'
-    if (!configured) return 'INSTALLED · NOT CONFIGURED'
-    return `CONFIGURED · ${(observed ?? 'UNKNOWN').toUpperCase()}`
-  }
+  const bookStates = serviceCardStates(
+    bookPackage?.package_state,
+    Boolean(bookService),
+    bookService?.data.observed_state,
+    components.isLoading,
+    services.isLoading,
+  )
+  const evidenceStates = serviceCardStates(
+    evidencePackage?.package_state,
+    Boolean(evidenceService),
+    evidenceService?.data.observed_state,
+    components.isLoading,
+    services.isLoading,
+  )
+  const bookLocatorMode = serviceLocatorMode(bookService)
+  const evidenceLocatorMode = serviceLocatorMode(evidenceService)
   const save = useMutation({
     mutationFn: ({
       parameters,
@@ -262,9 +274,11 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
             <ThemeIcon size={46} radius="md" variant="light">
               <IconBook2 size={24} />
             </ThemeIcon>
-            <Badge color={bookPackage?.package_state === 'installed' ? 'teal' : 'gray'} variant="light">
-              {serviceBadge(bookPackage?.package_state, Boolean(bookService), bookService?.data.observed_state)}
-            </Badge>
+            <Group gap={5} justify="flex-end">
+              <Badge color={bookPackage?.package_state === 'installed' ? 'teal' : 'gray'} variant="light">{bookStates.package}</Badge>
+              <Badge color={bookService ? 'blue' : 'gray'} variant="light">{bookStates.locator}</Badge>
+              <Badge color={bookService?.data.observed_state === 'running' ? 'teal' : 'gray'} variant="light">{bookStates.runtime}</Badge>
+            </Group>
           </Group>
           <Title order={2} mt="lg">
             Book Forge
@@ -293,7 +307,11 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
             leftSection={<IconPlugConnected size={17} />}
             onClick={openBookSetup}
           >
-            {bookService ? 'Edit locator' : 'Detect or configure'}
+            {bookLocatorMode === 'view_installed'
+              ? 'View installed locator'
+              : bookLocatorMode === 'edit_manual'
+                ? 'Edit locator'
+                : 'Detect or configure'}
           </Button>
           {bookPackage && bookPackage.package_state !== 'installed' && (
             <Stack gap="xs" mt="sm">
@@ -321,9 +339,11 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
             <ThemeIcon size={46} radius="md" variant="light" color="violet">
               <IconClockHour4 size={24} />
             </ThemeIcon>
-            <Badge color={evidencePackage?.package_state === 'installed' ? 'violet' : 'gray'} variant="light">
-              {serviceBadge(evidencePackage?.package_state, Boolean(evidenceService), evidenceService?.data.observed_state)}
-            </Badge>
+            <Group gap={5} justify="flex-end">
+              <Badge color={evidencePackage?.package_state === 'installed' ? 'violet' : 'gray'} variant="light">{evidenceStates.package}</Badge>
+              <Badge color={evidenceService ? 'blue' : 'gray'} variant="light">{evidenceStates.locator}</Badge>
+              <Badge color={evidenceService?.data.observed_state === 'running' ? 'violet' : 'gray'} variant="light">{evidenceStates.runtime}</Badge>
+            </Group>
           </Group>
           <Title order={2} mt="lg">
             UCI Arena Evidence Service
@@ -353,7 +373,11 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
             leftSection={<IconSettings size={17} />}
             onClick={openEvidenceSetup}
           >
-            {evidenceService ? 'Edit locator' : 'Detect or configure'}
+            {evidenceLocatorMode === 'view_installed'
+              ? 'View installed locator'
+              : evidenceLocatorMode === 'edit_manual'
+                ? 'Edit locator'
+                : 'Detect or configure'}
           </Button>
           {evidencePackage && evidencePackage.package_state !== 'installed' && (
             <Stack gap="xs" mt="sm">
@@ -584,7 +608,15 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                         evidenceControl.variables?.service.id === service.id &&
                         evidenceControl.variables.action === 'campaign_enqueue'
                       }
-                      disabled={evidenceControl.isPending}
+                      title={
+                        canEnqueueEvidenceCampaign(service.data)
+                          ? 'Enqueue the provider-defined first evidence campaign.'
+                          : 'Start or register an exact compatible engine deployment first.'
+                      }
+                      disabled={
+                        evidenceControl.isPending ||
+                        !canEnqueueEvidenceCampaign(service.data)
+                      }
                       onClick={() =>
                         evidenceControl.mutate({ service, action: 'campaign_enqueue' })
                       }
@@ -728,7 +760,12 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
         </Stack>
       </Modal>
 
-      <Modal opened={bookOpened} onClose={bookModal.close} title="Configure Book Forge" size="lg">
+      <Modal
+        opened={bookOpened}
+        onClose={bookModal.close}
+        title={bookLocatorMode === 'view_installed' ? 'Installed Book Forge locator' : 'Configure Book Forge'}
+        size="lg"
+      >
         <Stack>
           <Alert color="blue">
             This adapter invokes Book Forge’s public CLI with native arguments and reads only its
@@ -737,16 +774,20 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
           </Alert>
           <Group justify="space-between">
             <Text size="sm" c="dimmed">
-              Optional integration · no resource is created until you save.
+              {bookLocatorMode === 'view_installed'
+                ? 'Suite Setup owns this locator. Rerun Suite Setup and choose Modify to change it.'
+                : bookLocatorMode === 'edit_manual'
+                  ? 'The existing manual locator changes only after validation succeeds.'
+                  : 'Optional integration · no resource is created until you save.'}
             </Text>
-            <Button
+            {bookLocatorMode !== 'view_installed' && <Button
               variant="default"
               leftSection={<IconSearch size={16} />}
               loading={discover.isPending}
               onClick={() => discover.mutate('book_forge')}
             >
               Auto-detect
-            </Button>
+            </Button>}
           </Group>
           {discoveryMessage && <Alert color="gray">{discoveryMessage}</Alert>}
           <PathPickerInput
@@ -757,6 +798,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
             onChange={setNodePath}
             mode="file"
             filters={[{ name: 'Node executable', patterns: ['node.exe', 'node'] }]}
+            disabled={bookLocatorMode === 'view_installed'}
           />
           <PathPickerInput
             label="Book Forge CLI entrypoint"
@@ -766,6 +808,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
             onChange={setCliPath}
             mode="file"
             filters={[{ name: 'Node CLI modules', patterns: ['*.mjs', '*.js'] }]}
+            disabled={bookLocatorMode === 'view_installed'}
           />
           <PathPickerInput
             label="Book Forge workspace"
@@ -774,13 +817,14 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
             value={workspace}
             onChange={setWorkspace}
             mode="directory"
+            disabled={bookLocatorMode === 'view_installed'}
           />
           {save.error && <Text c="red">{save.error.message}</Text>}
           <Group justify="flex-end">
             <Button variant="default" onClick={bookModal.close}>
-              Cancel
+              {bookLocatorMode === 'view_installed' ? 'Close' : 'Cancel'}
             </Button>
-            <Button
+            {bookLocatorMode !== 'view_installed' && <Button
               loading={save.isPending}
               disabled={!nodePath || !cliPath || !workspace}
               onClick={() =>
@@ -797,14 +841,16 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
               }
             >
               Validate and save
-            </Button>
+            </Button>}
           </Group>
         </Stack>
       </Modal>
       <Modal
         opened={evidenceOpened}
         onClose={evidenceModal.close}
-        title="Configure UCI Arena Evidence Service"
+        title={evidenceLocatorMode === 'view_installed'
+          ? 'Installed UCI Arena Evidence Service locator'
+          : 'Configure UCI Arena Evidence Service'}
         size="lg"
       >
         <Stack>
@@ -815,16 +861,20 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
           </Alert>
           <Group justify="space-between">
             <Text size="sm" c="dimmed">
-              Omit this integration without affecting arena health or local matches.
+              {evidenceLocatorMode === 'view_installed'
+                ? 'Suite Setup owns this locator. Rerun Suite Setup and choose Modify to change it.'
+                : evidenceLocatorMode === 'edit_manual'
+                  ? 'The existing manual locator changes only after validation succeeds.'
+                  : 'Omit this integration without affecting arena health or local matches.'}
             </Text>
-            <Button
+            {evidenceLocatorMode !== 'view_installed' && <Button
               variant="default"
               leftSection={<IconSearch size={16} />}
               loading={discover.isPending}
               onClick={() => discover.mutate('uci_arena_evidence')}
             >
               Auto-detect
-            </Button>
+            </Button>}
           </Group>
           {discoveryMessage && <Alert color="gray">{discoveryMessage}</Alert>}
           <PathPickerInput
@@ -835,6 +885,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
             onChange={setEvidenceNodePath}
             mode="file"
             filters={[{ name: 'Node executable', patterns: ['node.exe', 'node'] }]}
+            disabled={evidenceLocatorMode === 'view_installed'}
           />
           <PathPickerInput
             label="Evidence Service CLI entrypoint"
@@ -844,6 +895,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
             onChange={setEvidenceCliPath}
             mode="file"
             filters={[{ name: 'Node CLI modules', patterns: ['*.mjs', '*.js'] }]}
+            disabled={evidenceLocatorMode === 'view_installed'}
           />
           <PathPickerInput
             label="Evidence Service workspace"
@@ -852,13 +904,14 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
             value={evidenceWorkspace}
             onChange={setEvidenceWorkspace}
             mode="directory"
+            disabled={evidenceLocatorMode === 'view_installed'}
           />
           {save.error && <Text c="red">{save.error.message}</Text>}
           <Group justify="flex-end">
             <Button variant="default" onClick={evidenceModal.close}>
-              Cancel
+              {evidenceLocatorMode === 'view_installed' ? 'Close' : 'Cancel'}
             </Button>
-            <Button
+            {evidenceLocatorMode !== 'view_installed' && <Button
               color="violet"
               loading={save.isPending}
               disabled={!evidenceNodePath || !evidenceCliPath || !evidenceWorkspace}
@@ -876,7 +929,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
               }
             >
               Validate and save
-            </Button>
+            </Button>}
           </Group>
         </Stack>
       </Modal>

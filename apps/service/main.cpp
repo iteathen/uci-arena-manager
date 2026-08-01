@@ -474,6 +474,39 @@ int run_control_plane(const Options& options) {
             {drogon::Get});
 
         app.registerHandler(
+            "/api/v1/reports/{1}/artifacts/{2}",
+            [control_plane, auth](
+                const HttpRequestPtr& request,
+                std::function<void(const HttpResponsePtr&)>&& callback,
+                const std::string& report_id,
+                const std::string& format) {
+                if (!authorized(request, auth)) {
+                    callback(response(
+                        {{"code", "authentication_required"}},
+                        drogon::k401Unauthorized));
+                    return;
+                }
+                try {
+                    const auto artifact =
+                        control_plane->report_artifact(report_id, format);
+                    auto result = HttpResponse::newHttpResponse();
+                    result->setStatusCode(drogon::k200OK);
+                    result->setContentTypeString(artifact.media_type);
+                    result->setBody(artifact.content);
+                    result->addHeader("Content-Disposition", "attachment; filename=\"" + artifact.filename + "\"");
+                    result->addHeader("Cache-Control", "no-store");
+                    result->addHeader("X-Content-Type-Options", "nosniff");
+                    result->addHeader("Content-Security-Policy", "default-src 'none'");
+                    callback(result);
+                } catch (const arena::application::CommandFailure& failure) {
+                    callback(response(
+                        arena::application::problem_json(failure),
+                        status_code(failure.http_status())));
+                }
+            },
+            {drogon::Get});
+
+        app.registerHandler(
             "/api/v1/events/snapshot",
             [control_plane, auth](
                 const HttpRequestPtr& request,

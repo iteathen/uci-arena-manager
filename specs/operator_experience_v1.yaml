@@ -53,6 +53,19 @@ interaction_feedback:
     - References to a missing prerequisite, setting, service, engine, report,
       plan, or control are links or buttons that navigate directly to the
       owning surface. Explanatory text is not a substitute for navigation.
+    - Resource identities shown by Logs and Audit link to the owning engines,
+      services, bots, competitions, game history, reports, configuration, or
+      health surface using the shared resource-kind mapping.
+    - The page hash is a durable deep link. Direct hash navigation, browser
+      back/forward, and a newly delivered pairing hash update the rendered
+      surface without reauthenticating ordinary page changes.
+    - The durable-event resource filter enumerates every public resource kind
+      defined by the shared domain contract; it must not silently hide game,
+      report, artifact, health, operation, host, secret-reference, or log-source
+      events behind an incomplete hard-coded subset.
+    - Configuration reports the actual authenticated page host and port as the
+      listen endpoint; a default production port is never hard-coded into a
+      dashboard connected to a different local service instance.
 
 engine_identity_experience:
   requirements:
@@ -96,6 +109,10 @@ managed_service_experience:
     - Offer Auto-detect without registering or enabling a discovered candidate.
     - When discovery is incomplete or empty, keep manual paths and endpoint fields visible and editable.
     - Permit the operator to reconfigure a previously saved locator.
+    - Reconfiguration applies to Manager-owned manual locators. A receipt-owned
+      locator is shown read-only and directs changes to Suite Setup Modify;
+      the dashboard never offers a save that the active provider lifecycle or
+      installer ownership contract must reject.
     - Reject a second saved locator for the same profile. When upgrading a
       legacy database that already contains duplicates, select the exact
       receipt-owned instance for the catalog card, warn about the duplicate,
@@ -114,6 +131,9 @@ managed_service_experience:
     - Do not show an unconfigured optional service as an unhealthy manager resource.
     - Show Installed/Missing, Configured/Not configured, and current runtime
       activity as separate states on the catalog card.
+    - While package inventory or saved instances are loading, show Checking
+      for that independent dimension and never flash Missing, Not configured,
+      or an inactive runtime conclusion from absent query data.
     - When a signed component is missing, offer a reviewed foreground
       download/install plan without granting package authority to the service.
       If retained verified media is unavailable, identify Suite Setup repair as
@@ -255,6 +275,9 @@ bot_experience:
     - Provide owner add/remove/list, reservation create/status/cancel, and
       scheduler status/pause/resume without a terminal. Each action refreshes
       provider-authoritative state after success.
+    - Reservation creation selects one of the current provider-owned owners;
+      free-form non-owner submission is unavailable and an empty owner list
+      links the operator to the owner control.
     - Account and option controls require the desktop helper but never require
       the Lichess token, never expose raw adapter configuration, and never
       imply that local owners are authenticated bot identities.
@@ -277,9 +300,18 @@ tournament_experience:
       Elo hypotheses and alpha/beta for SPRT, moves-to-go, opening-suite path,
       maximum-ply and optional draw/win adjudication controls, and all supported
       variants. Controls hidden by format are omitted from the command.
+    - The schedule preview labels Swiss capacity as games per round, never as color pairs. Other formats report complete color-reversed sets and disclose any odd unpaired game instead of rounding it into a fictitious pair.
     - Competition cards show a terminal SPRT verdict and likelihood ratio,
       Swiss round/bye progress, and direct links to the planner, Engines, and
       Reports wherever those references are named.
+    - Competition cards expose a stable short resource id and creation time so
+      duplicate display names are distinguishable. A planned competition may
+      be removed only after explicit confirmation; started and terminal
+      records remain durable history.
+    - Live games show only running or interrupted resources with current
+      backend-authored position, clocks, evaluation, principal variation, and
+      owning-competition identity. Game history shows only terminal resources
+      and provides ply-by-ply replay from persisted FEN snapshots.
 
 evidence_service_experience:
   requirements:
@@ -289,6 +321,9 @@ evidence_service_experience:
     - A configured compatible Evidence Service exposes one guided action to
       enqueue its built-in first campaign; an absent exact target explains how
       to start or register a compatible model deployment before collecting.
+    - The first-campaign action is disabled while provider state explicitly
+      reports waiting for a target and no provider-issued target is present;
+      the UI does not invite a command that is already known to be invalid.
     - Eligible failed or cancelled jobs expose Retry; queued or waiting jobs
       expose Cancel. Invalid provider lifecycle actions are not rendered.
     - All campaign and job controls call the typed service API through Manager,
@@ -341,6 +376,11 @@ chessboard:
 reports:
   model: immutable_report_document
   formats: [html, pdf, csv, json, pgn]
+  requirements:
+    - The Reports surface can generate a current-state report or a report for one selected persisted competition without requiring a command line.
+    - Generation has explicit pending, success, and actionable failure feedback and refreshes the backend-authoritative report collection.
+    - Every generated report lists its scope, data cutoff, provenance, and authenticated download controls for each rendered format.
+    - Empty provider output remains truthful and does not prevent generation of a Manager report.
   common_fields:
     - filters
     - generation_parameters

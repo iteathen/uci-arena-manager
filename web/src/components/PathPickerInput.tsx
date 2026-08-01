@@ -13,6 +13,7 @@ interface PathPickerInputProps {
   description?: string
   placeholder?: string
   filters?: LocalPathFilter[]
+  disabled?: boolean
 }
 
 export function PathPickerInput({
@@ -24,6 +25,7 @@ export function PathPickerInput({
   description,
   placeholder,
   filters,
+  disabled = false,
 }: PathPickerInputProps) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -51,6 +53,7 @@ export function PathPickerInput({
       description={description}
       placeholder={placeholder}
       value={value}
+      disabled={disabled}
       error={error || undefined}
       onChange={(event) => onChange(event.currentTarget.value)}
       rightSectionPointerEvents="all"
@@ -60,6 +63,7 @@ export function PathPickerInput({
             aria-label={`Browse for ${label}`}
             variant="subtle"
             loading={loading}
+            disabled={disabled}
             onClick={browse}
           >
             <IconFolderOpen size={17} />

@@ -21,6 +21,8 @@ x-command-actions:
     - service.evidence_campaign_enqueue
     - service.evidence_job_cancel
     - service.evidence_job_retry
+  reporting:
+    - report.generate
   contract: >
     Lifecycle commands target a persisted match_plan or tournament resource,
     require its current revision, and return the durably updated resource.
@@ -46,6 +48,9 @@ x-competition-plan-contract:
     - Swiss pairings after round one and SPRT decisions are backend-authored.
     - Progress, Swiss byes, evaluations, and SPRT verdicts are resource data,
       never client-side projections.
+    - Every saved-plan projection includes its stable resource id. A planned
+      competition with no admitted game may be removed by resource.remove;
+      all other competition lifecycle records remain durable.
 x-interactive-helper-contract:
   origin: authenticated_desktop_launcher_session
   authority: receipt_verified_provider_adapter
@@ -318,6 +323,36 @@ paths:
               schema:
                 $ref: "#/components/schemas/ServiceDiscovery"
         "404":
+          $ref: "#/components/responses/Problem"
+  /reports/{reportId}/artifacts/{format}:
+    get:
+      operationId: downloadReportArtifact
+      description: >
+        Return one immutable report artifact after validating its report UUID,
+        allowlisted format, fixed storage location, and persisted SHA-256 digest.
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: format
+          in: path
+          required: true
+          schema:
+            enum: [html, pdf, csv, json, pgn]
+      responses:
+        "200":
+          description: Authenticated immutable report artifact
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
           $ref: "#/components/responses/Problem"
   /commands:
     post:

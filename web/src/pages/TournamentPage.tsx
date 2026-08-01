@@ -10,7 +10,7 @@ export function TournamentPage({ navigate }: { navigate: (page: string) => void 
           title="Tournaments & matches"
           description="Backend-authoritative schedules, lifecycle controls, and durable game progress."
         />
-        <Button component="a" href="#page=planner" onClick={() => navigate('planner')}>
+        <Button component="a" href="#page=planner" onClick={(event) => { event.preventDefault(); navigate('planner') }}>
           Create plan
         </Button>
       </Group>
