@@ -15,6 +15,7 @@ import {
 import path from "node:path";
 import process from "node:process";
 import { resolveCMakeTool } from "./cmake-toolchain.mjs";
+import { resolveCosignExecutable } from "./cosign-tool.mjs";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "../..");
 
@@ -132,6 +133,9 @@ export function completeDevelopmentBuild({
       "the native development bootstrapper is currently supported only for windows-x86_64",
     );
   }
+  const verifiedCosignExecutable = resolveCosignExecutable(cosignExecutable, {
+    repositoryRoot,
+  });
   const lockPath = path.join(repositoryRoot, "release", "catalog.lock.json");
   const lock = JSON.parse(readFileSync(lockPath, "utf8"));
   const version = explicitVersion ?? lock.suite_version;
@@ -205,7 +209,7 @@ export function completeDevelopmentBuild({
     env: {
       ...process.env,
       GH_MANAGER_TOKEN: githubToken(),
-      COSIGN_EXECUTABLE: cosignExecutable,
+      COSIGN_EXECUTABLE: verifiedCosignExecutable,
     },
   });
   run("node", [
