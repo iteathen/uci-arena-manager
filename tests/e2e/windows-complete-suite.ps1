@@ -39,6 +39,25 @@ function Invoke-JsonCommand {
     }
 }
 
+function Invoke-JsonExpectedFailure {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments
+    )
+    $output = @(& $FilePath @Arguments 2>&1)
+    if ($LASTEXITCODE -eq 0) {
+        throw "$FilePath unexpectedly accepted a negative acceptance request"
+    }
+    $text = $output -join [Environment]::NewLine
+    try {
+        return $text | ConvertFrom-Json
+    } catch {
+        throw "$FilePath emitted invalid rejection JSON: $text"
+    }
+}
+
 function Get-Receipt {
     param([string]$ComponentId)
     $filename = Join-Path (Join-Path $RunRoot "data") "receipts"
@@ -432,6 +451,33 @@ try {
     if (-not $bookValidation.ok -or $bookValidation.id -ne $bookChannel.snapshot_id) {
         throw "Book Forge snapshot validation failed"
     }
+    $bookApiList = Invoke-JsonCommand $node @(
+        $bookCli, "api", "outputs", "list",
+        "--workspace", $bookWorkspace, "--config", $bookConfig
+    )
+    $bookApiOutput = @($bookApiList.payload.outputs) |
+        Where-Object { $_.output_id -eq $bookValidation.id } |
+        Select-Object -First 1
+    if ($bookApiList.operation -ne "outputs_list" -or -not $bookApiOutput) {
+        throw "Book Forge Manager API did not list the validated snapshot"
+    }
+    $bookApiInspect = Invoke-JsonCommand $node @(
+        $bookCli, "api", "outputs", "inspect", "--id", $bookApiOutput.output_id,
+        "--workspace", $bookWorkspace, "--config", $bookConfig
+    )
+    if ($bookApiInspect.operation -ne "outputs_inspect" -or
+        $bookApiInspect.payload.output.output_id -ne $bookApiOutput.output_id) {
+        throw "Book Forge Manager API did not inspect the named snapshot"
+    }
+    $bookApiRejection = Invoke-JsonExpectedFailure $node @(
+        $bookCli, "api", "outputs", "inspect",
+        "--workspace", $bookWorkspace, "--config", $bookConfig,
+        "--id", "integration-0123456789abcdefabcd"
+    )
+    if ($bookApiRejection.ok -ne $false -or
+        $bookApiRejection.operation -ne "outputs_inspect") {
+        throw "Book Forge Manager API did not preserve typed inspection rejection"
+    }
     if (-not $SkipStartupRegistration) {
         [void](Invoke-JsonCommand $node @(
             $bookCli, "startup", "install",
@@ -533,6 +579,34 @@ try {
     $dataset = $datasets | Where-Object { $_.id -eq $job.datasetId } | Select-Object -First 1
     if ($dataset.state -ne "completed" -or $dataset.observationCount -lt 1) {
         throw "Evidence Service did not persist its dataset"
+    }
+    $evidenceApiList = Invoke-JsonCommand $node @(
+        $evidenceCli, "api", "outputs", "list",
+        "--workspace", $evidenceWorkspace, "--config", $evidenceAcceptanceConfig
+    )
+    $evidenceOutputId = "dataset:$($dataset.id)"
+    $evidenceApiOutput = @($evidenceApiList.payload.outputs) |
+        Where-Object { $_.output_id -eq $evidenceOutputId } |
+        Select-Object -First 1
+    if ($evidenceApiList.operation -ne "outputs_list" -or -not $evidenceApiOutput) {
+        throw "Evidence Service Manager API did not list the completed dataset"
+    }
+    $evidenceApiInspect = Invoke-JsonCommand $node @(
+        $evidenceCli, "api", "outputs", "inspect", "--id", $evidenceOutputId,
+        "--workspace", $evidenceWorkspace, "--config", $evidenceAcceptanceConfig
+    )
+    if ($evidenceApiInspect.operation -ne "outputs_inspect" -or
+        $evidenceApiInspect.payload.output.output_id -ne $evidenceOutputId) {
+        throw "Evidence Service Manager API did not inspect the named dataset"
+    }
+    $evidenceApiRejection = Invoke-JsonExpectedFailure $node @(
+        $evidenceCli, "api", "outputs", "inspect",
+        "--workspace", $evidenceWorkspace, "--config", $evidenceAcceptanceConfig,
+        "--id", "dataset:00000000-0000-4000-8000-000000000000"
+    )
+    if ($evidenceApiRejection.ok -ne $false -or
+        $evidenceApiRejection.operation -ne "outputs_inspect") {
+        throw "Evidence Service Manager API did not preserve typed inspection rejection"
     }
     if (-not $SkipStartupRegistration) {
         [void](Invoke-JsonCommand $node @(

@@ -1187,6 +1187,11 @@ acceptance:
   - Protected VM acceptance places Book Forge and Evidence state on a separate
     writable workspace volume with the required residual capacity.
   - Manager validates and projects Book Forge snapshot identities and Evidence Service dataset identities through their public CLIs.
+  - Exact packaged-service acceptance invokes output inspection with the
+    documented named `--id` argument from an unrelated working directory for
+    both Book Forge and Evidence Service. It rejects a missing output through
+    the exact `outputs_inspect` error operation rather than misparsing an
+    unrelated option or positional value as provider-owned output identity.
   - Offline installation uses the same verified component bytes as stable online installation.
   - Interrupted apply, repair, upgrade, and uninstall preserve a recoverable transaction state.
 

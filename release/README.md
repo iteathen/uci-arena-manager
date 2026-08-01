@@ -120,6 +120,12 @@ executables plus the Manager MSI under `dist/windows`. Install
 single-cycle test. The bare MSI is retained for Manager-Core diagnostics and is
 not the normal Complete Arena handoff.
 
+Before a provider candidate is promoted into that lock, exact-package
+acceptance must invoke its documented Manager API from outside the extracted
+component directory. Output inspection uses `api outputs inspect --id
+OUTPUT_ID`; a typed missing-output rejection must still identify the operation
+as `outputs_inspect`.
+
 The initial elevated development transaction records the exact retained
 catalog digest beside the retained media. Native component install, installer
 Modify, repair, and upgrade may reuse only that administrator-protected exact
