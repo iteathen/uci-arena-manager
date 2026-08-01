@@ -6,7 +6,15 @@ meta:
 
 main_service:
   privilege: unprivileged
-  windows_account: LocalService
+  windows_modes:
+    per_user:
+      account: interactive_user
+      lifecycle: on_demand_native_launcher_process
+      elevation: forbidden
+    per_machine:
+      account: LocalService
+      lifecycle: windows_service
+      elevation: required_for_install_modify_update_uninstall
   linux_account: uci-arena
 
 broker:
@@ -30,7 +38,7 @@ child_isolation:
 packages:
   release_authority: manager_repository_protected_ci
   official_build_location: protected_ci_only
-  windows: [signed_setup_exe, msi, zip]
+  windows: [signed_per_user_setup_exe, signed_per_machine_setup_exe, per_user_msi, per_machine_msi, zip]
   linux: [deb, rpm, signed_portable_run, tar_gz]
   linux_validation:
     blocking: [lintian, rpmlint, systemd_analyze]
@@ -48,7 +56,7 @@ packages:
   purge: explicit_preview_confirm_optional_export
   self_update: false
   cli:
-    windows_path_scope: machine_msi_owned
+    windows_path_scope: matching_install_scope_msi_owned
     linux_manpage: share/man/man1/arena.1
   selectable_services:
     initial_state: selected
@@ -61,6 +69,25 @@ packages:
     broker_dependency: false
     allowed_operations: [inventory, plan, apply, verify, repair, upgrade, uninstall]
     runtime_service_release_authority: false
+    windows_scope:
+      recommended: per_user
+      alternatives: [per_user, per_machine]
+      rules:
+        - Both fixed-scope packages use the same tested executable bytes and an
+          MSI-owned immutable scope marker; package composition, not a second
+          native compilation, selects user or machine lifecycle behavior.
+        - The per-user package installs below LocalAppData/Programs, uses
+          package-owned HKCU component key paths, and must pass MSI profile
+          validation without suppressing ICE38.
+        - arena-setup accepts an explicit fixed scope from its owning bundle;
+          per-user scope forbids service restart and LocalService ACL mutation.
+        - Per-user install, Modify, repair, update, and uninstall touch only
+          user-owned files, user PATH, and per-user package state and must not
+          request elevation.
+        - Per-machine lifecycle owns Program Files, ProgramData, machine PATH,
+          and the Windows service and therefore requires Windows elevation.
+        - Setup never attempts an elevation bypass, AlwaysInstallElevated,
+          credential caching, or silent cross-scope migration.
 
 desktop_application:
   windows:

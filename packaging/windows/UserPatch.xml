@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CPackWiXPatch>
+  <CPackWiXFragment Id="#PRODUCT">
+    <Property Id="ARENA_DATA_ROOT" Secure="yes" />
+    <Upgrade Id="930B856A-66FB-4A34-B998-8A61684EA345">
+      <UpgradeVersion
+        Minimum="0.0.0"
+        IncludeMinimum="yes"
+        OnlyDetect="yes"
+        Property="ARENA_MACHINE_SCOPE_INSTALLED" />
+    </Upgrade>
+    <Launch
+      Condition="Installed OR NOT ARENA_MACHINE_SCOPE_INSTALLED"
+      Message="UCI Arena Manager is already installed for all users. Uninstall that scope before installing the per-user package." />
+    <SetProperty
+      Id="ARENA_DATA_ROOT"
+      Value="[LocalAppDataFolder]UCI Arena Manager"
+      Before="CostFinalize"
+      Condition="NOT ARENA_DATA_ROOT" />
+  </CPackWiXFragment>
+  <CPackWiXFragment Id="CM_CP_bin.arena.exe">
+    <Environment
+      Id="ArenaCliUserPath"
+      Name="PATH"
+      Value="[INSTALL_ROOT]bin"
+      Action="set"
+      Part="last"
+      Permanent="no"
+      System="no" />
+  </CPackWiXFragment>
+  <CPackWiXFragment Id="CM_CP_bin.uci_arena_manager.exe">
+    <Shortcut
+      Id="ArenaManagerUserStartMenuShortcut"
+      Directory="ProgramMenuFolder"
+      Name="UCI Arena Manager"
+      Description="Open the local UCI Arena control plane"
+      Target="[INSTALL_ROOT]bin\uci-arena-manager.exe"
+      WorkingDirectory="INSTALL_ROOT"
+      Icon="ProductIcon.ico" />
+  </CPackWiXFragment>
+  <CPackWiXFragment Id="#PRODUCTFEATURE">
+    <ComponentRef Id="ArenaUserProgramsFolderCleanup" />
+  </CPackWiXFragment>
+</CPackWiXPatch>

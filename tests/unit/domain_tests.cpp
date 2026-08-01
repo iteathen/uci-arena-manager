@@ -3,6 +3,9 @@
 #include "arena/application/control_plane.hpp"
 #include "arena/application/service_catalog.hpp"
 #include "arena/domain/uuid.hpp"
+#ifdef _WIN32
+#include "arena/platform/windows_install_scope.hpp"
+#endif
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -560,6 +563,8 @@ TEST_CASE("Lichess bot discovery projects every missing readiness dimension") {
     REQUIRE(candidate.at("state") == "blocked");
     REQUIRE(candidate.at("package_state") == "installed");
     REQUIRE(candidate.at("token_reference_available") == true);
+    REQUIRE(candidate.at("options_state") == "interactive_helper_required");
+    REQUIRE_FALSE(candidate.contains("options"));
     REQUIRE(candidate.at("readiness").at("verified_adapter") == "ready");
     REQUIRE(candidate.at("readiness").at("adapter_runtime") == "ready");
     REQUIRE(
@@ -682,6 +687,8 @@ TEST_CASE("Lichess bot discovery becomes probe-ready only with exact visible pre
             .at("candidates")
             .at(0);
     REQUIRE(candidate.at("state") == "ready_to_probe");
+    REQUIRE(candidate.at("options_state") == "interactive_helper_required");
+    REQUIRE_FALSE(candidate.contains("options"));
     for (const auto& dimension :
          {"verified_adapter", "adapter_runtime",
           "verified_uci_arena_engine", "active_model", "opening_book",
@@ -803,6 +810,231 @@ TEST_CASE("Lichess BOT status and disable never require credential arguments") {
     fs::remove_all(root);
 }
 
+TEST_CASE("Lichess BOT options use only verified provider entrypoints and bounded projections") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-bot-options-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(root);
+    std::vector<std::vector<std::string>> calls;
+    const auto result = arena::application::ServiceCatalog::bot_options(
+        root / "data",
+        [&calls](
+            const fs::path& executable,
+            const fs::path& working_directory,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds timeout) {
+            REQUIRE(fs::is_regular_file(executable));
+            REQUIRE(fs::is_directory(working_directory));
+            REQUIRE(timeout == std::chrono::seconds(30));
+            calls.push_back(arguments);
+            return json{
+                {"status", "ready"},
+                {"editable",
+                 {
+                     {"schema", "uci_arena_lichess_manager_options_v1"},
+                     {"capacity",
+                      {
+                          {"total_slots", 2},
+                          {"startup_parallelism", 2},
+                          {"human",
+                           {{"slots", 1},
+                            {"allow_borrowing", false},
+                            {"accept_public", true}}},
+                          {"bot", {{"slots", 1}, {"target_active", 1}}},
+                          {"evidence",
+                           {{"status", "qualified"},
+                            {"qualified", true},
+                            {"maximum_concurrency", 2}}},
+                          {"capacity_profile", "MUST_NOT_ESCAPE"},
+                      }},
+                     {"inbound_challenges",
+                      {{"accept_bots", true},
+                       {"min_base", 60},
+                       {"max_base", 1800},
+                       {"min_increment", 0},
+                       {"max_increment", 10},
+                       {"speeds", {"rapid"}},
+                       {"modes", {"casual"}}}},
+                     {"outbound_challenge",
+                      {{"rated", false},
+                       {"color", "random"},
+                       {"clock_limit", 600},
+                       {"clock_increment", 2}}},
+                     {"scheduler",
+                      {{"enabled", true},
+                       {"discovery_interval_seconds", 60},
+                       {"challenge_interval_seconds", 5},
+                       {"reservation_retry_seconds", 30},
+                       {"challenge_timeout_seconds", 25}}},
+                     {"opponent_selection",
+                      {{"max_games_per_opponent_per_day", 1},
+                       {"timeout_cooldown_minutes", 30},
+                       {"decline_cooldown_minutes", 360},
+                       {"rating_target", 2200},
+                       {"rating_spread", 600}}},
+                     {"token", "MUST_NOT_ESCAPE"},
+                 }},
+            };
+        });
+
+    REQUIRE(result.at("schema") == "uci_arena_lichess_manager_options_v1");
+    REQUIRE(result.at("capacity").at("evidence").at("qualified") == true);
+    REQUIRE(result.dump().find("MUST_NOT_ESCAPE") == std::string::npos);
+    REQUIRE(calls.size() == 1);
+    REQUIRE(calls.at(0).at(1) == "config");
+    REQUIRE(calls.at(0).at(2) == "get");
+    REQUIRE(calls.at(0).at(3) == "--config");
+    fs::remove_all(root);
+}
+
+TEST_CASE("Lichess BOT option updates are allowlisted and preserve explicit confirmations") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-bot-options-update-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(root);
+    std::vector<std::vector<std::string>> calls;
+    const auto runner =
+        [&calls](
+            const fs::path&,
+            const fs::path&,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds) {
+            calls.push_back(arguments);
+            return json{
+                {"status", "ready"},
+                {"editable",
+                 {
+                     {"schema", "uci_arena_lichess_manager_options_v1"},
+                     {"capacity",
+                      {{"total_slots", 1},
+                       {"startup_parallelism", 1},
+                       {"human", {{"slots", 0}, {"allow_borrowing", false}, {"accept_public", false}}},
+                       {"bot", {{"slots", 1}, {"target_active", 1}}},
+                       {"evidence", {{"status", "qualified"}, {"qualified", true}, {"maximum_concurrency", 1}}}}},
+                     {"inbound_challenges",
+                      {{"accept_bots", true}, {"min_base", 60}, {"max_base", 1800},
+                       {"min_increment", 0}, {"max_increment", 10},
+                       {"speeds", {"rapid"}}, {"modes", {"casual"}}}},
+                     {"outbound_challenge",
+                      {{"rated", true}, {"color", "random"},
+                       {"clock_limit", 600}, {"clock_increment", 2}}},
+                     {"scheduler",
+                      {{"enabled", true}, {"discovery_interval_seconds", 60},
+                       {"challenge_interval_seconds", 5}, {"reservation_retry_seconds", 30},
+                       {"challenge_timeout_seconds", 25}}},
+                     {"opponent_selection",
+                      {{"max_games_per_opponent_per_day", 1}, {"timeout_cooldown_minutes", 30},
+                       {"decline_cooldown_minutes", 360}, {"rating_target", 2200},
+                       {"rating_spread", 600}}},
+                 }},
+            };
+        };
+    const json settings{
+        {"outbound_challenge", {{"rated", true}}},
+        {"scheduler", {{"enabled", true}}},
+    };
+    const json result = arena::application::ServiceCatalog::update_bot_options(
+        root / "data", runner, settings, true, true);
+    REQUIRE(result.at("outbound_challenge").at("rated") == true);
+    REQUIRE(calls.size() == 1);
+    REQUIRE(calls.at(0).at(1) == "config");
+    REQUIRE(calls.at(0).at(2) == "update");
+    REQUIRE(std::find(calls.at(0).begin(), calls.at(0).end(),
+                      "I_ACCEPT_RATED_BOT_GAMES") != calls.at(0).end());
+    REQUIRE(std::find(calls.at(0).begin(), calls.at(0).end(),
+                      "I_ACCEPT_AUTOMATIC_OUTBOUND_CHALLENGES") != calls.at(0).end());
+    REQUIRE_THROWS_AS(
+        arena::application::ServiceCatalog::update_bot_options(
+            root / "data", runner, {{"engine", {{"executable", "x"}}}}, false, false),
+        std::invalid_argument);
+    REQUIRE(calls.size() == 1);
+    fs::remove_all(root);
+}
+
+TEST_CASE("Lichess BOT local account actions are typed and sanitized") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-bot-account-actions-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(root);
+    std::vector<std::vector<std::string>> calls;
+    const auto runner =
+        [&calls](
+            const fs::path&,
+            const fs::path&,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds) {
+            calls.push_back(arguments);
+            if (arguments.at(1) == "owner" && arguments.at(2) == "list") {
+                return json{{"status", "ready"},
+                            {"owners", {{{"username", "ArenaOwner"}, {"created_at", 10}}}},
+                            {"store", "MUST_NOT_ESCAPE"}};
+            }
+            if (arguments.at(1) == "owner") {
+                const bool add = arguments.at(2) == "add";
+                return json{{"status", "ready"}, {"username", "ArenaOwner"},
+                            {add ? "added" : "removed", true}};
+            }
+            if (arguments.at(1) == "reserve") {
+                return json{{"status", "ready"},
+                            {"reservation",
+                             {{"opponent", "OpponentBot"}, {"games_remaining", 3},
+                              {"expires_at", 200}, {"created_at", 100}}}};
+            }
+            if (arguments.at(1) == "reservation" && arguments.at(2) == "status") {
+                return json{{"status", "ready"}, {"reservation", nullptr}};
+            }
+            if (arguments.at(1) == "reservation") {
+                return json{{"status", "ready"}, {"canceled", true}};
+            }
+            return json{{"status", "ready"},
+                        {"scheduler", {{"paused", arguments.at(2) != "resume"}}}};
+        };
+
+    const json owner_result =
+        arena::application::ServiceCatalog::control_bot_account(
+            root / "data", runner, "owner_list", json::object());
+    REQUIRE(owner_result.at("owners").size() == 1);
+    REQUIRE(owner_result.dump().find("MUST_NOT_ESCAPE") == std::string::npos);
+    REQUIRE(arena::application::ServiceCatalog::control_bot_account(
+                root / "data", runner, "owner_add", {{"username", "ArenaOwner"}})
+                .at("added") == true);
+    REQUIRE(arena::application::ServiceCatalog::control_bot_account(
+                root / "data", runner, "owner_remove", {{"username", "ArenaOwner"}})
+                .at("removed") == true);
+    REQUIRE(arena::application::ServiceCatalog::control_bot_account(
+                root / "data", runner, "reservation_create",
+                {{"opponent", "OpponentBot"}, {"games", 3}, {"minutes", 30}})
+                .at("reservation").at("games_remaining") == 3);
+    REQUIRE(arena::application::ServiceCatalog::control_bot_account(
+                root / "data", runner, "reservation_status", json::object())
+                .at("reservation").is_null());
+    REQUIRE(arena::application::ServiceCatalog::control_bot_account(
+                root / "data", runner, "reservation_cancel", json::object())
+                .at("canceled") == true);
+    for (const auto& action : {"scheduler_status", "scheduler_pause", "scheduler_resume"}) {
+        REQUIRE(arena::application::ServiceCatalog::control_bot_account(
+                    root / "data", runner, action, json::object())
+                    .contains("scheduler"));
+    }
+    for (const auto& arguments : calls) {
+        REQUIRE(arguments.at(arguments.size() - 2) == "--runtime-dir");
+        REQUIRE(fs::is_directory(arguments.back()));
+    }
+    REQUIRE_THROWS_AS(
+        arena::application::ServiceCatalog::control_bot_account(
+            root / "data", runner, "owner_add", {{"username", "bad name"}}),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        arena::application::ServiceCatalog::control_bot_account(
+            root / "data", runner, "owner_list", {{"command", "anything"}}),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        arena::application::ServiceCatalog::control_bot_account(
+            root / "data", runner, "register", json::object()),
+        std::invalid_argument);
+    fs::remove_all(root);
+}
+
 TEST_CASE("Lichess BOT discovery rejects a credential inside the installed adapter") {
     const fs::path root =
         fs::temp_directory_path() /
@@ -860,3 +1092,31 @@ TEST_CASE("broker policy rejects unallowlisted services and actions") {
         policy.authorize("018f218e-7be1-7a56-9daa-3f003641c802", "status"));
     std::filesystem::remove(path);
 }
+
+#ifdef _WIN32
+TEST_CASE("Windows entry points honor the installed fixed-scope marker") {
+    const fs::path executable = arena::platform::windows_executable_path();
+    REQUIRE_FALSE(executable.empty());
+    const fs::path marker =
+        executable.parent_path().parent_path() /
+        "share" / "uci-arena" / "install-scope.txt";
+    if (!fs::is_regular_file(marker)) {
+        REQUIRE(
+            arena::platform::windows_install_scope() ==
+            arena::platform::WindowsInstallScope::per_machine);
+        return;
+    }
+    std::ifstream input(marker, std::ios::binary);
+    std::string expected;
+    std::getline(input, expected);
+    if (!expected.empty() && expected.back() == '\r') {
+        expected.pop_back();
+    }
+    REQUIRE((expected == "per-user" || expected == "per-machine"));
+    REQUIRE(
+        arena::platform::windows_install_scope() ==
+        (expected == "per-user"
+             ? arena::platform::WindowsInstallScope::per_user
+             : arena::platform::WindowsInstallScope::per_machine));
+}
+#endif

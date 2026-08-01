@@ -154,14 +154,16 @@ A developer-workstation MSI is an unsigned test candidate, never an official
 release. Record its source commit and SHA-256 before testing. Do not use an MSI
 from a dirty worktree or infer provenance from its filename.
 
-Windows MSI and bundle builds use WiX `6.0.2`. The MSI deliberately rejects a
+Windows MSI and bundle builds use WiX `6.0.2`. Per-user MSI generation also
+uses pinned CMake `4.3.4`, whose CPack generator creates the required HKCU
+component key paths for profile-owned files. ICE38 is never suppressed. The MSI deliberately rejects a
 different build with the same three-field product version as an upgrade; bump
 the suite version for an upgrade or use the explicit repair lifecycle for the
 same installed version.
 
 Use `tools/release/windows-installer-cycle.ps1` as the local entrypoint. It
 stores a commit-bound, digest-bound state machine under
-`build/installer-validation/<commit>/cycle.json`. The state is written as
+`build/installer-validation/<scope>/<commit>/cycle.json`. The state is written as
 `installing` before `msiexec` starts, so an interrupted run cannot silently
 invoke the installer a second time. `smoke` is repeatable and never invokes
 MSI.
@@ -170,16 +172,23 @@ Prepare and validate a candidate from a clean tracked worktree:
 
 ```powershell
 pwsh tools/release/windows-installer-cycle.ps1 -Action prepare `
+  -Scope per-user `
   -WixExe C:\path\to\wix.exe
 ```
 
-Run the single MSI invocation from an elevated PowerShell session, using the
-state path printed by `prepare`:
+Run the single per-user MSI invocation from an ordinary PowerShell session,
+using the state path printed by `prepare`. It modifies only user-owned package
+state and does not invoke UAC. This remains a single MSI invocation:
 
 ```powershell
 pwsh tools/release/windows-installer-cycle.ps1 -Action install `
+  -Scope per-user `
   -StatePath C:\path\to\cycle.json
 ```
+
+Pass `-Scope per-machine` to every action when validating the all-users MSI;
+only that scope requires an elevated session for install, service restart, and
+restore.
 
 Run as many non-installing smokes as needed against that instance. Optional UCI
 executables are probed through the installed Manager, and the temporary Lichess
@@ -187,13 +196,15 @@ credential workflow passes only the token-file path to `arena-setup`:
 
 ```powershell
 pwsh tools/release/windows-installer-cycle.ps1 -Action smoke `
+  -Scope per-user `
   -StatePath C:\path\to\cycle.json `
   -ProbeEngine C:\path\to\engine.exe `
   -LichessTokenFile C:\path\to\lichess-token.txt
 ```
 
-Run `smoke` from an elevated session with `-RestartService` to include
-post-restart database and authentication recovery. Use
+Use `-RestartService` to include post-restart database and authentication
+recovery. It restarts the same-user hidden Manager process without elevation
+for per-user cycles and requires elevation for the per-machine Windows service. Use
 `-RequirePlanningEvidence` after registering two test engines and creating one
 match plan and one tournament; this makes the repeatable smoke fail if those
 durable records disappear. Multiple probe engines may be passed as a native
@@ -204,8 +215,11 @@ If a cycle was started manually before the runner existed, `adopt
 -ConfirmAdopt` records its exact MSI digest and quarantine without reinstalling
 it. Pass the full original candidate commit with `-CandidateSourceCommit`; the
 cycle records that separately from the newer runner commit and refuses to
-misattribute the MSI. `status` prints only redacted cycle metadata. `restore
--ConfirmRestore` requires elevation, moves the test-created data root to a
+misattribute the MSI. Adoption also verifies the fixed-scope MSI name, the
+installed scope marker, and the exact running executable beneath the requested
+install root; a reachable endpoint or same-named service is not sufficient.
+`status` prints only redacted cycle metadata. `restore
+-ConfirmRestore` requires elevation only for per-machine cycles, moves the test-created data root to a
 separate evidence sibling, restores the quarantined root, verifies its safe
 manifest and ACL, and does not delete either state tree.
 
@@ -213,10 +227,11 @@ This runner is a developer validation tool. It does not accept legal
 agreements, sign artifacts, set the release lock, replace the protected VM
 matrix, or produce an official release.
 
-The Windows default data root is:
+The Windows default data roots are:
 
 ```text
-C:\ProgramData\UCI Arena Manager
+per-user:    %LOCALAPPDATA%\UCI Arena Manager
+per-machine: C:\ProgramData\UCI Arena Manager
 ```
 
 Normal uninstall intentionally preserves this directory. The authoritative

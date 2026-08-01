@@ -24,7 +24,7 @@ const platformDefinitions = {
     outputDirectory: path.join("dist", "windows"),
     artifacts(version) {
       const stem = `UCI-Arena-Manager-${version}-windows-x64`;
-      return [`${stem}.msi`, `${stem}.zip`];
+      return [`${stem}-user.msi`, `${stem}-machine.msi`, `${stem}.zip`];
     },
     generators: [
       ["-C", "Release", "-G", "WIX"],
@@ -329,6 +329,9 @@ export function cleanBuild({
       `-DARENA_DEVELOPMENT_SAME_VERSION_UPGRADES=${
         developmentSameVersionUpgrade ? "ON" : "OFF"
       }`,
+      ...(platform === "windows-x86_64"
+        ? ["-DARENA_WINDOWS_PER_USER_INSTALL=OFF"]
+        : []),
     ]);
     run("cmake", ["--build", "--preset", definition.preset, "--clean-first"]);
     run("ctest", ["--preset", definition.preset]);
@@ -340,6 +343,26 @@ export function cleanBuild({
           cwd: buildDirectory,
         });
       }
+      if (platform === "windows-x86_64") {
+        run("cmake", [
+          "--preset",
+          definition.preset,
+          `-DARENA_VERSION=${version}`,
+          `-DARENA_TUF_ROOT_SHA256=${tufRootSha256}`,
+          `-DARENA_DEVELOPMENT_SAME_VERSION_UPGRADES=${
+            developmentSameVersionUpgrade ? "ON" : "OFF"
+          }`,
+          "-DARENA_WINDOWS_PER_USER_INSTALL=ON",
+        ]);
+        run("cpack", ["-C", "Release", "-G", "WIX", "-B", packagingDirectory], {
+          cwd: buildDirectory,
+        });
+        for (const name of expectedInstallerNames(platform, version)) {
+          if (name.endsWith(".msi")) {
+            run("wix", ["msi", "validate", path.join(packagingDirectory, name)]);
+          }
+        }
+      }
       copyInstallerOutputs({
         platform,
         version,
@@ -347,6 +370,18 @@ export function cleanBuild({
         outputDirectory,
       });
     } finally {
+      if (platform === "windows-x86_64") {
+        run("cmake", [
+          "--preset",
+          definition.preset,
+          `-DARENA_VERSION=${version}`,
+          `-DARENA_TUF_ROOT_SHA256=${tufRootSha256}`,
+          `-DARENA_DEVELOPMENT_SAME_VERSION_UPGRADES=${
+            developmentSameVersionUpgrade ? "ON" : "OFF"
+          }`,
+          "-DARENA_WINDOWS_PER_USER_INSTALL=OFF",
+        ]);
+      }
       rmSync(packagingDirectory, { recursive: true, force: true });
     }
   }

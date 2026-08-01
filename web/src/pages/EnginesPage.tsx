@@ -59,6 +59,7 @@ export function EnginesPage() {
   const [testedCandidates, setTestedCandidates] = useState<Record<string, string>>({})
   const [manualProbeId, setManualProbeId] = useState('')
   const [scanError, setScanError] = useState('')
+  const [refreshMessage, setRefreshMessage] = useState('')
 
   const registeredPaths = useMemo(
     () => new Set((engines.data ?? []).map((engine) => engine.data.executable.toLowerCase())),
@@ -127,7 +128,18 @@ export function EnginesPage() {
   const refresh = async () => {
     setScanRoot('')
     setScanError('')
-    await Promise.all([engines.refetch(), candidates.refetch()])
+    setRefreshMessage('')
+    const [, detected] = await Promise.all([engines.refetch(), candidates.refetch()])
+    if (detected.error) {
+      setScanError(detected.error.message)
+      return
+    }
+    const count = detected.data?.candidates.length ?? 0
+    setRefreshMessage(
+      count
+        ? `Auto-detect completed: ${count} local engine candidate${count === 1 ? '' : 's'} found.`
+        : 'Auto-detect completed: no local engine candidates found. Scan a folder or add an external engine.',
+    )
   }
   const scanFolder = async () => {
     setScanError('')
@@ -152,7 +164,8 @@ export function EnginesPage() {
             <Button
               variant="default"
               leftSection={<IconRefresh size={16} />}
-              onClick={refresh}
+              loading={engines.isFetching || candidates.isFetching}
+              onClick={() => void refresh()}
             >
               Auto-detect
             </Button>
@@ -190,6 +203,7 @@ export function EnginesPage() {
             </Alert>
           )}
           {scanError && <Alert color="red" mb="md">{scanError}</Alert>}
+          {refreshMessage && <Alert color="blue" mb="md">{refreshMessage}</Alert>}
           {scanRoot && (
             <Alert color="blue" mb="md">
               Showing normal discovery plus the selected bounded root: <Code>{scanRoot}</Code>

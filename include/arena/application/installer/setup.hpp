@@ -15,6 +15,7 @@ struct SetupPaths {
     std::filesystem::path knowledge_root;
     std::string bundle_owner;
     bool restart_manager_service{};
+    bool manager_service_access{true};
 };
 
 class SetupEngine final {

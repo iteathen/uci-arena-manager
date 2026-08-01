@@ -22,6 +22,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(ARENA_BUILD_TESTS "Build tests" ON)
 option(ARENA_ENABLE_PACKAGING "Enable CPack packaging" ON)
 option(
+  ARENA_WINDOWS_PER_USER_INSTALL
+  "Build the fixed-scope non-elevated Windows per-user package"
+  OFF
+)
+option(
   ARENA_DEVELOPMENT_SAME_VERSION_UPGRADES
   "Allow replacement of an installed Complete development candidate at the same version"
   OFF
@@ -78,9 +83,11 @@ add_library(arena_core
   src/application/broker_policy.cpp
   src/application/service_catalog.cpp
   src/application/process_supervisor.cpp
+  src/application/tournament_executor.cpp
   src/application/installer/setup.cpp
   src/adapters/sqlite_store.cpp
   src/adapters/uci_process.cpp
+  src/adapters/uci_game_runner.cpp
   src/adapters/report_renderer.cpp
 )
 
@@ -174,6 +181,10 @@ if(WIN32)
       WEBVIEW_MSWEBVIEW2_BUILTIN_IMPL=0
       WEBVIEW_MSWEBVIEW2_EXPLICIT_LINK=0
   )
+  target_include_directories(
+    uci-arena-manager
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
 else()
   add_executable(uci-arena-manager apps/launcher/main.cpp)
   target_link_libraries(uci-arena-manager PRIVATE webview::core)
@@ -211,17 +222,37 @@ if(WIN32)
     CONFIGURATIONS Debug
     FILES_MATCHING PATTERN "*.dll"
   )
-  install(
-    DIRECTORY
-      "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/"
-    DESTINATION share/vcpkg
-    FILES_MATCHING PATTERN "copyright"
-  )
+  file(GLOB ARENA_VCPKG_COPYRIGHTS CONFIGURE_DEPENDS
+    "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/*/copyright")
+  foreach(ARENA_VCPKG_COPYRIGHT IN LISTS ARENA_VCPKG_COPYRIGHTS)
+    get_filename_component(ARENA_VCPKG_SHARE_DIR
+      "${ARENA_VCPKG_COPYRIGHT}" DIRECTORY)
+    get_filename_component(ARENA_VCPKG_PACKAGE
+      "${ARENA_VCPKG_SHARE_DIR}" NAME)
+    install(FILES "${ARENA_VCPKG_COPYRIGHT}"
+      DESTINATION "share/vcpkg/${ARENA_VCPKG_PACKAGE}")
+  endforeach()
 else()
   install(TARGETS arena-service arena arena-broker arena-setup uci-arena-manager RUNTIME DESTINATION bin)
 endif()
 install(DIRECTORY web/dist/ DESTINATION share/uci-arena/web)
 install(DIRECTORY specs/ DESTINATION share/uci-arena/specs)
+if(WIN32)
+  if(ARENA_WINDOWS_PER_USER_INSTALL)
+    set(ARENA_WINDOWS_INSTALL_SCOPE "per-user")
+  else()
+    set(ARENA_WINDOWS_INSTALL_SCOPE "per-machine")
+  endif()
+  configure_file(
+    packaging/windows/install-scope.txt.in
+    "${CMAKE_CURRENT_BINARY_DIR}/packaging/windows/install-scope.txt"
+    @ONLY
+  )
+  install(
+    FILES "${CMAKE_CURRENT_BINARY_DIR}/packaging/windows/install-scope.txt"
+    DESTINATION share/uci-arena
+  )
+endif()
 install(
   FILES "${webview_SOURCE_DIR}/LICENSE"
   DESTINATION share/licenses/webview
@@ -288,12 +319,16 @@ if(NOT WIN32)
     DESTINATION share/lintian/overrides
     RENAME uci-arena-manager
   )
-  install(
-    DIRECTORY
-      "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/"
-    DESTINATION share/doc/uci-arena-manager/third-party
-    FILES_MATCHING PATTERN "copyright"
-  )
+  file(GLOB ARENA_VCPKG_COPYRIGHTS CONFIGURE_DEPENDS
+    "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/*/copyright")
+  foreach(ARENA_VCPKG_COPYRIGHT IN LISTS ARENA_VCPKG_COPYRIGHTS)
+    get_filename_component(ARENA_VCPKG_SHARE_DIR
+      "${ARENA_VCPKG_COPYRIGHT}" DIRECTORY)
+    get_filename_component(ARENA_VCPKG_PACKAGE
+      "${ARENA_VCPKG_SHARE_DIR}" NAME)
+    install(FILES "${ARENA_VCPKG_COPYRIGHT}"
+      DESTINATION "share/doc/uci-arena-manager/third-party/${ARENA_VCPKG_PACKAGE}")
+  endforeach()
 endif()
 install(FILES docs/cli.md DESTINATION share/doc/uci-arena-manager)
 
@@ -311,6 +346,7 @@ if(ARENA_BUILD_TESTS)
     tests/unit/setup_tests.cpp
     tests/integration/service_output_integration_tests.cpp
     tests/integration/sqlite_store_tests.cpp
+    tests/integration/tournament_execution_tests.cpp
     tests/integration/uci_probe_tests.cpp
   )
   add_dependencies(arena_tests arena_mock_uci arena_mock_service)
@@ -344,17 +380,39 @@ if(ARENA_ENABLE_PACKAGING)
     )
     set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_BINARY_DIR}/LICENSE.txt")
     set(CPACK_GENERATOR "WIX;ZIP")
-    set(CPACK_PACKAGE_FILE_NAME
-      "UCI-Arena-Manager-${PROJECT_VERSION}-windows-x64")
-    set(CPACK_PACKAGE_INSTALL_DIRECTORY "UCI Arena Manager")
+    if(ARENA_WINDOWS_PER_USER_INSTALL)
+      if(CMAKE_VERSION VERSION_LESS 4.3)
+        message(FATAL_ERROR
+          "Per-user MSI generation requires CMake 4.3 or newer for HKCU component key paths")
+      endif()
+      set(CPACK_PACKAGE_FILE_NAME
+        "UCI-Arena-Manager-${PROJECT_VERSION}-windows-x64-user")
+      set(CPACK_WIX_INSTALL_SCOPE "perUser")
+      set(CPACK_WIX_ROOT_FOLDER_ID "LocalAppDataFolder")
+      set(CPACK_PACKAGE_INSTALL_DIRECTORY "Programs/UCI Arena Manager")
+      set(CPACK_WIX_COMPONENT_KEYS_REGISTRY_PATH
+        "Software\\\\UCI Arena Manager\\\\Installer\\\\Components")
+      set(CPACK_WIX_EXTRA_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/UserFolders.wxs")
+      set(CPACK_WIX_UPGRADE_GUID "143E64C2-4153-4E8B-8C93-6FB590779E9E")
+      set(CPACK_WIX_PATCH_FILE
+        "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/UserPatch.xml")
+    else()
+      set(CPACK_PACKAGE_FILE_NAME
+        "UCI-Arena-Manager-${PROJECT_VERSION}-windows-x64-machine")
+      set(CPACK_ARCHIVE_FILE_NAME
+        "UCI-Arena-Manager-${PROJECT_VERSION}-windows-x64")
+      set(CPACK_WIX_INSTALL_SCOPE "perMachine")
+      set(CPACK_PACKAGE_INSTALL_DIRECTORY "UCI Arena Manager")
+      set(CPACK_WIX_UPGRADE_GUID "930B856A-66FB-4A34-B998-8A61684EA345")
+      set(CPACK_WIX_PATCH_FILE
+        "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/ServicePatch.xml")
+    endif()
     set(CPACK_WIX_VERSION 4)
-    set(CPACK_WIX_UPGRADE_GUID "930B856A-66FB-4A34-B998-8A61684EA345")
     set(CPACK_WIX_PRODUCT_ICON
       "${CMAKE_CURRENT_SOURCE_DIR}/packaging/icons/uci-arena-manager.ico")
     set(CPACK_WIX_TEMPLATE
       "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/Package.wxs.in")
-    set(CPACK_WIX_PATCH_FILE
-      "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/ServicePatch.xml")
     if(ARENA_DEVELOPMENT_SAME_VERSION_UPGRADES)
       set(CPACK_WIX_ALLOW_SAME_VERSION_UPGRADES "yes")
     else()

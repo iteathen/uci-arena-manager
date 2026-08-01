@@ -52,6 +52,14 @@ test("Windows clean-build result binds the complete exact installer set", () => 
       result.artifacts.map((artifact) => artifact.name),
       expectedInstallerNames("windows-x86_64", version),
     );
+    assert.deepEqual(
+      result.artifacts.map((artifact) => artifact.name),
+      [
+        `UCI-Arena-Manager-${version}-windows-x64-user.msi`,
+        `UCI-Arena-Manager-${version}-windows-x64-machine.msi`,
+        `UCI-Arena-Manager-${version}-windows-x64.zip`,
+      ],
+    );
     assert.ok(result.artifacts.every((artifact) =>
       /^[0-9a-f]{64}$/u.test(artifact.sha256)));
     assert.deepEqual(
@@ -185,6 +193,19 @@ test("same-version replacement is explicit and development-only", () => {
     completeBuild,
     /const setupArguments = \[\s*"upgrade",[\s\S]*"complete_arena"/u,
   );
+  for (const suffix of [
+    "user-online",
+    "user-offline",
+    "machine-online",
+    "machine-offline",
+  ]) {
+    assert.match(
+      completeBuild,
+      new RegExp(`windows-x64-${suffix}\\.exe`),
+    );
+  }
+  assert.match(completeBuild, /packaging\/windows\/Bundle\.User\.wxs/u);
+  assert.match(completeBuild, /packaging\/windows\/Bundle\.wxs/u);
   assert.match(
     cleanBuild,
     /ARENA_DEVELOPMENT_SAME_VERSION_UPGRADES=\$\{/u,
@@ -201,4 +222,17 @@ test("same-version replacement is explicit and development-only", () => {
     wix,
     /AllowSameVersionUpgrades="@CPACK_WIX_ALLOW_SAME_VERSION_UPGRADES@"/u,
   );
+});
+
+test("Windows clean build validates both fixed-scope MSI databases", () => {
+  const repositoryRoot = path.resolve(import.meta.dirname, "../..");
+  const source = readFileSync(
+    path.join(repositoryRoot, "tools", "release", "clean-build.mjs"),
+    "utf8",
+  );
+  assert.match(
+    source,
+    /expectedInstallerNames\(platform, version\)[\s\S]*name\.endsWith\("\.msi"\)[\s\S]*run\("wix", \["msi", "validate"/u,
+  );
+  assert.doesNotMatch(source, /-sice:ICE38/u);
 });

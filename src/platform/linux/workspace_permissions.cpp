@@ -60,11 +60,16 @@ void run_setfacl(const std::filesystem::path& executable,
 
 } // namespace
 
-void grant_manager_workspace_access(const std::filesystem::path& workspace) {
+void grant_manager_workspace_access(
+    const std::filesystem::path& workspace,
+    const bool manager_service_access) {
     if (!std::filesystem::is_directory(workspace) ||
         std::filesystem::is_symlink(workspace)) {
         throw std::runtime_error(
             "managed service workspace is unavailable for permission setup");
+    }
+    if (!manager_service_access) {
+        return;
     }
     const auto executable = setfacl_executable();
     const std::string path = workspace.string();

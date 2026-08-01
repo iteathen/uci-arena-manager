@@ -328,8 +328,9 @@ packaging:
         explicit operator request, and are never configured as automatically
         required pull-request status checks.
       - Build the dashboard, configure the native release preset, clean native
-        outputs before rebuilding, run native tests, and invoke the existing
-        CPack deployment generators.
+        outputs before rebuilding, run native tests once for the shared Windows
+        binary set, and invoke the existing CPack deployment generators for
+        each fixed package scope.
       - Pull-request CI and the protected suite release workflow install the
         same explicit Linux native-build prerequisite set before vcpkg
         dependency bootstrap. Release-only package validators may extend that
@@ -378,8 +379,9 @@ packaging:
         reuse only that exact retained catalog and digest marker; the marker
         cannot authorize external media, a changed catalog, or an official
         release without TUF metadata.
-      - A Windows complete development build emits the Manager MSI and the
-        default-on online and offline UCI Arena Suite Setup executables. The
+      - A Windows complete development build emits both fixed-scope Manager
+        MSIs and the default-on online and offline UCI Arena Suite Setup
+        executables for both scopes. The
         bootstrapper contains or can acquire UCI Arena Engine, private Node,
         Stockfish, Book Forge, standard opening book, Evidence runtime,
         Evidence Service, and the Lichess adapter according to the exact
@@ -400,9 +402,12 @@ packaging:
         compilation; an empty or synthetic production trust root is forbidden.
     required_outputs:
       windows-x86_64:
-        - UCI-Arena-Setup-<version>-windows-x64-online.exe
-        - UCI-Arena-Setup-<version>-windows-x64-offline.exe
-        - UCI-Arena-Manager-<version>-windows-x64.msi
+        - UCI-Arena-Setup-<version>-windows-x64-user-online.exe
+        - UCI-Arena-Setup-<version>-windows-x64-user-offline.exe
+        - UCI-Arena-Setup-<version>-windows-x64-machine-online.exe
+        - UCI-Arena-Setup-<version>-windows-x64-machine-offline.exe
+        - UCI-Arena-Manager-<version>-windows-x64-user.msi
+        - UCI-Arena-Manager-<version>-windows-x64-machine.msi
       linux-x86_64:
         - uci-arena-setup-<version>-linux-x86_64-online.run
         - uci-arena-setup-<version>-linux-x86_64-offline.run
@@ -411,7 +416,8 @@ packaging:
         - uci-arena-manager-<version>-linux-x86_64.tar.gz
     manager_component_outputs:
       windows-x86_64:
-        - UCI-Arena-Manager-<version>-windows-x64.msi
+        - UCI-Arena-Manager-<version>-windows-x64-user.msi
+        - UCI-Arena-Manager-<version>-windows-x64-machine.msi
         - UCI-Arena-Manager-<version>-windows-x64.zip
       linux-x86_64:
         - uci-arena-manager_<version>_amd64.deb
@@ -419,16 +425,75 @@ packaging:
         - uci-arena-manager-<version>-linux-x86_64.tar.gz
   windows_manager_msi:
     payload_source: complete_cmake_install_tree
-    service_registration: cpack_wix_component_patch
+    scopes:
+      per_user:
+        recommended: true
+        elevation: forbidden
+        program_root: LocalAppData/Programs/UCI Arena Manager
+        data_root: LocalAppData/UCI Arena Manager
+        path: user_msi_owned
+        manager_lifecycle: launcher_started_same_user_process
+      per_machine:
+        recommended: false
+        elevation: required
+        program_root: ProgramFiles/UCI Arena Manager
+        data_root: ProgramData/UCI Arena Manager
+        path: machine_msi_owned
+        manager_lifecycle: LocalService_windows_service
+    service_registration: per_machine_cpack_wix_component_patch_only
     required_payloads:
       - manager_binaries
       - native_runtime_dependencies
       - dashboard_assets
       - installed_contract_schemas
     rules:
-      - The arena executable directory is added to the machine PATH through an
-        MSI-owned Environment row and is removed from PATH on uninstall.
-        Setup never rewrites unrelated PATH entries.
+      - Per-user and per-machine MSIs package one tested native binary set and
+        install an MSI-owned share/uci-arena/install-scope.txt marker containing
+        exactly per-user or per-machine. Native entry points fail safely to
+        per-machine semantics when the marker is absent or invalid; scope is
+        never inferred from a React value or an untrusted catalog.
+      - Per-user MSI generation uses a pinned CMake/CPack version with native
+        per-user component-key support. Every component installed beneath the
+        user profile has an MSI-owned HKCU registry key path, and ICE38 is a
+        blocking validation rather than a suppressed warning.
+      - Burn passes the fixed package scope explicitly to arena-setup together
+        with every scope-owned root. The explicit scope must match the bundle,
+        controls service-account ACL behavior, and is preserved for Modify,
+        repair, update, and uninstall.
+      - The arena executable directory is added to the PATH matching the
+        selected install scope through an MSI-owned Environment row and is
+        removed from that same PATH on uninstall. Setup never rewrites
+        unrelated PATH entries.
+      - Per-user install, Modify, repair, update, and uninstall operate only on
+        per-user MSI state, LocalAppData, user PATH, and receipt-owned user
+        workspaces. They do not request elevation and never install, control,
+        or impersonate a Windows service.
+      - The per-user native launcher starts the adjacent verified Manager
+        service binary as the interactive user only when the authenticated
+        loopback endpoint is unavailable, passes fixed per-user data and
+        packaged-dashboard paths, waits for readiness, and never accepts an
+        executable or path from React.
+      - Per-machine setup owns Program Files, ProgramData, machine PATH, and a
+        LocalService Windows service, so install, Modify, update, repair, and
+        uninstall truthfully display an elevation shield and may invoke UAC.
+      - Code signing can reduce publisher/SmartScreen warnings but cannot and
+        must not suppress a legitimate per-machine UAC consent or credential prompt.
+      - WiX 6 fixed-scope per-user and per-machine installers are built as
+        separate artifacts. A configurable-scope bundle is forbidden until a
+        separately reviewed toolchain upgrade supports it without weakening
+        licensing, provenance, or reproducibility requirements.
+      - An installed scope is preserved by Modify and update. Cross-scope
+        migration is explicit and never silently runs one scope over the other.
+        Each MSI detects the opposite upgrade identity and blocks a new
+        cross-scope installation before two Manager authorities can compete;
+        maintenance of an already-installed scope remains available so the
+        operator can uninstall it before changing scope.
+      - The local installer-cycle runner validates an MSI's fixed-scope
+        artifact name for both prepare and adopt, verifies the installed
+        MSI-owned scope marker, and proves the running Manager executable
+        belongs to the requested install root before recording an adopted
+        cycle. A listening endpoint or same-named service alone is not scope
+        evidence.
       - The MSI service executable and every required native DLL are installed
         into the same private binary directory before the service is started.
       - The bundle embeds arena-setup with its complete adjacent private
@@ -440,10 +505,11 @@ packaging:
         metadata from the currently executing Burn package cache directory.
         They never depend on the bootstrapper launch directory or a retained
         source-media working directory.
-      - The visible bundle and Programs and Features name is exactly
-        UCI Arena Suite Setup. Online, offline, acceptance, commit, and build
-        identifiers remain in artifact names and logs; the visible version is
-        only the suite semantic version.
+      - The visible bundle and Programs and Features name is UCI Arena Suite
+        Setup (per-user) or UCI Arena Suite Setup (all users), matching its
+        fixed scope. Online, offline, acceptance, commit, and build identifiers
+        remain in artifact names and logs; the visible version is only the
+        suite semantic version.
       - The service uses the packaged dashboard path and never a source checkout.
       - The bundle resolves one Manager data root and passes that exact path to
         both the Manager MSI service arguments and every arena-setup operation.
@@ -468,9 +534,12 @@ packaging:
         Forge, Evidence Service, and Lichess adapter, is available again from
         Modify, and is preserved across a major upgrade.
   artifact_names:
-    - UCI-Arena-Setup-<version>-windows-x64-online.exe
-    - UCI-Arena-Setup-<version>-windows-x64-offline.exe
-    - UCI-Arena-Manager-<version>-windows-x64.msi
+    - UCI-Arena-Setup-<version>-windows-x64-user-online.exe
+    - UCI-Arena-Setup-<version>-windows-x64-user-offline.exe
+    - UCI-Arena-Setup-<version>-windows-x64-machine-online.exe
+    - UCI-Arena-Setup-<version>-windows-x64-machine-offline.exe
+    - UCI-Arena-Manager-<version>-windows-x64-user.msi
+    - UCI-Arena-Manager-<version>-windows-x64-machine.msi
     - uci-arena-manager_<version>_amd64.deb
     - uci-arena-manager-<version>-1.x86_64.rpm
     - uci-arena-setup-<version>-linux-x86_64-online.run
@@ -799,7 +868,9 @@ transaction:
   failure: restore_previous_activation_and_service_state
   normal_uninstall: preserve_user_data
   manager_data_root_retention:
-    windows_default: "C:\\ProgramData\\UCI Arena Manager"
+    windows_defaults:
+      per_user: "%LOCALAPPDATA%\\UCI Arena Manager"
+      per_machine: "C:\\ProgramData\\UCI Arena Manager"
     purpose: >
       Normal uninstall removes executable authority and managed component
       receipts while preserving operator state required for reinstall,

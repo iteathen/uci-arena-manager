@@ -2,6 +2,16 @@
 <CPackWiXPatch>
   <CPackWiXFragment Id="#PRODUCT">
     <Property Id="ARENA_DATA_ROOT" Secure="yes" />
+    <Upgrade Id="143E64C2-4153-4E8B-8C93-6FB590779E9E">
+      <UpgradeVersion
+        Minimum="0.0.0"
+        IncludeMinimum="yes"
+        OnlyDetect="yes"
+        Property="ARENA_USER_SCOPE_INSTALLED" />
+    </Upgrade>
+    <Launch
+      Condition="Installed OR NOT ARENA_USER_SCOPE_INSTALLED"
+      Message="UCI Arena Manager is already installed for this user. Uninstall that scope before installing for all users." />
     <SetProperty
       Id="ARENA_DATA_ROOT"
       Value="[CommonAppDataFolder]UCI Arena Manager"
@@ -43,7 +53,7 @@
       Directory="ProgramMenuFolder"
       Name="UCI Arena Manager"
       Description="Open the local UCI Arena control plane"
-      Target="[INSTALL_ROOT]bin\uci-arena-manager.exe"
+      Advertise="yes"
       WorkingDirectory="INSTALL_ROOT"
       Icon="ProductIcon.ico" />
   </CPackWiXFragment>

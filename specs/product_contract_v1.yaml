@@ -104,6 +104,15 @@ bot_contract:
     - Startup enablement is an explicit interactive-user action and repeats
       the BOT-only account probe before invoking the receipt-verified provider
       startup adapter.
+    - Provider-owned owner, reservation, and scheduler state crosses Manager
+      only through fixed typed adapter actions and bounded projections; Manager
+      never opens the adapter store.
+    - Provider-owned bot policy configuration crosses Manager only as
+      uci_arena_lichess_manager_options_v1. Unknown fields and arbitrary raw
+      configuration are forbidden.
+    - Configuration mutation is atomically validated by the provider. Rated or
+      newly enabled automatic outbound play requires separate explicit
+      confirmation, and capacity cannot exceed qualified evidence.
 
 local_match_planner:
   supported:
@@ -128,6 +137,34 @@ local_match_planner:
     - Plans are deterministic for the same normalized inputs and seed.
     - Every scheduled game records both engine fingerprints and options.
     - Color-paired formats schedule reversed colors together.
+  opening_suite:
+    schema: arena_opening_suite_v1
+    maximum_bytes: 16777216
+    fields:
+      positions: [{starting_fen: string, variant: standard_or_chess960, uci_moves: [string]}]
+    selection: deterministic_opening_index_modulo_position_count
+  time_control:
+    required: [initial_ms, increment_ms]
+    optional: [moves_to_go]
+  adjudication:
+    fields:
+      max_plies: {minimum: 2, maximum: 2048, default: 512}
+      draw_cp: {minimum: 0, maximum: 1000, nullable: true}
+      draw_consecutive_plies: {minimum: 1, maximum: 100, default: 8}
+      draw_min_plies: {minimum: 0, maximum: 1000, default: 80}
+      win_cp: {minimum: 1, maximum: 100000, nullable: true}
+      win_consecutive_plies: {minimum: 1, maximum: 100, default: 6}
+  sprt:
+    required: [elo0, elo1, alpha, beta]
+    bounds:
+      elo: [-1000, 1000]
+      alpha_beta_exclusive: [0, 0.5]
+    rules:
+      - elo1 must be greater than elo0.
+      - The maximum game count is positive and even so reversed colors are
+        admitted and evaluated as one pair.
+      - The persisted result contains LLR, thresholds, games, score, and one
+        immutable verdict: accept_h0, accept_h1, or inconclusive.
 
 canonical_game:
   variants: [standard, chess960]
@@ -150,12 +187,43 @@ canonical_game:
     - A completed ply is committed before the next move request.
     - Restart reconstruction must match the last committed FEN.
     - Illegal moves and protocol failures have explicit termination values.
+    - Chess960 uses a persisted deterministic starting FEN, UCI_Chess960=true,
+      and Chess960-aware legality and castling parsing.
+    - Opening-suite plies, engine centipawn or mate projections, and principal
+      variations remain aligned with the canonical move list.
 
 tournament_contract:
   formats: [match, round_robin, gauntlet, swiss, sprt]
   lifecycle: [planned, queued, running, paused, completed, cancelled, failed]
   swiss: deterministic_score_groups_repeat_avoidance_color_balance_seeded_ties
   sprt: color_paired_elo_bounds_alpha_beta_immutable_verdict
+  execution:
+    actions: [start, pause, resume, cancel]
+    progress_fields: [total_games, queued_games, active_games, completed_games, percentage, current_round, updated_at]
+    rules:
+      - Start launches only persisted, registered engine identities and repeats
+        UCI readiness before the first scheduled game.
+      - Lifecycle and progress are persisted after every transition and game;
+        dashboard state is a projection of Manager-owned resources and events.
+      - Pause stops admission of new games and lets active games reach a safe
+        move or game boundary. Resume continues the remaining deterministic
+        schedule without replaying completed games.
+      - Cancel stops admission, terminates active engine processes within the
+        bounded cancellation deadline, and preserves completed game records.
+      - Every completed ply is legality-checked and durably represented in a
+        game resource before the next move request.
+      - A Manager restart marks interrupted active games explicitly and can
+        resume only from the last committed canonical position.
+      - Swiss rounds after the first are appended only after the previous round
+        is durable. Pairing uses score groups, repeat avoidance where possible,
+        color-balance minimization, deterministic seeded ties, and a
+        non-repeating lowest-ranked bye when the field is odd.
+      - SPRT admits complete reversed-color pairs, persists its likelihood
+        ratio after each pair, stops admission at a decision boundary, and
+        never rewrites a terminal verdict.
+      - Opening-suite and Chess960 starting positions are validated and
+        persisted before an engine process starts. Invalid input fails the
+        competition without fabricating a game result.
 
 managed_service_contract:
   identity: >
@@ -173,6 +241,15 @@ managed_service_contract:
     - unavailable
     - stopping
     - failed
+  evidence_orchestration:
+    actions: [evidence_campaign_enqueue, evidence_job_cancel, evidence_job_retry]
+    rules:
+      - The Evidence Service remains orchestration authority; Manager invokes
+        only component-declared typed API operations and stores bounded
+        projections for the dashboard.
+      - The built-in first campaign may target the active deployment or an
+        existing service-issued target UUID. Arbitrary adapter execution is
+        outside the Manager contract.
   discovery:
     - executable_and_required_paths
     - declared_version_probe

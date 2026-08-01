@@ -77,6 +77,22 @@ struct TimeControl {
     std::optional<std::uint32_t> moves_to_go;
 };
 
+struct AdjudicationPolicy {
+    std::uint32_t max_plies{512};
+    std::optional<std::int32_t> draw_cp;
+    std::uint32_t draw_consecutive_plies{8};
+    std::uint32_t draw_min_plies{80};
+    std::optional<std::int32_t> win_cp;
+    std::uint32_t win_consecutive_plies{6};
+};
+
+struct SprtPolicy {
+    double elo0{};
+    double elo1{5.0};
+    double alpha{0.05};
+    double beta{0.05};
+};
+
 struct GamePairing {
     std::uint32_t sequence{};
     std::string white_engine_id;
@@ -98,6 +114,8 @@ struct MatchPlan {
     std::uint32_t concurrency{1};
     std::uint64_t seed{};
     TimeControl time_control;
+    AdjudicationPolicy adjudication;
+    SprtPolicy sprt;
     std::optional<std::filesystem::path> opening_suite;
     std::vector<GamePairing> pairings;
     Labels labels;

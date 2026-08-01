@@ -47,6 +47,7 @@ export function OverviewPage({ navigate }: { navigate: (page: string) => void })
   const evidence = (services.data ?? []).find(
     (service) => service.data.profile_id === 'uci_arena_evidence',
   )
+  const initialLoading = status.isLoading || components.isLoading || services.isLoading
 
   return (
     <>
@@ -67,7 +68,7 @@ export function OverviewPage({ navigate }: { navigate: (page: string) => void })
       <SimpleGrid cols={{ base: 1, xs: 2, lg: 4 }} mb="lg">
         <MetricCard
           label="Managed resources"
-          value={resources}
+          value={initialLoading ? 'checking' : resources}
           detail="Engines, bots, and services"
           icon={<IconCpu size={22} />}
         />
@@ -80,8 +81,8 @@ export function OverviewPage({ navigate }: { navigate: (page: string) => void })
         />
         <MetricCard
           label="Attention"
-          value={attention}
-          detail={attention ? 'Review missing or unhealthy components' : 'No known blockers'}
+          value={initialLoading ? 'checking' : attention}
+          detail={initialLoading ? 'Loading current component and service state' : attention ? 'Review missing or unhealthy components' : 'No known blockers'}
           icon={<IconAlertTriangle size={22} />}
           tone="orange"
         />
@@ -109,16 +110,18 @@ export function OverviewPage({ navigate }: { navigate: (page: string) => void })
               <Group className="attention-row" justify="space-between">
                 <div>
                   <Text fw={600}>
-                    {status.data ? 'Control plane ready' : 'Control plane status unavailable'}
+                    {status.isLoading ? 'Checking control plane status' : status.data ? 'Control plane ready' : 'Control plane status unavailable'}
                   </Text>
                   <Text size="sm" c="dimmed">
-                    {status.data
+                    {status.isLoading
+                      ? 'Waiting for the first current Manager status sample.'
+                      : status.data
                       ? 'Loopback API and durable event stream are available.'
                       : 'The dashboard could not obtain a current Manager status sample.'}
                   </Text>
                 </div>
-                <Text size="sm" c={status.data ? 'teal' : 'red'} fw={700}>
-                  {status.data ? 'HEALTHY' : 'UNAVAILABLE'}
+                <Text size="sm" c={status.isLoading ? 'dimmed' : status.data ? 'teal' : 'red'} fw={700}>
+                  {status.isLoading ? 'CHECKING' : status.data ? 'HEALTHY' : 'UNAVAILABLE'}
                 </Text>
               </Group>
               <Group className="attention-row" justify="space-between">
@@ -135,12 +138,16 @@ export function OverviewPage({ navigate }: { navigate: (page: string) => void })
               <Group className="attention-row" justify="space-between">
                 <div>
                   <Text fw={600}>
-                    {evidence
+                    {services.isLoading
+                      ? 'Checking Evidence service'
+                      : evidence
                       ? `Evidence service ${evidence.data.observed_state}`
                       : 'Evidence service is not configured'}
                   </Text>
                   <Text size="sm" c="dimmed">
-                    {evidence?.data.health.reason ??
+                    {services.isLoading
+                      ? 'Waiting for the first current service sample.'
+                      : evidence?.data.health.reason ??
                       'Install or detect the optional service, then validate its public contract.'}
                   </Text>
                 </div>

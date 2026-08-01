@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <set>
 #include <stdexcept>
@@ -302,9 +303,14 @@ const std::string& CommandFailure::code() const noexcept { return code_; }
 int CommandFailure::http_status() const noexcept { return http_status_; }
 
 ControlPlane::ControlPlane(std::shared_ptr<ports::Store> store)
-    : store_(std::move(store)), started_at_(domain::utc_now()) {}
+    : store_(std::move(store)),
+      tournament_executor_(store_),
+      started_at_(domain::utc_now()) {}
 
-void ControlPlane::initialize() { store_->initialize(); }
+void ControlPlane::initialize() {
+    store_->initialize();
+    tournament_executor_.recover_interrupted();
+}
 
 void ControlPlane::reconcile_installed_services(
     const std::filesystem::path& manager_data_root) {
@@ -537,6 +543,10 @@ json ControlPlane::submit(const json& raw_request, const std::string& actor) {
         if (action == "match.plan" || action == "tournament.plan") {
             return plan_match(request, actor);
         }
+        if (action.starts_with("match.") ||
+            action.starts_with("tournament.")) {
+            return manage_competition(request, actor);
+        }
         if (action == "service.register" ||
             action == "health_probe.register") {
             return register_generic_resource(request, actor);
@@ -708,7 +718,56 @@ json ControlPlane::plan_match(const json& request, const std::string& actor) {
         }
     }
     if (parameters.contains("opening_suite") && !parameters.at("opening_suite").is_null()) {
-        plan.opening_suite = parameters.at("opening_suite").get<std::string>();
+        const std::filesystem::path opening_suite = std::filesystem::absolute(
+            parameters.at("opening_suite").get<std::string>()).lexically_normal();
+        std::error_code file_error;
+        const auto status = std::filesystem::symlink_status(
+            opening_suite, file_error);
+        const auto size = std::filesystem::file_size(opening_suite, file_error);
+        if (file_error || !std::filesystem::is_regular_file(status) ||
+            std::filesystem::is_symlink(status) || size == 0 ||
+            size > 16ULL * 1024ULL * 1024ULL) {
+            throw CommandFailure(
+                "invalid_opening_suite",
+                "opening_suite must be a non-symlink regular file no larger than 16 MiB",
+                422);
+        }
+        plan.opening_suite = opening_suite;
+    }
+    if (parameters.contains("adjudication")) {
+        const auto& adjudication = parameters.at("adjudication");
+        if (!adjudication.is_object()) {
+            throw CommandFailure(
+                "invalid_adjudication", "adjudication must be an object", 400);
+        }
+        plan.adjudication.max_plies =
+            adjudication.value("max_plies", 512U);
+        plan.adjudication.draw_consecutive_plies =
+            adjudication.value("draw_consecutive_plies", 8U);
+        plan.adjudication.draw_min_plies =
+            adjudication.value("draw_min_plies", 80U);
+        plan.adjudication.win_consecutive_plies =
+            adjudication.value("win_consecutive_plies", 6U);
+        if (adjudication.contains("draw_cp") &&
+            !adjudication.at("draw_cp").is_null()) {
+            plan.adjudication.draw_cp =
+                adjudication.at("draw_cp").get<std::int32_t>();
+        }
+        if (adjudication.contains("win_cp") &&
+            !adjudication.at("win_cp").is_null()) {
+            plan.adjudication.win_cp =
+                adjudication.at("win_cp").get<std::int32_t>();
+        }
+    }
+    if (parameters.contains("sprt")) {
+        const auto& sprt = parameters.at("sprt");
+        if (!sprt.is_object()) {
+            throw CommandFailure("invalid_sprt", "sprt must be an object", 400);
+        }
+        plan.sprt.elo0 = sprt.value("elo0", 0.0);
+        plan.sprt.elo1 = sprt.value("elo1", 5.0);
+        plan.sprt.alpha = sprt.value("alpha", 0.05);
+        plan.sprt.beta = sprt.value("beta", 0.05);
     }
     if (parameters.contains("engine_option_overrides")) {
         plan.engine_option_overrides =
@@ -726,6 +785,35 @@ json ControlPlane::plan_match(const json& request, const std::string& actor) {
     for (const auto& pairing : plan.pairings) {
         pairings.push_back(pairing_json(pairing));
     }
+    json swiss_byes = json::array();
+    json swiss_standings = json::array();
+    if (plan.format == domain::TournamentFormat::swiss) {
+        std::set<std::string, std::less<>> paired;
+        for (const auto& pairing : plan.pairings) {
+            paired.insert(pairing.white_engine_id);
+            paired.insert(pairing.black_engine_id);
+        }
+        for (const auto& engine : plan.engine_ids) {
+            const bool bye = !paired.contains(engine);
+            if (bye) {
+                swiss_byes.push_back({
+                    {"round", 1},
+                    {"engine_id", engine},
+                    {"score", 1.0},
+                });
+            }
+            swiss_standings.push_back({
+                {"engine_id", engine},
+                {"score", bye ? 1.0 : 0.0},
+                {"color_balance", 0},
+            });
+        }
+    }
+    const std::size_t planned_total_games =
+        plan.format == domain::TournamentFormat::swiss
+            ? static_cast<std::size_t>(plan.rounds) *
+                  (plan.engine_ids.size() / 2U)
+            : pairings.size();
     json data = {
         {"display_name", plan.display_name},
         {"format", domain::to_string(plan.format)},
@@ -743,8 +831,45 @@ json ControlPlane::plan_match(const json& request, const std::string& actor) {
              {"moves_to_go", plan.time_control.moves_to_go},
          }},
         {"opening_suite", plan.opening_suite ? json(plan.opening_suite->string()) : json(nullptr)},
+        {"adjudication",
+         {
+             {"max_plies", plan.adjudication.max_plies},
+             {"draw_cp", plan.adjudication.draw_cp},
+             {"draw_consecutive_plies", plan.adjudication.draw_consecutive_plies},
+             {"draw_min_plies", plan.adjudication.draw_min_plies},
+             {"win_cp", plan.adjudication.win_cp},
+             {"win_consecutive_plies", plan.adjudication.win_consecutive_plies},
+         }},
+        {"sprt",
+         plan.format == domain::TournamentFormat::sprt
+             ? json{
+                   {"elo0", plan.sprt.elo0},
+                   {"elo1", plan.sprt.elo1},
+                   {"alpha", plan.sprt.alpha},
+                   {"beta", plan.sprt.beta},
+                   {"llr", 0.0},
+                   {"lower_threshold", std::log(plan.sprt.beta / (1.0 - plan.sprt.alpha))},
+                   {"upper_threshold", std::log((1.0 - plan.sprt.beta) / plan.sprt.alpha)},
+                   {"games", 0},
+                   {"score", 0.0},
+                   {"verdict", nullptr},
+               }
+             : json(nullptr)},
         {"pairings", pairings},
+        {"planned_total_games", planned_total_games},
+        {"swiss_byes", swiss_byes},
+        {"swiss_standings", swiss_standings},
         {"lifecycle", "planned"},
+        {"progress",
+         {
+             {"total_games", planned_total_games},
+             {"queued_games", planned_total_games},
+             {"active_games", 0},
+             {"completed_games", 0},
+             {"percentage", 0.0},
+             {"current_round", nullptr},
+             {"updated_at", domain::utc_now()},
+         }},
     };
 
     const std::string kind =
@@ -763,6 +888,104 @@ json ControlPlane::plan_match(const json& request, const std::string& actor) {
             labels_from(parameters).dump(),
             data.dump(),
         });
+}
+
+json ControlPlane::manage_competition(
+    const json& request,
+    const std::string& actor) {
+    const json& target = request.at("target");
+    const std::string kind = required_string(target, "kind");
+    const std::string action = request.at("action").get<std::string>();
+    const bool match_action = action.starts_with("match.");
+    const std::string expected_kind =
+        match_action ? "match_plan" : "tournament";
+    if (kind != expected_kind) {
+        throw CommandFailure(
+            "invalid_target",
+            action + " requires a " + expected_kind + " target",
+            400);
+    }
+    const std::string id = required_string(target, "id");
+    const auto existing = store_->get_resource(kind, id);
+    if (!existing) {
+        throw CommandFailure(
+            "resource_not_found", "competition plan does not exist", 404);
+    }
+    json data = json::parse(existing->data_json);
+    const std::string lifecycle = data.value("lifecycle", "planned");
+    std::string next;
+    if (action.ends_with(".start")) {
+        if (lifecycle != "planned") {
+            throw CommandFailure(
+                "invalid_lifecycle",
+                "only a planned competition can be started",
+                409);
+        }
+        next = "running";
+    } else if (action.ends_with(".pause")) {
+        if (lifecycle != "running") {
+            throw CommandFailure(
+                "invalid_lifecycle",
+                "only a running competition can be paused",
+                409);
+        }
+        next = "paused";
+    } else if (action.ends_with(".resume")) {
+        if (lifecycle != "paused") {
+            throw CommandFailure(
+                "invalid_lifecycle",
+                "only a paused competition can be resumed",
+                409);
+        }
+        next = "running";
+    } else if (action.ends_with(".cancel")) {
+        if (lifecycle != "running" && lifecycle != "paused") {
+            throw CommandFailure(
+                "invalid_lifecycle",
+                "only a running or paused competition can be cancelled",
+                409);
+        }
+        next = "cancelled";
+    } else {
+        throw CommandFailure(
+            "unknown_action", "unsupported competition action: " + action, 400);
+    }
+
+    data["lifecycle"] = next;
+    data.erase("interruption");
+    json progress = data.value("progress", json::object());
+    progress["updated_at"] = domain::utc_now();
+    if (next == "cancelled") {
+        progress["queued_games"] = 0;
+    }
+    data["progress"] = std::move(progress);
+    ports::ResourceRecord updated = *existing;
+    updated.revision = existing->revision + 1;
+    updated.updated_at = domain::utc_now();
+    updated.data_json = data.dump();
+    const std::uint64_t expected_revision =
+        request.contains("expected_revision") &&
+                !request.at("expected_revision").is_null()
+            ? request.at("expected_revision").get<std::uint64_t>()
+            : existing->revision;
+    json result = complete_update(
+        request,
+        actor,
+        std::move(updated),
+        expected_revision,
+        "competition." + next);
+    if (!request.at("dry_run").get<bool>()) {
+        if (action.ends_with(".start")) {
+            tournament_executor_.start(kind, id);
+        } else if (action.ends_with(".pause")) {
+            tournament_executor_.pause(kind, id);
+        } else if (action.ends_with(".resume")) {
+            tournament_executor_.resume(kind, id);
+        } else {
+            tournament_executor_.cancel(kind, id);
+        }
+    }
+    return result;
 }
 
 json ControlPlane::register_generic_resource(const json& request, const std::string& actor) {
@@ -1058,7 +1281,132 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
             arguments.insert(arguments.end(), {"--config", config_path});
         }
     };
-    if (action == "service.start") {
+    if (action == "service.evidence_campaign_enqueue" ||
+        action == "service.evidence_job_cancel" ||
+        action == "service.evidence_job_retry") {
+        if (!evidence_service) {
+            throw CommandFailure(
+                "unsupported_service_action",
+                "evidence orchestration actions require the Evidence Service profile",
+                409);
+        }
+        const json& parameters = request.at("parameters");
+        std::vector<std::string> operation_arguments;
+        std::string operation;
+        if (action == "service.evidence_campaign_enqueue") {
+            operation_arguments = {"campaign", "enqueue"};
+            operation = "campaign_enqueue";
+            if (parameters.contains("target_id") &&
+                !parameters.at("target_id").is_null()) {
+                const std::string target_id =
+                    required_string(parameters, "target_id");
+                if (!uuid_v4(target_id)) {
+                    throw CommandFailure(
+                        "invalid_target_id",
+                        "Evidence target_id must be a service-issued UUID",
+                        400);
+                }
+                operation_arguments.insert(
+                    operation_arguments.end(), {"--target", target_id});
+            }
+        } else {
+            const std::string job_id = required_string(parameters, "job_id");
+            if (!uuid_v4(job_id)) {
+                throw CommandFailure(
+                    "invalid_job_id",
+                    "Evidence job_id must be a service-issued UUID",
+                    400);
+            }
+            operation_arguments = {
+                "job", "control", "--id", job_id, "--action",
+                action.ends_with("_cancel") ? "cancel" : "retry"};
+            operation = "job_control";
+        }
+
+        if (request.at("dry_run").get<bool>()) {
+            data["last_control_result"] = {
+                {"operation", operation},
+                {"status", "validated"},
+            };
+        } else {
+            const json declaration = manager_service_api_declaration(data);
+            const std::string expected_component_id =
+                "uci_arena_evidence.service";
+            std::string expected_component_version =
+                data.value("installed_component_version", "");
+            const auto invoke_envelope =
+                [&](const std::vector<std::string>& arguments,
+                    const std::chrono::milliseconds timeout) {
+                    auto api_arguments = base;
+                    for (const auto& prefix : declaration.at("arguments")) {
+                        api_arguments.push_back(prefix.get<std::string>());
+                    }
+                    api_arguments.insert(
+                        api_arguments.end(), arguments.begin(), arguments.end());
+                    add_locator_options(api_arguments);
+                    return process_supervisor_.run_json(
+                        node, cli.parent_path(), api_arguments, timeout);
+                };
+            const json describe_response =
+                invoke_envelope({"describe"}, std::chrono::seconds(15));
+            if (expected_component_version.empty()) {
+                expected_component_version =
+                    describe_response.value("component_version", "");
+            }
+            if (expected_component_version.empty()) {
+                throw CommandFailure(
+                    "service_api_incompatible",
+                    "Evidence Service API did not report a component version",
+                    409);
+            }
+            const json description = manager_service_api_payload(
+                describe_response,
+                "describe",
+                expected_component_id,
+                expected_component_version);
+            if (!string_set(description, "operations", 32).contains(operation) ||
+                !string_set(description, "operations", 32).contains(
+                    "orchestration_status")) {
+                throw CommandFailure(
+                    "service_api_incompatible",
+                    "Evidence Service API does not declare the requested orchestration operation",
+                    409);
+            }
+            data["last_control_result"] = bounded_redacted_external_value(
+                manager_service_api_payload(
+                    invoke_envelope(operation_arguments, std::chrono::seconds(30)),
+                    operation,
+                    expected_component_id,
+                    expected_component_version),
+                1024 * 1024,
+                "Evidence orchestration result");
+            const json orchestration = manager_service_api_payload(
+                invoke_envelope(
+                    {"orchestration", "status"},
+                    std::chrono::seconds(15)),
+                "orchestration_status",
+                expected_component_id,
+                expected_component_version);
+            if (orchestration.value("schema", "") !=
+                    "uci_arena_evidence_orchestration_v1" ||
+                !orchestration.contains("targets") ||
+                !orchestration.at("targets").is_array() ||
+                orchestration.at("targets").size() > 1'000 ||
+                !orchestration.contains("jobs") ||
+                !orchestration.at("jobs").is_array() ||
+                orchestration.at("jobs").size() > 10'000) {
+                throw CommandFailure(
+                    "service_api_incompatible",
+                    "Evidence orchestration projection is malformed",
+                    409);
+            }
+            data["orchestration_projection"] =
+                bounded_redacted_external_value(
+                    orchestration,
+                    1024 * 1024,
+                    "Evidence orchestration projection");
+        }
+    } else if (action == "service.start") {
         auto arguments = base;
         arguments.push_back("daemon");
         add_locator_options(arguments);
@@ -1136,7 +1484,8 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                     std::string expected_component_version =
                         data.value("installed_component_version", "");
                     const auto invoke_api =
-                        [&](const std::vector<std::string>& operation_arguments) {
+                        [&](const std::vector<std::string>& operation_arguments,
+                            const std::chrono::milliseconds timeout) {
                             auto api_arguments = base;
                             for (const auto& prefix :
                                  declaration.at("arguments")) {
@@ -1149,11 +1498,11 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                                 operation_arguments.end());
                             add_locator_options(api_arguments);
                             return process_supervisor_.run_json(
-                                node, cli.parent_path(), api_arguments);
+                                node, cli.parent_path(), api_arguments, timeout);
                         };
 
                     const json describe_response =
-                        invoke_api({"describe"});
+                        invoke_api({"describe"}, std::chrono::seconds(15));
                     if (expected_component_version.empty()) {
                         if (!describe_response.contains(
                                 "component_version") ||
@@ -1182,13 +1531,18 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                         evidence_service
                             ? "uci_arena_evidence_service_config_v1"
                             : "uci_arena_book_forge_config_v1";
-                    const std::set<std::string> required_operations{
+                    std::set<std::string> required_operations{
                         "config_validate",
                         "describe",
                         "outputs_inspect",
                         "outputs_list",
                         "status",
                     };
+                    if (evidence_service) {
+                        required_operations.insert("orchestration_status");
+                        required_operations.insert("campaign_enqueue");
+                        required_operations.insert("job_control");
+                    }
                     const std::set<std::string> allowed_output_kinds =
                         evidence_service
                             ? std::set<std::string>{
@@ -1216,7 +1570,8 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
 
                     const json status_payload =
                         manager_service_api_payload(
-                            invoke_api({"status"}),
+                            invoke_api(
+                                {"status"}, std::chrono::seconds(15)),
                             "status",
                             expected_component_id,
                             expected_component_version)
@@ -1226,6 +1581,32 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                             expected_status_schema) {
                         throw std::runtime_error(
                             "service API status schema is incompatible");
+                    }
+                    if (evidence_service) {
+                        const json orchestration =
+                            manager_service_api_payload(
+                                invoke_api(
+                                    {"orchestration", "status"},
+                                    std::chrono::seconds(15)),
+                                "orchestration_status",
+                                expected_component_id,
+                                expected_component_version);
+                        if (orchestration.value("schema", "") !=
+                                "uci_arena_evidence_orchestration_v1" ||
+                            !orchestration.contains("targets") ||
+                            !orchestration.at("targets").is_array() ||
+                            orchestration.at("targets").size() > 1'000 ||
+                            !orchestration.contains("jobs") ||
+                            !orchestration.at("jobs").is_array() ||
+                            orchestration.at("jobs").size() > 10'000) {
+                            throw std::runtime_error(
+                                "Evidence orchestration projection is malformed");
+                        }
+                        data["orchestration_projection"] =
+                            bounded_redacted_external_value(
+                                orchestration,
+                                1024 * 1024,
+                                "Evidence orchestration projection");
                     }
 
                     std::vector<std::string> output_arguments{
@@ -1242,7 +1623,9 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                             {"--cursor", previous_cursor});
                     }
                     const json listed = manager_service_api_payload(
-                        invoke_api(output_arguments),
+                        invoke_api(
+                            output_arguments,
+                            std::chrono::seconds(60)),
                         "outputs_list",
                         expected_component_id,
                         expected_component_version);
@@ -1667,17 +2050,31 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                             status_payload,
                             1024 * 1024,
                             "External service status");
+                    data["last_successful_status_at"] =
+                        domain::utc_now();
+                    data["output_projection_stale"] = false;
                 } catch (const std::exception& error) {
-                    data["integration_state"] = "incompatible";
+                    const bool transient_timeout =
+                        std::string_view(error.what()) ==
+                        "managed service command timed out";
+                    data["integration_state"] =
+                        transient_timeout ? "unavailable" : "incompatible";
                     data["observed_state"] = "degraded";
                     data["health"] = {
                         {"state", "degraded"},
                         {"reason", error.what()},
                         {"observed_at", domain::utc_now()},
                     };
-                    data.erase("output_integration");
-                    data.erase("output_cursor");
-                    data.erase("manager_api_projection");
+                    if (transient_timeout) {
+                        data["output_projection_stale"] =
+                            data.contains("output_integration");
+                    } else {
+                        data.erase("output_integration");
+                        data.erase("output_cursor");
+                        data.erase("manager_api_projection");
+                        data.erase("last_successful_status_at");
+                        data.erase("output_projection_stale");
+                    }
                 }
             } else {
             const json status = process_supervisor_.run_json(

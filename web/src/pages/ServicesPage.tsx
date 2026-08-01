@@ -17,8 +17,10 @@ import {
   List,
   Modal,
   Paper,
+  ScrollArea,
   SimpleGrid,
   Stack,
+  Table,
   Text,
   ThemeIcon,
   Title,
@@ -34,7 +36,7 @@ import { PathPickerInput } from '../components/PathPickerInput'
 import { StatusPill } from '../components/StatusPill'
 import { selectPreferredService } from './serviceSelection'
 
-export function ServicesPage() {
+export function ServicesPage({ navigate }: { navigate: (page: string) => void }) {
   const queryClient = useQueryClient()
   const profiles = useQuery({ queryKey: ['service-profiles'], queryFn: api.serviceProfiles })
   const components = useQuery({ queryKey: ['components'], queryFn: api.components })
@@ -199,6 +201,30 @@ export function ServicesPage() {
           // The subsequent resource refresh presents the launch/status failure.
         }
       }
+      await queryClient.invalidateQueries({ queryKey: ['resources', 'managed_service'] })
+    },
+  })
+  const evidenceControl = useMutation({
+    mutationFn: ({
+      service,
+      action,
+      jobId,
+    }: {
+      service: Resource<ManagedServiceData>
+      action: 'campaign_enqueue' | 'job_cancel' | 'job_retry'
+      jobId?: string
+    }) =>
+      api.command(
+        makeCommand(
+          `service.evidence_${action}`,
+          'managed_service',
+          jobId ? { job_id: jobId } : { target_id: null },
+          false,
+          service.id,
+          service.revision,
+        ),
+      ),
+    onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['resources', 'managed_service'] })
     },
   })
@@ -497,6 +523,24 @@ export function ServicesPage() {
                 )}
               </Grid.Col>
             </Grid>
+            <Group justify="space-between" align="flex-start" mt="sm">
+              <Text size="sm" c={service.data.health.state === 'healthy' ? 'dimmed' : 'orange'}>
+                {service.data.health.reason ?? 'No provider status detail is available.'}
+              </Text>
+              <Text size="xs" c="dimmed">
+                {service.data.last_successful_status_at
+                  ? `Last successful status: ${new Date(service.data.last_successful_status_at).toLocaleString()}`
+                  : 'No successful status sample yet'}
+              </Text>
+            </Group>
+            {service.data.output_projection_stale && (
+              <Alert color="yellow" mt="sm">
+                Showing the last validated provider outputs while the current provider probe is unavailable.
+              </Alert>
+            )}
+            {control.error && control.variables?.id === service.id && (
+              <Alert color="red" mt="sm">{control.error.message}</Alert>
+            )}
             {service.data.output_integration &&
               typeof service.data.output_integration === 'object' && (
                 <Paper withBorder mt="md" p="sm" bg="var(--mantine-color-dark-7)">
@@ -516,6 +560,128 @@ export function ServicesPage() {
                       {Number(service.data.output_integration.timing_profile_count ?? 0)}{' '}
                       qualified timing profile(s)
                     </Text>
+                  )}
+                </Paper>
+              )}
+            {service.data.profile_id === 'uci_arena_evidence' &&
+              service.data.orchestration_projection && (
+                <Paper withBorder mt="md" p="sm">
+                  <Group justify="space-between" align="flex-start">
+                    <div>
+                      <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
+                        Evidence collection
+                      </Text>
+                      <Text size="sm" mt={4}>
+                        {service.data.orchestration_projection.targets.length} explicit target(s) ·{' '}
+                        {service.data.orchestration_projection.jobs.length} job(s)
+                      </Text>
+                    </div>
+                    <Button
+                      size="xs"
+                      color="violet"
+                      loading={
+                        evidenceControl.isPending &&
+                        evidenceControl.variables?.service.id === service.id &&
+                        evidenceControl.variables.action === 'campaign_enqueue'
+                      }
+                      disabled={evidenceControl.isPending}
+                      onClick={() =>
+                        evidenceControl.mutate({ service, action: 'campaign_enqueue' })
+                      }
+                    >
+                      Run first evidence campaign
+                    </Button>
+                  </Group>
+                  {service.data.status_projection?.collection?.state ===
+                    'waiting_for_target' && (
+                    <Alert color="yellow" mt="sm">
+                      <Group justify="space-between" align="center">
+                        <Text size="sm">
+                          {service.data.status_projection.collection.reason ??
+                            'No exact LatticeKnight deployment target is available yet.'}
+                        </Text>
+                        <Button
+                          component="a"
+                          href="#page=engines"
+                          size="xs"
+                          variant="default"
+                          onClick={() => navigate('engines')}
+                        >
+                          Open engines
+                        </Button>
+                      </Group>
+                    </Alert>
+                  )}
+                  {evidenceControl.error &&
+                    evidenceControl.variables?.service.id === service.id && (
+                      <Alert color="red" mt="sm">{evidenceControl.error.message}</Alert>
+                    )}
+                  {service.data.orchestration_projection.jobs.length > 0 && (
+                    <ScrollArea h={280} mt="md">
+                      <Table verticalSpacing="xs" horizontalSpacing="sm">
+                        <Table.Thead>
+                          <Table.Tr>
+                            <Table.Th>Work</Table.Th>
+                            <Table.Th>State</Table.Th>
+                            <Table.Th>Attempts</Table.Th>
+                            <Table.Th>Action</Table.Th>
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          {service.data.orchestration_projection.jobs.map((job) => (
+                            <Table.Tr key={job.id}>
+                              <Table.Td>
+                                <Text size="sm" fw={650}>{job.adapter}</Text>
+                                <Text size="xs" c="dimmed">{job.shard_id}</Text>
+                                {(job.last_error || job.wait_reason) && (
+                                  <Text size="xs" c={job.last_error ? 'red' : 'dimmed'}>
+                                    {job.last_error || job.wait_reason}
+                                  </Text>
+                                )}
+                              </Table.Td>
+                              <Table.Td><StatusPill value={job.state} /></Table.Td>
+                              <Table.Td>{job.attempts}</Table.Td>
+                              <Table.Td>
+                                {['queued', 'waiting_for_target', 'waiting_for_resources'].includes(
+                                  job.state,
+                                ) ? (
+                                  <Button
+                                    size="compact-xs"
+                                    variant="subtle"
+                                    color="red"
+                                    disabled={evidenceControl.isPending}
+                                    onClick={() =>
+                                      evidenceControl.mutate({
+                                        service,
+                                        action: 'job_cancel',
+                                        jobId: job.id,
+                                      })
+                                    }
+                                  >
+                                    Cancel
+                                  </Button>
+                                ) : ['failed', 'cancelled'].includes(job.state) ? (
+                                  <Button
+                                    size="compact-xs"
+                                    variant="subtle"
+                                    disabled={evidenceControl.isPending}
+                                    onClick={() =>
+                                      evidenceControl.mutate({
+                                        service,
+                                        action: 'job_retry',
+                                        jobId: job.id,
+                                      })
+                                    }
+                                  >
+                                    Retry
+                                  </Button>
+                                ) : null}
+                              </Table.Td>
+                            </Table.Tr>
+                          ))}
+                        </Table.Tbody>
+                      </Table>
+                    </ScrollArea>
                   )}
                 </Paper>
               )}

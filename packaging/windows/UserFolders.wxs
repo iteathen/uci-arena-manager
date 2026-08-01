@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Fragment>
+    <Component
+      Id="ArenaUserProgramsFolderCleanup"
+      Directory="INSTALL_PREFIX_1"
+      Guid="12985ACB-7026-4C16-9DA4-24B76F1E6DCB">
+      <RegistryValue
+        Root="HKCU"
+        Key="Software\UCI Arena Manager\Installer\Folders"
+        Name="ProgramsParent"
+        Type="integer"
+        Value="1"
+        KeyPath="yes" />
+      <RemoveFolder Id="ArenaUserProgramsFolderRemove" On="uninstall" />
+    </Component>
+  </Fragment>
+</Wix>

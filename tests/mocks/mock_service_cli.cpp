@@ -38,7 +38,7 @@ int main(int argc, char** argv) {
     if (operation == "describe") {
         std::cout
             << (evidence
-                    ? R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"uci_arena_evidence.service","component_version":"0.3.0","operation":"describe","ok":true,"payload":{"transport":"cli_json","invocation":["api"],"operations":["describe","status","outputs_list","outputs_inspect","config_validate"],"output_schemas":["uci_arena_service_output_v1"],"output_kinds":["evidence.dataset","timing_profile.qualified"],"configuration_schema":"uci_arena_evidence_service_config_v1","status_schema":"uci_arena_evidence_status_v1"}})"
+                    ? R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"uci_arena_evidence.service","component_version":"0.3.0","operation":"describe","ok":true,"payload":{"transport":"cli_json","invocation":["api"],"operations":["describe","status","outputs_list","outputs_inspect","config_validate","orchestration_status","campaign_enqueue","job_control"],"output_schemas":["uci_arena_service_output_v1"],"output_kinds":["evidence.dataset","timing_profile.qualified"],"configuration_schema":"uci_arena_evidence_service_config_v1","status_schema":"uci_arena_evidence_status_v1"}})"
                     : R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"book_forge.service","component_version":"0.3.0","operation":"describe","ok":true,"payload":{"transport":"cli_json","invocation":["api"],"operations":["describe","status","outputs_list","outputs_inspect","config_validate"],"output_schemas":["uci_arena_service_output_v1"],"output_kinds":["opening_book.snapshot"],"configuration_schema":"uci_arena_book_forge_config_v1","status_schema":"uci_arena_book_forge_status_v2"}})")
             << '\n';
         return 0;
@@ -48,6 +48,27 @@ int main(int argc, char** argv) {
             << (evidence
                     ? R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"uci_arena_evidence.service","component_version":"0.3.0","operation":"status","ok":true,"payload":{"status":{"schema":"uci_arena_evidence_status_v1","control":{"paused":false},"collection":{"state":"available","reason":"ready"},"daemon":{"phase":"sleep","stale":false,"lastError":""},"datasets":1}}})"
                     : R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"book_forge.service","component_version":"0.3.0","operation":"status","ok":true,"payload":{"status":{"schema":"uci_arena_book_forge_status_v2","control":{"paused":false},"daemon":{"phase":"sleep","stale":false}}}})")
+            << '\n';
+        return 0;
+    }
+    if (evidence && operation == "orchestration" && argc > 4 &&
+        std::string(argv[4]) == "status") {
+        std::cout
+            << R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"uci_arena_evidence.service","component_version":"0.3.0","operation":"orchestration_status","ok":true,"payload":{"schema":"uci_arena_evidence_orchestration_v1","targets":[{"id":"123e4567-e89b-42d3-a456-426614174001","label":"LatticeKnight","model_id":"latticeknight","model_fingerprint":"model-1","engine_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","provider":"directml","created_at":"2026-07-25T00:00:00Z"}],"jobs":[{"id":"123e4567-e89b-42d3-a456-426614174002","adapter":"timing_profile","state":"queued","priority":100,"target_id":"123e4567-e89b-42d3-a456-426614174001","shard_id":"deadline-provider-qualification","dataset_id":"123e4567-e89b-42d3-a456-426614174000","attempts":0,"wait_reason":"","last_error":"","created_at":"2026-07-25T00:00:00Z","updated_at":"2026-07-25T00:00:00Z"}]}})"
+            << '\n';
+        return 0;
+    }
+    if (evidence && operation == "campaign" && argc > 4 &&
+        std::string(argv[4]) == "enqueue") {
+        std::cout
+            << R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"uci_arena_evidence.service","component_version":"0.3.0","operation":"campaign_enqueue","ok":true,"payload":{"schema":"uci_arena_evidence_campaign_enqueue_v1","campaign":"time_control_curve_v1","target_id":null,"jobs":[]}})"
+            << '\n';
+        return 0;
+    }
+    if (evidence && operation == "job" && argc > 4 &&
+        std::string(argv[4]) == "control") {
+        std::cout
+            << R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"uci_arena_evidence.service","component_version":"0.3.0","operation":"job_control","ok":true,"payload":{"schema":"uci_arena_evidence_job_control_v1","action":"cancel","job":{"id":"123e4567-e89b-42d3-a456-426614174002","state":"cancelled"}}})"
             << '\n';
         return 0;
     }

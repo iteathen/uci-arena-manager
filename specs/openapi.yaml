@@ -7,6 +7,63 @@ info:
     identifier: AGPL-3.0-or-later
 servers:
   - url: http://127.0.0.1:47831/api/v1
+x-command-actions:
+  competition_lifecycle:
+    - match.start
+    - match.pause
+    - match.resume
+    - match.cancel
+    - tournament.start
+    - tournament.pause
+    - tournament.resume
+    - tournament.cancel
+  evidence_orchestration:
+    - service.evidence_campaign_enqueue
+    - service.evidence_job_cancel
+    - service.evidence_job_retry
+  contract: >
+    Lifecycle commands target a persisted match_plan or tournament resource,
+    require its current revision, and return the durably updated resource.
+    Progress is backend-authored in resource data and advanced by durable
+    events after each game-state transition.
+x-competition-plan-contract:
+  formats: [head_to_head, round_robin, gauntlet, swiss, sprt]
+  common_parameters:
+    - display_name
+    - engine_ids
+    - variant
+    - games_per_pair
+    - rounds
+    - concurrency
+    - seed
+    - time_control
+    - opening_suite
+    - adjudication
+    - engine_option_overrides
+  sprt_parameters: [elo0, elo1, alpha, beta]
+  rules:
+    - Chess960 and opening-suite positions are persisted before execution.
+    - Swiss pairings after round one and SPRT decisions are backend-authored.
+    - Progress, Swiss byes, evaluations, and SPRT verdicts are resource data,
+      never client-side projections.
+x-interactive-helper-contract:
+  origin: authenticated_desktop_launcher_session
+  authority: receipt_verified_provider_adapter
+  operations:
+    - bot_probe
+    - bot_startup_control
+    - bot_options_get
+    - bot_options_update
+    - bot_local_account_control
+  rules:
+    - These loopback helper operations are not Manager service endpoints and
+      exist only for the interactive desktop-host lifetime.
+    - Bot option requests carry only the
+      uci_arena_lichess_manager_options_v1 allowlisted groups plus explicit
+      rated/outbound confirmations.
+    - Local account control carries one fixed action and its bounded typed
+      scalar parameters. It never accepts paths, executable names, argv arrays,
+      shell strings, token material, or raw provider configuration.
 paths:
   /auth/pair-token:
     post:
@@ -57,6 +114,9 @@ paths:
   /tournaments:
     get:
       operationId: listTournaments
+      description: >
+        Return persisted tournament plans with backend-authoritative lifecycle
+        and progress. Mutations use the typed command endpoint.
       responses:
         "200":
           description: Tournament resources

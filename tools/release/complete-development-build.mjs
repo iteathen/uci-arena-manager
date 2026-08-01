@@ -245,13 +245,18 @@ export function completeDevelopmentBuild({
   ]);
 
   const outputDirectory = path.join(repositoryRoot, "dist", "windows");
-  const managerMsiName =
-    `UCI-Arena-Manager-${version}-windows-x64.msi`;
+  const managerUserMsiName =
+    `UCI-Arena-Manager-${version}-windows-x64-user.msi`;
+  const managerMachineMsiName =
+    `UCI-Arena-Manager-${version}-windows-x64-machine.msi`;
   const managerZipName =
     `UCI-Arena-Manager-${version}-windows-x64.zip`;
-  const managerMsi = exactFile(path.join(outputDirectory, managerMsiName));
+  const managerUserMsi = exactFile(
+    path.join(outputDirectory, managerUserMsiName));
+  const managerMachineMsi = exactFile(
+    path.join(outputDirectory, managerMachineMsiName));
   const setup = exactFile(path.join(mediaRoot, "bin", "arena-setup.exe"));
-  const buildBundle = (name, offline) => {
+  const buildBundle = (name, offline, scope) => {
     const setupArguments = [
       "upgrade",
       "--preset",
@@ -275,7 +280,7 @@ export function completeDevelopmentBuild({
       "-d",
       `SuiteSetup=${setup}`,
       "-d",
-      `ManagerMsi=${managerMsi}`,
+      `ManagerMsi=${scope === "user" ? managerUserMsi : managerMachineMsi}`,
       "-d",
       `SetupArguments=${setupArguments}`,
       "-d",
@@ -286,16 +291,24 @@ export function completeDevelopmentBuild({
       "SetupTrustArguments=--allow-unsigned-development-catalog",
       "-out",
       path.join(outputDirectory, name),
-      "packaging/windows/Bundle.wxs",
+      scope === "user"
+        ? "packaging/windows/Bundle.User.wxs"
+        : "packaging/windows/Bundle.wxs",
       fragment,
     ]);
   };
-  const online =
-    `UCI-Arena-Setup-${version}-windows-x64-online.exe`;
-  const offline =
-    `UCI-Arena-Setup-${version}-windows-x64-offline.exe`;
-  buildBundle(online, false);
-  buildBundle(offline, true);
+  const userOnline =
+    `UCI-Arena-Setup-${version}-windows-x64-user-online.exe`;
+  const userOffline =
+    `UCI-Arena-Setup-${version}-windows-x64-user-offline.exe`;
+  const machineOnline =
+    `UCI-Arena-Setup-${version}-windows-x64-machine-online.exe`;
+  const machineOffline =
+    `UCI-Arena-Setup-${version}-windows-x64-machine-offline.exe`;
+  buildBundle(userOnline, false, "user");
+  buildBundle(userOffline, true, "user");
+  buildBundle(machineOnline, false, "machine");
+  buildBundle(machineOffline, true, "machine");
 
   rmSync(path.join(outputDirectory, managerZipName), { force: true });
   return writeResult({
@@ -303,7 +316,14 @@ export function completeDevelopmentBuild({
     version,
     sourceCommit,
     lockPath,
-    artifactNames: [online, offline, managerMsiName],
+    artifactNames: [
+      userOnline,
+      userOffline,
+      machineOnline,
+      machineOffline,
+      managerUserMsiName,
+      managerMachineMsiName,
+    ],
   });
 }
 

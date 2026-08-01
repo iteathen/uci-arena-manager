@@ -18,10 +18,12 @@ export function ResourcePage({
   title,
   description,
   kind,
+  emptyAction,
 }: {
   title: string
   description: string
   kind: ResourceKind
+  emptyAction?: { label: string; onClick: () => void }
 }) {
   const resources = useQuery({
     queryKey: ['resources', kind],
@@ -54,6 +56,8 @@ export function ResourcePage({
           <EmptyState
             title={`No ${title.toLowerCase()} yet`}
             detail="Resources appear here as soon as they are created through the shared command contract."
+            action={emptyAction?.label}
+            onAction={emptyAction?.onClick}
           />
         ) : (
           <ScrollArea>
