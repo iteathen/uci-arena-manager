@@ -5,7 +5,11 @@ import { useState } from 'react'
 import { api, makeCommand } from '../api/client'
 import type { MatchPlanData, Resource } from '../api/types'
 import { StatusPill } from './StatusPill'
-import { availableCompetitionActions, type LifecycleAction } from './competitionModel'
+import {
+  availableCompetitionActions,
+  submitCompetitionLifecycleAction,
+  type LifecycleAction,
+} from './competitionModel'
 
 type Competition = Resource<MatchPlanData>
 
@@ -27,19 +31,26 @@ export function CompetitionList({
     queryFn: () => api.resources<MatchPlanData>('tournament'),
   })
   const mutation = useMutation({
-    mutationFn: ({ resource, action }: { resource: Competition; action: LifecycleAction }) => {
-      const prefix = resource.kind === 'match_plan' ? 'match' : 'tournament'
-      return api.command(
-        makeCommand(
-          `${prefix}.${action}`,
-          resource.kind,
-          {},
-          false,
-          resource.id,
-          resource.revision,
-        ),
-      )
-    },
+    mutationFn: ({ resource, action }: { resource: Competition; action: LifecycleAction }) =>
+      submitCompetitionLifecycleAction(resource, action, {
+        submit: (current, currentAction) => {
+          const prefix = current.kind === 'match_plan' ? 'match' : 'tournament'
+          return api.command(
+            makeCommand(
+              `${prefix}.${currentAction}`,
+              current.kind,
+              {},
+              false,
+              current.id,
+              current.revision,
+            ),
+          )
+        },
+        refresh: async () => {
+          const current = await api.resources<MatchPlanData>(resource.kind)
+          return current.find((candidate) => candidate.id === resource.id)
+        },
+      }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['resources'] })
     },

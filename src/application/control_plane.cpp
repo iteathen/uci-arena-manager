@@ -699,6 +699,12 @@ json ControlPlane::submit(const json& raw_request, const std::string& actor) {
     } catch (const CommandFailure&) {
         throw;
     } catch (const std::exception& error) {
+        if (std::string_view(error.what()) == "resource revision conflict") {
+            throw CommandFailure(
+                "resource_revision_conflict",
+                "resource changed; refresh its current revision and retry",
+                409);
+        }
         throw CommandFailure("command_failed", error.what(), 409);
     }
     throw CommandFailure("unknown_action", "unsupported action: " + action, 400);
