@@ -68,6 +68,22 @@ jobs:
         working-directory: web
       - uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57
         if: runner.os == 'Windows'
+      - name: Install pinned CMake packaging toolchain
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = '4.3.4'
+          $expected = '86e5fcafb38bdf58346a78b187c7b6b4f252ae5242cffe24c463a92bbd2e77d1'
+          $archive = Join-Path $env:RUNNER_TEMP "cmake-$version-windows-x86_64.zip"
+          $destination = Join-Path $env:RUNNER_TEMP "cmake-$version"
+          Invoke-WebRequest `
+            -Uri "https://github.com/Kitware/CMake/releases/download/v$version/cmake-$version-windows-x86_64.zip" `
+            -OutFile $archive
+          $observed = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          if ($observed -ne $expected) { throw 'Pinned CMake archive digest mismatch' }
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination
+          Add-Content -LiteralPath $env:GITHUB_PATH `
+            -Value (Join-Path $destination "cmake-$version-windows-x86_64/bin")
       - name: Install Linux native build prerequisites and package validators
         if: runner.os == 'Linux'
         run: |
@@ -706,8 +722,11 @@ jobs:
             -Filter '*windows-x86_64.tar.gz' |
             Where-Object { $_.Name -like 'uci-arena-manager-*' } |
             Select-Object -First 1
-          $msi = Get-ChildItem dist/windows-base/windows -Recurse -File `
-            -Filter '*.msi' |
+          $userMsi = Get-ChildItem dist/windows-base/windows -Recurse -File `
+            -Filter "UCI-Arena-Manager-$version-windows-x64-user.msi" |
+            Select-Object -First 1
+          $machineMsi = Get-ChildItem dist/windows-base/windows -Recurse -File `
+            -Filter "UCI-Arena-Manager-$version-windows-x64-machine.msi" |
             Select-Object -First 1
           $rootCandidates = @(
             Get-ChildItem dist/linux-signed -Recurse -File -Filter root.json |
@@ -715,9 +734,10 @@ jobs:
               Test-Path (Join-Path $_.Directory.FullName 'targets.json') -PathType Leaf
             }
           )
-          if ($null -eq $archive -or $null -eq $msi -or
+          if ($null -eq $archive -or $null -eq $userMsi -or
+              $null -eq $machineMsi -or
               $rootCandidates.Count -ne 1) {
-            throw 'Signed MSI, Manager archive, or unique signed TUF metadata is missing'
+            throw 'Both signed MSIs, Manager archive, or unique signed TUF metadata are missing'
           }
           New-Item -ItemType Directory -Force `
             dist/windows-bootstrap,dist/windows-media/bin,dist/windows-media/release/tuf,dist/windows-installers |
@@ -729,8 +749,8 @@ jobs:
           Copy-Item dist/windows-base/payloads dist/windows-media/release/payloads -Recurse
           Copy-Item (Join-Path $rootCandidates[0].Directory.FullName '*') `
             dist/windows-media/release/tuf -Recurse
-          Copy-Item $msi.FullName `
-            "dist/windows-installers/UCI-Arena-Manager-$version-windows-x64.msi"
+          Copy-Item $userMsi.FullName dist/windows-installers/
+          Copy-Item $machineMsi.FullName dist/windows-installers/
           node tools/release/build-windows-bundle.mjs `
             --media-root dist/windows-media `
             --output dist/windows-installers/SuiteMediaPayloads.wxs
@@ -742,30 +762,40 @@ jobs:
           wix extension add -g WixToolset.BootstrapperApplications.wixext/6.0.2
           $media = (Resolve-Path dist/windows-media).Path
           $setup = Join-Path $media 'bin/arena-setup.exe'
-          $msi = (Resolve-Path `
-            "dist/windows-installers/UCI-Arena-Manager-$version-windows-x64.msi").Path
-          wix build `
-            -ext WixToolset.BootstrapperApplications.wixext `
-            -d "ProductVersion=$version" `
-            -d "SuiteSetup=$setup" `
-            -d "ManagerMsi=$msi" `
-            -d 'SetupArguments=apply --preset complete_arena --yes' `
-            -d 'SetupRepairArguments=repair --preset complete_arena --yes' `
-            -d 'SetupUninstallArguments=uninstall --all --yes' `
-            -out "dist/windows-installers/UCI-Arena-Setup-$version-windows-x64-online.exe" `
-            packaging/windows/Bundle.wxs `
-            dist/windows-installers/SuiteMediaPayloads.wxs
-          wix build `
-            -ext WixToolset.BootstrapperApplications.wixext `
-            -d "ProductVersion=$version" `
-            -d "SuiteSetup=$setup" `
-            -d "ManagerMsi=$msi" `
-            -d 'SetupArguments=apply --preset complete_arena --offline --yes' `
-            -d 'SetupRepairArguments=repair --preset complete_arena --offline --yes' `
-            -d 'SetupUninstallArguments=uninstall --all --yes' `
-            -out "dist/windows-installers/UCI-Arena-Setup-$version-windows-x64-offline.exe" `
-            packaging/windows/Bundle.wxs `
-            dist/windows-installers/SuiteMediaPayloads.wxs
+          $scopes = @(
+            @{
+              Name = 'user'
+              Template = 'packaging/windows/Bundle.User.wxs'
+              Msi = (Resolve-Path "dist/windows-installers/UCI-Arena-Manager-$version-windows-x64-user.msi").Path
+            },
+            @{
+              Name = 'machine'
+              Template = 'packaging/windows/Bundle.wxs'
+              Msi = (Resolve-Path "dist/windows-installers/UCI-Arena-Manager-$version-windows-x64-machine.msi").Path
+            }
+          )
+          foreach ($scope in $scopes) {
+            foreach ($mode in @('online', 'offline')) {
+              $offline = if ($mode -eq 'offline') { ' --offline' } else { '' }
+              $arguments = @(
+                'build',
+                '-ext', 'WixToolset.BootstrapperApplications.wixext',
+                '-d', "ProductVersion=$version",
+                '-d', "SuiteSetup=$setup",
+                '-d', "ManagerMsi=$($scope.Msi)",
+                '-d', "SetupArguments=apply --preset complete_arena$offline --yes",
+                '-d', "SetupRepairArguments=repair --preset complete_arena$offline --yes",
+                '-d', 'SetupUninstallArguments=uninstall --all --yes',
+                '-out', "dist/windows-installers/UCI-Arena-Setup-$version-windows-x64-$($scope.Name)-$mode.exe",
+                $scope.Template,
+                'dist/windows-installers/SuiteMediaPayloads.wxs'
+              )
+              & wix @arguments
+              if ($LASTEXITCODE -ne 0) {
+                throw "WiX $($scope.Name) $mode bundle build failed"
+              }
+            }
+          }
           Remove-Item dist/windows-installers/SuiteMediaPayloads.wxs
       - uses: azure/login@eec3c95657c1536435858eda1f3ff5437fee8474
         with:

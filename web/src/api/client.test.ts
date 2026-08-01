@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   controlLocalBot,
+  controlLocalBotAccount,
   exchangePairingToken,
+  getLocalBotOptions,
   makeCommand,
   pickLocalPath,
   probeLocalBot,
+  updateLocalBotOptions,
 } from './client'
 
 afterEach(() => {
@@ -131,6 +134,87 @@ describe('interactive-user BOT account control', () => {
         }),
       }),
     )
+  })
+
+  it('uses typed helper requests for provider options and local account data', async () => {
+    sessionStorage.setItem('arena.picker.port', '47832')
+    sessionStorage.setItem('arena.picker.token', 'e'.repeat(64))
+    const options = {
+      schema: 'uci_arena_lichess_manager_options_v1' as const,
+      capacity: {
+        total_slots: 2,
+        startup_parallelism: 2,
+        human: { slots: 1, allow_borrowing: false, accept_public: true },
+        bot: { slots: 1, target_active: 1 },
+        evidence: { status: 'qualified', qualified: true, maximum_concurrency: 2 },
+      },
+      inbound_challenges: {
+        accept_bots: true,
+        min_base: 60,
+        max_base: 1800,
+        min_increment: 0,
+        max_increment: 10,
+        speeds: ['rapid'],
+        modes: ['casual'],
+      },
+      outbound_challenge: { rated: false, color: 'random' as const, clock_limit: 600, clock_increment: 2 },
+      scheduler: {
+        enabled: true,
+        discovery_interval_seconds: 60,
+        challenge_interval_seconds: 5,
+        reservation_retry_seconds: 30,
+        challenge_timeout_seconds: 25,
+      },
+      opponent_selection: {
+        max_games_per_opponent_per_day: 1,
+        timeout_cooldown_minutes: 30,
+        decline_cooldown_minutes: 360,
+        rating_target: 2200,
+        rating_spread: 600,
+      },
+    }
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify(options), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(options), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        schema: 'arena_bot_local_account_result_v1',
+        schema_version: 1,
+        action: 'owner_list',
+        owners: [],
+      }), { status: 200 }))
+
+    await expect(getLocalBotOptions()).resolves.toEqual(options)
+    const capacity = {
+      total_slots: options.capacity.total_slots,
+      startup_parallelism: options.capacity.startup_parallelism,
+      human: options.capacity.human,
+      bot: options.capacity.bot,
+    }
+    await expect(updateLocalBotOptions({
+      capacity,
+      inbound_challenges: options.inbound_challenges,
+      outbound_challenge: options.outbound_challenge,
+      scheduler: options.scheduler,
+      opponent_selection: options.opponent_selection,
+    }, false, true)).resolves.toEqual(options)
+    await expect(controlLocalBotAccount('owner_list')).resolves.toMatchObject({ owners: [] })
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      'http://127.0.0.1:47832/v1/bot-options',
+      'http://127.0.0.1:47832/v1/bot-options',
+      'http://127.0.0.1:47832/v1/bot-account',
+    ])
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+      schema: 'arena_ui_bot_options_request_v1',
+      operation: 'update',
+      confirm_rated: false,
+      confirm_outbound: true,
+    })
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({
+      schema: 'arena_ui_bot_account_request_v1',
+      action: 'owner_list',
+      parameters: {},
+    })
   })
 })
 

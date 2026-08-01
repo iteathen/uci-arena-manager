@@ -63,7 +63,14 @@ export interface EngineData extends Record<string, unknown> {
   engine_author: string
   fingerprint: string
   observed_state: string
-  discovered_options: Array<{ name: string; type: string; default: string }>
+  discovered_options: Array<{
+    name: string
+    type: 'check' | 'spin' | 'combo' | 'string' | 'button' | string
+    default: string
+    minimum?: number | null
+    maximum?: number | null
+    variants?: string[]
+  }>
   component_id?: string
   component_version?: string
   onboarding_source?: EngineCandidate['source']
@@ -123,13 +130,53 @@ export interface MatchPlanData extends Record<string, unknown> {
   variant: string
   engine_ids: string[]
   games_per_pair: number
+  rounds: number
   concurrency: number
+  planned_total_games: number
+  opening_suite: string | null
+  time_control: {
+    initial_ms: number
+    increment_ms: number
+    moves_to_go: number | null
+  }
+  adjudication: {
+    max_plies: number
+    draw_cp: number | null
+    draw_consecutive_plies: number
+    draw_min_plies: number
+    win_cp: number | null
+    win_consecutive_plies: number
+  }
+  sprt: {
+    elo0: number
+    elo1: number
+    alpha: number
+    beta: number
+    lower_threshold: number
+    upper_threshold: number
+    llr?: number
+    games: number
+    score: number
+    verdict: 'accept_h0' | 'accept_h1' | null
+  } | null
+  swiss_byes: Array<{ round: number; engine_id: string; score: number }>
+  swiss_standings: Array<{ engine_id: string; score: number; color_balance: number }>
   lifecycle: string
+  progress: {
+    total_games: number
+    queued_games: number
+    active_games: number
+    completed_games: number
+    percentage: number
+    current_round: number | null
+    updated_at: string
+  }
   pairings: Array<{
     sequence: number
     white_engine_id: string
     black_engine_id: string
     round: number
+    opening_index?: number
   }>
 }
 
@@ -179,6 +226,42 @@ export interface ManagedServiceData extends Record<string, unknown> {
   startup_control?: string
   installed_component_id?: string
   output_integration?: ServiceOutputIntegration
+  last_successful_status_at?: string
+  output_projection_stale?: boolean
+  status_projection?: {
+    collection?: { state?: string; reason?: string }
+    jobs?: Record<string, number>
+    targets?: number
+    datasets?: number
+  }
+  orchestration_projection?: EvidenceOrchestrationProjection
+}
+
+export interface EvidenceOrchestrationProjection {
+  schema: 'uci_arena_evidence_orchestration_v1'
+  targets: Array<{
+    id: string
+    label: string
+    model_id: string
+    model_fingerprint: string
+    engine_sha256: string
+    provider: string
+    created_at: string
+  }>
+  jobs: Array<{
+    id: string
+    adapter: string
+    state: string
+    priority: number
+    target_id: string | null
+    shard_id: string
+    dataset_id: string
+    attempts: number
+    wait_reason: string
+    last_error: string
+    created_at: string
+    updated_at: string
+  }>
 }
 
 export interface BookSnapshotProjection {
@@ -267,7 +350,7 @@ export interface BotCandidate {
   token_reference_available: boolean
   startup_state: 'installed' | 'disabled'
   state: 'ready_to_probe' | 'blocked'
-  options: Record<string, unknown>
+  options_state: 'interactive_helper_required'
   default_model?: {
     model_id: string
     display_name: string
@@ -311,4 +394,92 @@ export interface BotTokenReferenceResult {
   schema_version: 1
   state: 'saved'
   validation: 'path_reference_only'
+}
+
+export interface BotOptions {
+  schema: 'uci_arena_lichess_manager_options_v1'
+  capacity: {
+    total_slots: number
+    startup_parallelism: number
+    human: {
+      slots: number
+      allow_borrowing: boolean
+      accept_public: boolean
+    }
+    bot: {
+      slots: number
+      target_active: number
+    }
+    evidence: {
+      status: string
+      qualified: boolean
+      maximum_concurrency: number | null
+    }
+  }
+  inbound_challenges: {
+    accept_bots: boolean
+    min_base: number
+    max_base: number
+    min_increment: number
+    max_increment: number
+    speeds: string[]
+    modes: string[]
+  }
+  outbound_challenge: {
+    rated: boolean
+    color: 'random' | 'white' | 'black'
+    clock_limit: number
+    clock_increment: number
+  }
+  scheduler: {
+    enabled: boolean
+    discovery_interval_seconds: number
+    challenge_interval_seconds: number
+    reservation_retry_seconds: number
+    challenge_timeout_seconds: number
+  }
+  opponent_selection: {
+    max_games_per_opponent_per_day: number
+    timeout_cooldown_minutes: number
+    decline_cooldown_minutes: number
+    rating_target: number
+    rating_spread: number
+  }
+}
+
+export interface BotOptionsUpdate {
+  capacity: Omit<BotOptions['capacity'], 'evidence'>
+  inbound_challenges: BotOptions['inbound_challenges']
+  outbound_challenge: BotOptions['outbound_challenge']
+  scheduler: BotOptions['scheduler']
+  opponent_selection: BotOptions['opponent_selection']
+}
+
+export type BotAccountAction =
+  | 'owner_list'
+  | 'owner_add'
+  | 'owner_remove'
+  | 'reservation_status'
+  | 'reservation_create'
+  | 'reservation_cancel'
+  | 'scheduler_status'
+  | 'scheduler_pause'
+  | 'scheduler_resume'
+
+export interface BotAccountResult {
+  schema: 'arena_bot_local_account_result_v1'
+  schema_version: 1
+  action: BotAccountAction
+  owners?: Array<{ username: string; created_at: number }>
+  username?: string
+  added?: boolean
+  removed?: boolean
+  reservation?: {
+    opponent: string
+    games_remaining: number
+    expires_at: number
+    created_at: number
+  } | null
+  canceled?: boolean
+  scheduler?: { paused: boolean }
 }

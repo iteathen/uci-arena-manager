@@ -58,8 +58,25 @@ probe:
 account_control:
   owner: verified_provider_adapter_under_interactive_user_helper
   transport: authenticated_ephemeral_loopback_helper
-  actions: [status, enable_startup, disable_startup]
-  output_allowlist: [state, installed, active, account_name]
+  startup_actions: [status, enable_startup, disable_startup]
+  local_account_actions:
+    - owner_list
+    - owner_add
+    - owner_remove
+    - reservation_status
+    - reservation_create
+    - reservation_cancel
+    - scheduler_status
+    - scheduler_pause
+    - scheduler_resume
+  output_allowlist:
+    - state
+    - installed
+    - active
+    - account_name
+    - owners
+    - reservation
+    - scheduler
   rules:
     - Status and disable resolve only receipt-verified adapter and runtime
       entrypoints and never require or open the token file.
@@ -70,12 +87,20 @@ account_control:
     - Provider startup output is reduced to the output allowlist. Raw task,
       service, path, command, environment, provider response, and credential
       fields never reach the dashboard.
+    - Local account actions resolve only the receipt-verified adapter and its
+      receipt-owned runtime directory. Usernames, game counts, and reservation
+      minutes are separately bounded; no browser-provided executable, command,
+      path, argv array, shell string, store path, or runtime path is accepted.
+    - Owner, reservation, opponent record, and scheduler pause state remain
+      provider-owned durable data. Manager neither opens nor mirrors the
+      provider database.
     - Helper shutdown removes account-control authority without stopping an
       already installed provider startup.
     - A generic bot.register command is forbidden because it could create
       account state without the verified adapter probe.
 
 options:
+  schema: uci_arena_lichess_manager_options_v1
   groups:
     - capacity
     - inbound_challenges
@@ -86,6 +111,15 @@ options:
     - UI controls are schema-backed and never expose arbitrary configuration text.
     - Capacity cannot exceed the exact qualified capacity profile.
     - Rated or outbound play requires explicit operator confirmation.
+    - Read and update operations run through the receipt-verified provider
+      adapter with its installed local configuration path. Manager does not
+      parse, edit, or replace provider-owned bot policy groups itself; discovery
+      may inspect only the path-valued prerequisites needed for readiness.
+    - The editable projection contains only the five declared groups. Engine,
+      model, profile, URL, runtime, startup, token, and arbitrary UCI option
+      fields are excluded.
+    - A provider rejection leaves the prior configuration authoritative and is
+      returned as an actionable error; React state cannot fabricate a save.
 
 readiness:
   required:
@@ -124,6 +158,10 @@ lifecycle:
     - refresh_startup_status
     - enable_startup
     - disable_startup
+    - manage_owners
+    - manage_reservation
+    - pause_or_resume_scheduler
+    - edit_schema_backed_options
   duplicate_daemon: forbidden
 
 acceptance:

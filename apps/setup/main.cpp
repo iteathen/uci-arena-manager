@@ -13,6 +13,9 @@
 
 #include "arena/application/broker_policy.hpp"
 #include "arena/application/installer/setup.hpp"
+#ifdef _WIN32
+#include "arena/platform/windows_install_scope.hpp"
+#endif
 
 namespace {
 
@@ -48,6 +51,22 @@ fs::path environment_path(const char* name, const fs::path& fallback) {
 
 SetupPaths default_paths() {
 #ifdef _WIN32
+    if (arena::platform::is_windows_per_user_install()) {
+        const fs::path local_app_data = environment_path(
+            "LOCALAPPDATA",
+            environment_path("USERPROFILE", "C:\\Users\\Default") /
+                "AppData" / "Local");
+        const fs::path user_profile = environment_path(
+            "USERPROFILE", local_app_data.parent_path().parent_path());
+        const fs::path root = local_app_data / "UCI Arena Manager";
+        return {
+            root / "installed",
+            root,
+            root / "cache",
+            user_profile / "UCI Arena Workspaces",
+            root / "knowledge",
+        };
+    }
     const fs::path program_files = environment_path("ProgramFiles", "C:\\Program Files");
     const fs::path program_data = environment_path("ProgramData", "C:\\ProgramData");
     const fs::path user_profile = environment_path("USERPROFILE", program_data);
@@ -101,6 +120,12 @@ int main(int argc, char** argv) {
         app.require_subcommand(1);
 
         SetupPaths paths = default_paths();
+#ifdef _WIN32
+        std::string install_scope =
+            arena::platform::is_windows_per_user_install()
+                ? "per-user"
+                : "per-machine";
+#endif
         fs::path catalog_path{"release/catalog.json"};
         fs::path metadata_directory;
         bool allow_unsigned_development_catalog = false;
@@ -115,6 +140,13 @@ int main(int argc, char** argv) {
         app.add_option("--cache-root", paths.cache_root);
         app.add_option("--workspace-root", paths.workspace_root);
         app.add_option("--knowledge-root", paths.knowledge_root);
+#ifdef _WIN32
+        app.add_option(
+               "--install-scope",
+               install_scope,
+               "Fixed owning package scope: per-user or per-machine")
+            ->check(CLI::IsMember({"per-user", "per-machine"}));
+#endif
         app.add_option("--bundle-owner", paths.bundle_owner,
                        "Immutable calling bundle provider key");
         app.add_flag("--restart-manager-service", paths.restart_manager_service,
@@ -213,6 +245,14 @@ int main(int argc, char** argv) {
                                     "under the managed data root");
 
         CLI11_PARSE(app, argc, argv);
+
+#ifdef _WIN32
+        paths.manager_service_access = install_scope == "per-machine";
+        if (!paths.manager_service_access && paths.restart_manager_service) {
+            throw std::runtime_error(
+                "per-user setup cannot restart or impersonate the machine Manager service");
+        }
+#endif
 
         if (*inventory) {
             print(SetupEngine::inventory(paths, scan_roots), json_output, result_file);

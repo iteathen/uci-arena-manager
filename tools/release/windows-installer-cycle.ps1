@@ -2,13 +2,15 @@
 param(
     [ValidateSet("prepare", "install", "adopt", "smoke", "status", "restore")]
     [string]$Action = "status",
+    [ValidateSet("per-user", "per-machine")]
+    [string]$Scope = "per-user",
     [string]$Preset = "windows-release",
     [string]$StatePath = "",
     [string]$MsiPath = "",
     [string]$CandidateSourceCommit = "",
     [string]$WixExe = "",
-    [string]$DataRoot = (Join-Path $env:ProgramData "UCI Arena Manager"),
-    [string]$InstallRoot = (Join-Path $env:ProgramFiles "UCI Arena Manager"),
+    [string]$DataRoot = "",
+    [string]$InstallRoot = "",
     [string]$QuarantinePath = "",
     [string]$LichessTokenFile = "",
     [string[]]$ProbeEngine = @(),
@@ -76,6 +78,105 @@ function Assert-Administrator {
     }
 }
 
+function Assert-PerUserPackagingToolchain {
+    if ($Scope -ne "per-user") { return }
+    $version = (Invoke-Checked cmake @("--version") -Capture).Split("`n")[0]
+    if ($version -notmatch "cmake version ([0-9]+)\.([0-9]+)" -or
+        [int]$Matches[1] -lt 4 -or
+        ([int]$Matches[1] -eq 4 -and [int]$Matches[2] -lt 3)) {
+        throw "Per-user MSI generation requires CMake 4.3 or newer"
+    }
+}
+
+function Assert-MsiCandidateScope {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "MSI candidate does not exist: $Path"
+    }
+    $artifactScope = if ($Scope -eq "per-user") { "user" } else { "machine" }
+    if ((Split-Path -Leaf $Path) -notlike "*-windows-x64-$artifactScope.msi") {
+        throw "MSI candidate does not match requested scope '$Scope'"
+    }
+}
+
+function Assert-InstalledScopeMarker {
+    $markerPath = Join-Path $InstallRoot "share\uci-arena\install-scope.txt"
+    if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) {
+        throw "Installed Manager scope marker is missing from requested install root"
+    }
+    $installedScope = (Get-Content -Raw -LiteralPath $markerPath).Trim()
+    if ($installedScope -ne $Scope) {
+        throw "Installed Manager scope '$installedScope' does not match requested scope '$Scope'"
+    }
+}
+
+function Get-CommandExecutablePath {
+    param([Parameter(Mandatory)][string]$CommandLine)
+    $trimmed = $CommandLine.Trim()
+    $match = if ($trimmed.StartsWith('"')) {
+        [regex]::Match($trimmed, '^"([^\"]+)"(?:\s|$)')
+    } else {
+        [regex]::Match(
+            $trimmed,
+            '^(.*?\.exe)(?:\s|$)',
+            [Text.RegularExpressions.RegexOptions]::IgnoreCase
+        )
+    }
+    if (-not $match.Success) {
+        throw "Unable to resolve installed Manager service executable"
+    }
+    return [IO.Path]::GetFullPath($match.Groups[1].Value)
+}
+
+function Get-PerUserManagerProcesses {
+    $binRoot = [IO.Path]::GetFullPath((Join-Path $InstallRoot "bin"))
+    $allowed = @(
+        [IO.Path]::GetFullPath((Join-Path $binRoot "arena-service.exe")),
+        [IO.Path]::GetFullPath((Join-Path $binRoot "uci-arena-manager.exe"))
+    )
+    return @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.ExecutablePath -and
+            [IO.Path]::GetFullPath($_.ExecutablePath) -in $allowed
+        })
+}
+
+function Stop-PerUserManager {
+    $processes = Get-PerUserManagerProcesses | Sort-Object {
+        if ($_.Name -eq "uci-arena-manager.exe") { 0 } else { 1 }
+    }
+    foreach ($process in $processes) {
+        Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
+    }
+}
+
+function Start-PerUserManager {
+    $servicePath = Join-Path $InstallRoot "bin\arena-service.exe"
+    $webRoot = Join-Path $InstallRoot "share\uci-arena\web"
+    if (-not (Test-Path -LiteralPath $servicePath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $webRoot -PathType Container)) {
+        throw "Per-user Manager package tree is incomplete"
+    }
+    $arguments = @(
+        "--data-dir", "`"$DataRoot`"",
+        "--web-root", "`"$webRoot`""
+    )
+    $process = Start-Process -FilePath $servicePath -ArgumentList $arguments `
+        -WindowStyle Hidden -PassThru
+    $deadline = [DateTime]::UtcNow.AddSeconds(20)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if ($process.HasExited) {
+            throw "Per-user Manager exited before becoming ready"
+        }
+        if ((Get-HttpStatusCode "http://127.0.0.1:47831/api/v1/system/status") -eq 401) {
+            return $process
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    throw "Per-user Manager did not become ready within 20 seconds"
+}
+
 function Save-Cycle {
     param([Parameter(Mandatory)][System.Collections.IDictionary]$Cycle)
     $directory = Split-Path -Parent $script:StatePath
@@ -93,6 +194,12 @@ function Read-Cycle {
     $value = Get-Content -Raw -LiteralPath $script:StatePath | ConvertFrom-Json -AsHashtable
     if ($value.schema -ne $script:CycleSchema) {
         throw "Unsupported installer-cycle state schema"
+    }
+    if (-not $value.Contains("scope")) {
+        $value.scope = "per-machine"
+    }
+    if ($value.scope -ne $Scope) {
+        throw "Installer-cycle scope '$($value.scope)' does not match requested scope '$Scope'"
     }
     return $value
 }
@@ -234,6 +341,7 @@ function Write-SafeSummary {
         schema = $Cycle.schema
         cycle_id = $Cycle.cycle_id
         phase = $Cycle.phase
+        scope = $Cycle.scope
         source_commit = $Cycle.source_commit
         runner_commit = $Cycle.runner_commit
         candidate_sha256 = $Cycle.candidate.sha256
@@ -245,10 +353,25 @@ function Write-SafeSummary {
 }
 
 Assert-Windows
+$defaultUserRoot = Join-Path $env:LOCALAPPDATA "UCI Arena Manager"
+if (-not $DataRoot) {
+    $DataRoot = if ($Scope -eq "per-user") {
+        $defaultUserRoot
+    } else {
+        Join-Path $env:ProgramData "UCI Arena Manager"
+    }
+}
+if (-not $InstallRoot) {
+    $InstallRoot = if ($Scope -eq "per-user") {
+        Join-Path $env:LOCALAPPDATA "Programs\UCI Arena Manager"
+    } else {
+        Join-Path $env:ProgramFiles "UCI Arena Manager"
+    }
+}
 $sourceCommit = Get-SourceCommit
 if (-not $StatePath) {
     $StatePath = Join-Path $script:RepositoryRoot (
-        "build\installer-validation\{0}\cycle.json" -f $sourceCommit.Substring(0, 12)
+        "build\installer-validation\{0}\{1}\cycle.json" -f $Scope, $sourceCommit.Substring(0, 12)
     )
 }
 $script:StatePath = Resolve-FullPath $StatePath
@@ -271,13 +394,18 @@ if ($Action -eq "prepare") {
         $env:PATH = "$(Split-Path -Parent $resolvedWix);$env:PATH"
     }
     if (-not $SkipBuild) {
+        Assert-PerUserPackagingToolchain
+        $perUserPackaging = if ($Scope -eq "per-user") { "ON" } else { "OFF" }
         Push-Location $script:RepositoryRoot
         try {
             Invoke-Checked node @("tools/spec-check.mjs")
             Invoke-Checked node @("--test", "tools/release/*.test.mjs")
             Invoke-Checked npm @("test", "--prefix", "web")
             Invoke-Checked npm @("run", "build", "--prefix", "web")
-            Invoke-Checked cmake @("--preset", $Preset)
+            Invoke-Checked cmake @(
+                "--preset", $Preset,
+                "-DARENA_WINDOWS_PER_USER_INSTALL=$perUserPackaging"
+            )
             Invoke-Checked cmake @("--build", "--preset", $Preset)
             Invoke-Checked ctest @("--preset", $Preset)
             Push-Location (Join-Path $script:RepositoryRoot "build\$Preset")
@@ -290,19 +418,18 @@ if ($Action -eq "prepare") {
             Pop-Location
         }
     }
+    $artifactScope = if ($Scope -eq "per-user") { "user" } else { "machine" }
     if (-not $MsiPath) {
         $candidates = @(Get-ChildItem -LiteralPath (
             Join-Path $script:RepositoryRoot "build\$Preset"
-        ) -File -Filter "*.msi")
+        ) -File -Filter "*-windows-x64-$artifactScope.msi")
         if ($candidates.Count -ne 1) {
             throw "Expected exactly one MSI candidate; found $($candidates.Count)"
         }
         $MsiPath = $candidates[0].FullName
     }
     $MsiPath = Resolve-FullPath $MsiPath
-    if (-not (Test-Path -LiteralPath $MsiPath -PathType Leaf)) {
-        throw "MSI candidate does not exist: $MsiPath"
-    }
+    Assert-MsiCandidateScope -Path $MsiPath
     $cycleId = "$($sourceCommit.Substring(0, 12))-$(Get-Date -AsUTC -Format 'yyyyMMdd-HHmmss')"
     if (-not $QuarantinePath) {
         $QuarantinePath = "$DataRoot.pre-clean-install-$cycleId"
@@ -313,6 +440,7 @@ if ($Action -eq "prepare") {
         schema = $script:CycleSchema
         cycle_id = $cycleId
         phase = "prepared"
+        scope = $Scope
         created_at_utc = Get-UtcTimestamp
         updated_at_utc = Get-UtcTimestamp
         source_commit = $sourceCommit
@@ -365,11 +493,25 @@ if ($Action -eq "adopt") {
     )
     $MsiPath = Resolve-FullPath $MsiPath
     $QuarantinePath = Resolve-FullPath $QuarantinePath
+    Assert-MsiCandidateScope -Path $MsiPath
+    Assert-InstalledScopeMarker
     Assert-SafeSiblingPaths -Canonical $DataRoot -Sibling $QuarantinePath
-    $service = Get-CimInstance Win32_Service -Filter "Name='UCIArenaManager'" -ErrorAction Stop
-    if ($service.State -ne "Running" -or
+    $scopeRunning = if ($Scope -eq "per-machine") {
+        $service = Get-CimInstance Win32_Service `
+            -Filter "Name='UCIArenaManager'" -ErrorAction Stop
+        $expectedServicePath = [IO.Path]::GetFullPath((
+            Join-Path $InstallRoot "bin\arena-service.exe"
+        ))
+        $service.State -eq "Running" -and
+            (Get-CommandExecutablePath -CommandLine $service.PathName) -eq $expectedServicePath
+    } else {
+        @(Get-PerUserManagerProcesses | Where-Object {
+            $_.Name -eq "arena-service.exe"
+        }).Count -eq 1
+    }
+    if (-not $scopeRunning -or
         -not (Test-Path -LiteralPath $QuarantinePath -PathType Container)) {
-        throw "Adopt requires a running Manager service and an existing quarantine"
+        throw "Adopt requires a running Manager instance in the requested scope and an existing quarantine"
     }
     $cycleId = "$($CandidateSourceCommit.Substring(0, 12))-adopted-$(Get-Date -AsUTC -Format 'yyyyMMdd-HHmmss')"
     $manifestPath = Join-Path (Split-Path -Parent $script:StatePath) "retained-state.json"
@@ -378,6 +520,7 @@ if ($Action -eq "adopt") {
         schema = $script:CycleSchema
         cycle_id = $cycleId
         phase = "installed"
+        scope = $Scope
         created_at_utc = Get-UtcTimestamp
         updated_at_utc = Get-UtcTimestamp
         source_commit = $CandidateSourceCommit.ToLowerInvariant()
@@ -415,6 +558,8 @@ if ($Action -eq "adopt") {
 }
 
 $cycle = Read-Cycle
+$DataRoot = [string]$cycle.paths.data_root
+$InstallRoot = [string]$cycle.paths.install_root
 if ($cycle.runner_commit -ne $sourceCommit) {
     throw "Cycle runner commit $($cycle.runner_commit) does not match checkout $sourceCommit"
 }
@@ -429,7 +574,9 @@ if ($Action -eq "status") {
 }
 
 if ($Action -eq "install") {
-    Assert-Administrator
+    if ($Scope -eq "per-machine") {
+        Assert-Administrator
+    }
     if ($cycle.phase -ne "prepared" -or [int]$cycle.install.invocation_count -ne 0) {
         throw "Install is single-shot; this cycle is already $($cycle.phase) with $($cycle.install.invocation_count) MSI invocation(s)"
     }
@@ -437,10 +584,16 @@ if ($Action -eq "install") {
     if (Test-Path -LiteralPath $cycle.paths.quarantine) {
         throw "Quarantine already exists: $($cycle.paths.quarantine)"
     }
-    $service = Get-Service -Name "UCIArenaManager" -ErrorAction SilentlyContinue
-    if ($null -ne $service -and $service.Status -ne "Stopped") {
-        Stop-Service -Name "UCIArenaManager" -Force
-        (Get-Service -Name "UCIArenaManager").WaitForStatus("Stopped", [TimeSpan]::FromSeconds(20))
+    if ($Scope -eq "per-machine") {
+        $service = Get-Service -Name "UCIArenaManager" -ErrorAction SilentlyContinue
+        if ($null -ne $service -and $service.Status -ne "Stopped") {
+            Stop-Service -Name "UCIArenaManager" -Force
+            (Get-Service -Name "UCIArenaManager").WaitForStatus(
+                "Stopped", [TimeSpan]::FromSeconds(20)
+            )
+        }
+    } else {
+        Stop-PerUserManager
     }
     $manifestPath = Join-Path $cycle.paths.evidence_root "retained-state.json"
     $manifest = New-RetainedManifest -Root $cycle.paths.data_root -OutputPath $manifestPath
@@ -490,14 +643,50 @@ if ($Action -eq "smoke") {
     if ($cycle.phase -notin @("installed", "verified")) {
         throw "Smoke requires an installed or verified cycle; current phase is $($cycle.phase)"
     }
-    if ($RestartService) {
-        Assert-Administrator
-        Restart-Service -Name "UCIArenaManager" -Force
-        (Get-Service -Name "UCIArenaManager").WaitForStatus(
-            "Running", [TimeSpan]::FromSeconds(20)
-        )
+    if ($Scope -eq "per-machine") {
+        if ($RestartService) {
+            Assert-Administrator
+            Restart-Service -Name "UCIArenaManager" -Force
+            (Get-Service -Name "UCIArenaManager").WaitForStatus(
+                "Running", [TimeSpan]::FromSeconds(20)
+            )
+        }
+        $service = Get-CimInstance Win32_Service `
+            -Filter "Name='UCIArenaManager'" -ErrorAction Stop
+        $serviceEvidence = [ordered]@{
+            state = $service.State
+            start_mode = $service.StartMode
+            start_name = $service.StartName
+        }
+        if ($service.State -ne "Running" -or $service.StartMode -ne "Auto" -or
+            $service.StartName -ne "NT AUTHORITY\LocalService") {
+            throw "Installed Manager Windows service is invalid"
+        }
+    } else {
+        if (Get-Service -Name "UCIArenaManager" -ErrorAction SilentlyContinue) {
+            throw "Per-user validation refuses a coexisting per-machine Manager service"
+        }
+        if ($RestartService) {
+            Stop-PerUserManager
+        }
+        $userServices = @(Get-PerUserManagerProcesses | Where-Object {
+            $_.Name -eq "arena-service.exe"
+        })
+        if ($userServices.Count -eq 0) {
+            Start-PerUserManager | Out-Null
+            $userServices = @(Get-PerUserManagerProcesses | Where-Object {
+                $_.Name -eq "arena-service.exe"
+            })
+        }
+        if ($userServices.Count -ne 1) {
+            throw "Per-user Manager lifecycle did not produce exactly one scoped process"
+        }
+        $serviceEvidence = [ordered]@{
+            state = "Running"
+            start_mode = "OnDemand"
+            start_name = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+        }
     }
-    $service = Get-CimInstance Win32_Service -Filter "Name='UCIArenaManager'" -ErrorAction Stop
     $requiredFiles = @(
         (Join-Path $cycle.paths.install_root "bin\arena.exe"),
         (Join-Path $cycle.paths.install_root "bin\uci-arena-manager.exe"),
@@ -506,19 +695,24 @@ if ($Action -eq "smoke") {
         (Join-Path $cycle.paths.install_root "share\uci-arena\web\index.html")
     )
     $missing = @($requiredFiles | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
-    if ($service.State -ne "Running" -or $service.StartMode -ne "Auto" -or
-        $service.StartName -ne "NT AUTHORITY\LocalService" -or $missing.Count -ne 0) {
-        throw "Installed service or required package tree is invalid"
+    if ($missing.Count -ne 0) {
+        throw "Required package tree is invalid"
     }
     $installedBin = (Join-Path $cycle.paths.install_root "bin").TrimEnd("\")
-    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
-    $machinePathEntries = @(
-        $machinePath.Split(";", [StringSplitOptions]::RemoveEmptyEntries) |
-        ForEach-Object { $_.Trim().TrimEnd("\") }
-    )
-    $shortcut = Join-Path $env:ProgramData `
+    $pathScope = if ($Scope -eq "per-user") { "User" } else { "Machine" }
+    $installedPath = [Environment]::GetEnvironmentVariable("Path", $pathScope)
+    $installedPathEntries = if ([string]::IsNullOrWhiteSpace($installedPath)) {
+        @()
+    } else {
+        @(
+            $installedPath.Split(";", [StringSplitOptions]::RemoveEmptyEntries) |
+            ForEach-Object { $_.Trim().TrimEnd("\") }
+        )
+    }
+    $startMenuRoot = if ($Scope -eq "per-user") { $env:APPDATA } else { $env:ProgramData }
+    $shortcut = Join-Path $startMenuRoot `
         "Microsoft\Windows\Start Menu\Programs\UCI Arena Manager.lnk"
-    if ($installedBin -notin $machinePathEntries -or
+    if ($installedBin -notin $installedPathEntries -or
         -not (Test-Path -LiteralPath $shortcut -PathType Leaf)) {
         throw "Installed CLI PATH entry or Start Menu launcher is unavailable"
     }
@@ -619,11 +813,7 @@ if ($Action -eq "smoke") {
     }
     $evidence = [ordered]@{
         recorded_at_utc = Get-UtcTimestamp
-        service = [ordered]@{
-            state = $service.State
-            start_mode = $service.StartMode
-            start_name = $service.StartName
-        }
+        service = $serviceEvidence
         status = [ordered]@{
             database = $status.database
             counts = $status.counts
@@ -653,14 +843,23 @@ if ($Action -eq "restore") {
     if (-not $ConfirmRestore) {
         throw "Restore moves the active test state and requires -ConfirmRestore"
     }
-    Assert-Administrator
+    if ($Scope -eq "per-machine") {
+        Assert-Administrator
+    }
     if ($cycle.phase -notin @("installed", "verified")) {
         throw "Restore requires an installed or verified cycle"
     }
-    $service = Get-Service -Name "UCIArenaManager" -ErrorAction SilentlyContinue
-    if ($null -ne $service -and $service.Status -ne "Stopped") {
-        Stop-Service -Name "UCIArenaManager" -Force
-        (Get-Service -Name "UCIArenaManager").WaitForStatus("Stopped", [TimeSpan]::FromSeconds(20))
+    $service = $null
+    if ($Scope -eq "per-machine") {
+        $service = Get-Service -Name "UCIArenaManager" -ErrorAction SilentlyContinue
+        if ($null -ne $service -and $service.Status -ne "Stopped") {
+            Stop-Service -Name "UCIArenaManager" -Force
+            (Get-Service -Name "UCIArenaManager").WaitForStatus(
+                "Stopped", [TimeSpan]::FromSeconds(20)
+            )
+        }
+    } else {
+        Stop-PerUserManager
     }
     $testStatePath = "$($cycle.paths.data_root).test-$($cycle.cycle_id)"
     Assert-SafeSiblingPaths -Canonical $cycle.paths.data_root -Sibling $testStatePath
@@ -684,6 +883,8 @@ if ($Action -eq "restore") {
             (Get-Service -Name "UCIArenaManager").WaitForStatus(
                 "Running", [TimeSpan]::FromSeconds(20)
             )
+        } elseif ($Scope -eq "per-user") {
+            Start-PerUserManager | Out-Null
         }
     }
     $cycle.phase = "restored"

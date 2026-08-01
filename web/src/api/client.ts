@@ -1,9 +1,13 @@
 import type {
   ArenaEvent,
   BotCandidates,
+  BotAccountAction,
+  BotAccountResult,
   BotControlAction,
   BotControlResult,
   BotProbeResult,
+  BotOptions,
+  BotOptionsUpdate,
   BotProfile,
   BotTokenReferenceResult,
   CommandEnvelope,
@@ -344,6 +348,93 @@ export async function controlLocalBot(action: BotControlAction): Promise<BotCont
     )
   }
   return body
+}
+
+async function interactiveBotRequest<T>(
+  path: string,
+  body: Record<string, unknown>,
+  failureMessage: string,
+): Promise<T> {
+  const port = sessionStorage.getItem(pickerPortKey)
+  const token = sessionStorage.getItem(pickerTokenKey)
+  if (!port || !token) {
+    throw new ApiError(
+      'Open UCI Arena Manager from its desktop launcher and keep it open to manage the BOT account.',
+      503,
+      'interactive_helper_unavailable',
+    )
+  }
+  let response: Response
+  try {
+    response = await fetch(`http://127.0.0.1:${port}${path}`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    })
+  } catch {
+    throw new ApiError(
+      'The interactive-user helper is no longer running. Reopen UCI Arena Manager and try again.',
+      503,
+      'interactive_helper_unavailable',
+    )
+  }
+  const result = (await response.json()) as T & { code?: string; detail?: string }
+  if (!response.ok) {
+    throw new ApiError(
+      result.detail ?? failureMessage,
+      response.status,
+      result.code ?? 'bot_control_failed',
+    )
+  }
+  return result
+}
+
+export function getLocalBotOptions(): Promise<BotOptions> {
+  return interactiveBotRequest<BotOptions>(
+    '/v1/bot-options',
+    {
+      schema: 'arena_ui_bot_options_request_v1',
+      operation: 'get',
+    },
+    'BOT options could not be loaded',
+  )
+}
+
+export function updateLocalBotOptions(
+  settings: BotOptionsUpdate,
+  confirmRated: boolean,
+  confirmOutbound: boolean,
+): Promise<BotOptions> {
+  return interactiveBotRequest<BotOptions>(
+    '/v1/bot-options',
+    {
+      schema: 'arena_ui_bot_options_request_v1',
+      operation: 'update',
+      settings,
+      confirm_rated: confirmRated,
+      confirm_outbound: confirmOutbound,
+    },
+    'BOT options could not be saved',
+  )
+}
+
+export function controlLocalBotAccount(
+  action: BotAccountAction,
+  parameters: Record<string, unknown> = {},
+): Promise<BotAccountResult> {
+  return interactiveBotRequest<BotAccountResult>(
+    '/v1/bot-account',
+    {
+      schema: 'arena_ui_bot_account_request_v1',
+      action,
+      parameters,
+    },
+    'BOT account control failed',
+  )
 }
 
 export const api = {

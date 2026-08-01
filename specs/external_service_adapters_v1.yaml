@@ -132,6 +132,17 @@ common_contract:
         is running or a launch request returned successfully.
       - Compatible saved, environment, PATH, and receipt hints are merged into
         complete candidates before partial candidates are returned.
+      - Describe, status, and configuration probes use the normal bounded
+        provider-command deadline. A changed or initial immutable output list
+        may use a separate deadline of at most sixty seconds because the
+        provider must validate advertised artifacts before returning them.
+      - A provider-command timeout or temporary launch failure is unavailable,
+        not evidence of API incompatibility. Manager preserves the last
+        successfully validated output projection and cursor, marks them stale,
+        and exposes both the failure reason and last-successful sample time.
+      - Schema, identity, path, digest, or envelope validation failures remain
+        incompatible and discard projections whose authority can no longer be
+        established.
 
 profiles:
   book_forge:
@@ -300,6 +311,15 @@ profiles:
         - Manager never requests or stores raw observations and never reads the service SQLite catalog.
         - Waiting for a target and an empty dataset set remain healthy.
         - A dataset schema or identity mismatch marks the integration incompatible.
+    orchestration_integration:
+      operations: [orchestration_status, campaign_enqueue, job_control]
+      rules:
+        - Manager may enqueue only the provider-defined first campaign against
+          the active deployment or an existing service-issued target UUID.
+        - Manager may cancel or retry only a service-issued job UUID; arbitrary
+          adapter commands, flags, paths, and raw catalog access are forbidden.
+        - Target and job projections are bounded, omit provider-owned paths and
+          job configuration, and preserve provider lifecycle authority.
     ownership:
       - The Evidence Service remains authority for scheduling, resource admission, evidence normalization, datasets, and qualified timing-profile publication.
       - The manager invokes only its public CLI and reads only its machine-readable status.
@@ -336,5 +356,7 @@ validation:
     output record, or output kind not owned by that service.
   - Output integration tests prove that raw Evidence observations and
     provider-private catalog contents never enter Manager state.
+  - Evidence orchestration tests prove that arbitrary adapters and job actions
+    cannot cross the typed provider API.
   - Starting a provider that exits before its public status contract reports
     an active non-stale daemon never yields an observed running state.

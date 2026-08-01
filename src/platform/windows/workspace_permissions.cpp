@@ -17,11 +17,17 @@ namespace {
 
 } // namespace
 
-void grant_manager_workspace_access(const std::filesystem::path& workspace) {
+void grant_manager_workspace_access(
+    const std::filesystem::path& workspace,
+    const bool manager_service_access) {
     if (!std::filesystem::is_directory(workspace) ||
         std::filesystem::is_symlink(workspace)) {
         throw std::runtime_error(
             "managed service workspace is unavailable for permission setup");
+    }
+
+    if (!manager_service_access) {
+        return;
     }
 
     std::array<unsigned char, SECURITY_MAX_SID_SIZE> sid_buffer{};

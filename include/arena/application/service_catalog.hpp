@@ -46,6 +46,34 @@ class ServiceCatalog final {
         const std::filesystem::path& manager_data_root,
         const BotCommandRunner& command_runner,
         const std::string& action);
+    [[nodiscard]] static nlohmann::json bot_options(
+        const std::filesystem::path& manager_data_root,
+        const ProcessSupervisor& process_supervisor);
+    [[nodiscard]] static nlohmann::json bot_options(
+        const std::filesystem::path& manager_data_root,
+        const BotCommandRunner& command_runner);
+    [[nodiscard]] static nlohmann::json update_bot_options(
+        const std::filesystem::path& manager_data_root,
+        const ProcessSupervisor& process_supervisor,
+        const nlohmann::json& settings,
+        bool confirm_rated,
+        bool confirm_outbound);
+    [[nodiscard]] static nlohmann::json update_bot_options(
+        const std::filesystem::path& manager_data_root,
+        const BotCommandRunner& command_runner,
+        const nlohmann::json& settings,
+        bool confirm_rated,
+        bool confirm_outbound);
+    [[nodiscard]] static nlohmann::json control_bot_account(
+        const std::filesystem::path& manager_data_root,
+        const ProcessSupervisor& process_supervisor,
+        const std::string& action,
+        const nlohmann::json& parameters);
+    [[nodiscard]] static nlohmann::json control_bot_account(
+        const std::filesystem::path& manager_data_root,
+        const BotCommandRunner& command_runner,
+        const std::string& action,
+        const nlohmann::json& parameters);
 };
 
 }  // namespace arena::application

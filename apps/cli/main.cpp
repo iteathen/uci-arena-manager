@@ -16,6 +16,7 @@
 #include "ui_picker.hpp"
 
 #ifdef _WIN32
+#include "arena/platform/windows_install_scope.hpp"
 #define NOMINMAX
 #include <shellapi.h>
 #include <windows.h>
@@ -30,6 +31,19 @@ using nlohmann::json;
 
 std::filesystem::path default_manager_data_directory() {
 #ifdef _WIN32
+    if (arena::platform::is_windows_per_user_install()) {
+        if (const char* local_app_data = std::getenv("LOCALAPPDATA");
+            local_app_data != nullptr && *local_app_data != '\0') {
+            return std::filesystem::path(local_app_data) / "UCI Arena Manager";
+        }
+        if (const char* user_profile = std::getenv("USERPROFILE");
+            user_profile != nullptr && *user_profile != '\0') {
+            return std::filesystem::path(user_profile) /
+                   "AppData" / "Local" / "UCI Arena Manager";
+        }
+        throw std::runtime_error(
+            "cannot resolve the per-user Manager data directory");
+    }
     if (const char* program_data = std::getenv("ProgramData");
         program_data != nullptr && *program_data != '\0') {
         return std::filesystem::path(program_data) / "UCI Arena Manager";

@@ -292,6 +292,34 @@ TEST_CASE("Book Forge and Evidence outputs cross only validated public contracts
         REQUIRE(
             evidence_data.at("manager_api_projection").at("schema") ==
             "uci_arena_manager_service_api_v1");
+        REQUIRE(
+            evidence_data.at("orchestration_projection")
+                .at("targets").size() == 1);
+        REQUIRE(
+            evidence_data.at("orchestration_projection")
+                .at("jobs").at(0).at("state") == "queued");
+
+        const std::string evidence_id =
+            evidence.at("resource").at("id");
+        const json campaign = control_plane.submit(
+            command(
+                "service.evidence_campaign_enqueue",
+                {{"kind", "managed_service"}, {"id", evidence_id}}),
+            "test");
+        REQUIRE(
+            campaign.at("resource").at("data")
+                .at("last_control_result").at("campaign") ==
+            "time_control_curve_v1");
+        const json cancelled = control_plane.submit(
+            command(
+                "service.evidence_job_cancel",
+                {{"kind", "managed_service"}, {"id", evidence_id}},
+                {{"job_id", "123e4567-e89b-42d3-a456-426614174002"}}),
+            "test");
+        REQUIRE(
+            cancelled.at("resource").at("data")
+                .at("last_control_result").at("job").at("state") ==
+            "cancelled");
     }
     fs::remove_all(root);
 }

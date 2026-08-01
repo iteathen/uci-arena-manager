@@ -39,6 +39,20 @@ requirements:
   - command_line_free_normal_startup
   - truthful_install_configuration_runtime_states
   - installed_cli_on_path_with_offline_help
+  - truthful_initial_loading_states
+  - actionable_cross_page_references
+
+interaction_feedback:
+  requirements:
+    - Initial API loading is presented as checking or loading and never flashes
+      zero resources, an unavailable control plane, or an unconfigured service
+      before the first request has completed.
+    - Auto-detect and refresh actions expose in-progress state followed by a
+      visible result summary or actionable error, including when discovery
+      found no new candidates.
+    - References to a missing prerequisite, setting, service, engine, report,
+      plan, or control are links or buttons that navigate directly to the
+      owning surface. Explanatory text is not a substitute for navigation.
 
 engine_identity_experience:
   requirements:
@@ -152,6 +166,9 @@ desktop_launcher:
   executable: uci-arena-manager
   behavior:
     - Runs without a console window.
+    - The shell identifies the connection as an authenticated local session
+      and never labels it administrator, elevated, or privileged unless that
+      exact authority is supplied by a typed backend contract.
     - Verifies the local service, obtains a one-use pairing URL, and hosts the
       packaged React dashboard inside a thin native desktop window.
     - The Manager service remains the sole runtime and persistence authority;
@@ -170,6 +187,12 @@ desktop_launcher:
     - Navigation failures, missing WebView runtime support, unavailable
       Manager service, and pairing failures produce an actionable native error
       without silently falling back to an unauthenticated browser.
+    - A running dashboard reprocesses a newly delivered pairing hash without a
+      full page reload, so activating or reopening the desktop launcher can
+      recover an expired session in an existing native view.
+    - An unpaired dashboard directs normal users to reopen the installed
+      desktop application. Terminal-based `arena ui` guidance is secondary and
+      limited to the explicitly optional external-browser workflow.
   setup_helper:
     - Accepts only typed inventory, plan, and apply requests for catalog component ids.
     - Uses only the adjacent verified arena-setup, retained signed catalog, and fixed roots.
@@ -179,8 +202,13 @@ desktop_launcher:
 cli_experience:
   executable: arena
   requirements:
-    - Windows setup adds the installed bin directory to the machine PATH and
-      removes only its own PATH entry during uninstall.
+    - Windows setup adds the installed bin directory to the user PATH for the
+      recommended per-user package or the machine PATH for the explicitly
+      elevated per-machine package, and removes only its own scoped entry on uninstall.
+    - The recommended per-user package labels install, Modify, repair, update,
+      and uninstall as non-elevated operations and launches Manager under the
+      interactive account. The per-machine package labels UAC as required
+      before the operator commits to it.
     - Linux packages install arena in the normal executable path and install
       arena(1) under the platform man hierarchy.
     - arena --help, every command help surface, the man page, and README use
@@ -214,6 +242,57 @@ bot_experience:
       the browser provide the account identity.
     - Explain that closing the desktop helper removes account-control
       authority but does not stop provider-owned startup.
+    - Every readiness blocker links to the owning Engines, Services, Reports,
+      or Configuration surface and names the next safe action.
+    - Replace raw bot-options JSON with labeled schema-backed controls for
+      capacity, inbound challenges, outbound challenge, scheduler, and
+      opponent selection. Loading, saved, rejected, and helper-unavailable
+      states remain explicit.
+    - Show the qualified capacity ceiling beside configured slots and prevent
+      an unsupported capacity value before save when evidence is available.
+    - Rated play and transition from disabled to automatic outbound play use
+      distinct confirmation controls that name the behavioral consequence.
+    - Provide owner add/remove/list, reservation create/status/cancel, and
+      scheduler status/pause/resume without a terminal. Each action refreshes
+      provider-authoritative state after success.
+    - Account and option controls require the desktop helper but never require
+      the Lichess token, never expose raw adapter configuration, and never
+      imply that local owners are authenticated bot identities.
+
+tournament_experience:
+  requirements:
+    - Saved plans are listed with format, participants, scheduled games, state,
+      and direct actions; a count-only summary is forbidden.
+    - Round robin, gauntlet, Swiss, and SPRT plans are persisted as tournament
+      resources. Head-to-head plans may remain match-plan resources.
+    - Planned resources expose Start; running resources expose Pause and
+      Cancel; paused resources expose Resume and Cancel; terminal resources do
+      not expose invalid lifecycle actions.
+    - Progress shows completed, active, queued, and total games, a percentage,
+      the current round or game when available, and the last durable update.
+    - Start, pause, resume, and cancel use backend-authoritative commands and
+      durable events. React state never fabricates lifecycle or progress.
+    - Empty tournament and match views link directly to the planner.
+    - The planner exposes rounds for Swiss, the even maximum game count plus
+      Elo hypotheses and alpha/beta for SPRT, moves-to-go, opening-suite path,
+      maximum-ply and optional draw/win adjudication controls, and all supported
+      variants. Controls hidden by format are omitted from the command.
+    - Competition cards show a terminal SPRT verdict and likelihood ratio,
+      Swiss round/bye progress, and direct links to the planner, Engines, and
+      Reports wherever those references are named.
+
+evidence_service_experience:
+  requirements:
+    - The Services surface shows collection readiness, target count, job state
+      counts, individual safe job summaries, datasets, and qualified timing
+      profiles from provider-authoritative projections.
+    - A configured compatible Evidence Service exposes one guided action to
+      enqueue its built-in first campaign; an absent exact target explains how
+      to start or register the LatticeKnight deployment before collecting.
+    - Eligible failed or cancelled jobs expose Retry; queued or waiting jobs
+      expose Cancel. Invalid provider lifecycle actions are not rendered.
+    - All campaign and job controls call the typed service API through Manager,
+      report success or failure visibly, and never fabricate progress in React.
 
 knowledge_asset_setup:
   location: configuration

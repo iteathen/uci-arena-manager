@@ -1,7 +1,8 @@
 # UCI Arena command line
 
-Windows setup adds the installed `bin` directory to the machine `PATH`. Open a
-new terminal after installation and run:
+Recommended per-user Windows setup adds the installed `bin` directory to the
+user `PATH`; all-users setup adds it to the machine `PATH`. Open a new terminal
+after installation and run:
 
 ```text
 arena status
@@ -15,6 +16,13 @@ Manager** from the Windows Start menu or Linux application menu. `arena ui`
 opens the same paired view in an external browser for monitoring and
 troubleshooting; native setup and account-control authority remain in the
 desktop host.
+
+With per-user setup, the desktop host starts Manager under your account and
+stops it when the native window closes. CLI commands therefore use that active
+desktop session. All-users setup and Linux native packages keep Manager
+available through SCM or systemd. Windows entry points read the MSI-owned
+`share/uci-arena/install-scope.txt` marker; a missing or invalid marker fails
+safely to machine scope instead of silently assuming a non-elevated install.
 
 Global flags must precede the command:
 

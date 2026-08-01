@@ -23,6 +23,8 @@ test("Windows installer cycle makes MSI invocation single-shot and resumable", (
     runner,
     /ValidateSet\("prepare", "install", "adopt", "smoke", "status", "restore"\)/,
   );
+  assert.match(runner, /ValidateSet\("per-user", "per-machine"\)/);
+  assert.match(runner, /\[string\]\$Scope = "per-user"/);
   assert.match(runner, /phase -ne "prepared"/);
   assert.match(runner, /install\.invocation_count -ne 0/);
   assert.match(runner, /phase = "installing"/);
@@ -37,7 +39,15 @@ test("Windows installer cycle makes MSI invocation single-shot and resumable", (
   assert.match(runner, /suppliedPath\.Split\(",", \[StringSplitOptions\]::RemoveEmptyEntries\)/);
   assert.match(runner, /Probe engine path is unavailable/);
   assert.match(runner, /bin\\uci-arena-manager\.exe/);
-  assert.match(runner, /GetEnvironmentVariable\("Path", "Machine"\)/);
+  assert.match(runner, /GetEnvironmentVariable\("Path", \$pathScope\)/);
+  assert.match(runner, /if \(\$Scope -eq "per-machine"\)[\s\S]*?Assert-Administrator/);
+  assert.match(runner, /Start-Process -FilePath \$servicePath[\s\S]*?-WindowStyle Hidden/);
+  assert.match(runner, /Per-user MSI generation requires CMake 4\.3 or newer/);
+  assert.match(runner, /\*-windows-x64-\$artifactScope\.msi/);
+  assert.equal(runner.match(/Assert-MsiCandidateScope -Path \$MsiPath/g)?.length, 2);
+  assert.match(runner, /Assert-InstalledScopeMarker/);
+  assert.match(runner, /Get-CommandExecutablePath -CommandLine \$service\.PathName/);
+  assert.match(runner, /Installed Manager scope '.+' does not match requested scope/);
   assert.match(runner, /Start Menu\\Programs\\UCI Arena Manager\.lnk/);
   assert.match(runner, /"components", "bot-profiles", "bot-candidates"/);
   assert.doesNotMatch(runner, /Remove-Item/);

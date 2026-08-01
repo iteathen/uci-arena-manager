@@ -27,9 +27,10 @@ dashboard in its native window without a terminal or default-browser launch.
 On Linux, open UCI Arena Manager from the application menu. `arena ui` remains
 the optional external-browser monitoring and troubleshooting entrypoint.
 
-The installed CLI is `arena`. Windows setup adds it to the machine `PATH`;
-open a new terminal after setup. Linux packages install both the command and
-the `arena(1)` man page.
+The installed CLI is `arena`. Recommended per-user Windows setup adds it to
+your user `PATH`; the explicitly elevated all-users package adds it to the
+machine `PATH`. Open a new terminal after setup. Linux packages install both
+the command and the `arena(1)` man page.
 
 ```text
 arena status
@@ -81,8 +82,10 @@ invoked from any working directory. Use `.\run-local.cmd -NoOpen` to print the
 pairing URL without opening a browser, and `.\run-local.cmd -Stop` to stop the
 service instance started by the launcher.
 
-The service binds to `127.0.0.1` only. Production packages install it through
-Windows SCM or systemd. See `specs/index.yaml` before changing behavior.
+The service binds to `127.0.0.1` only. The recommended Windows per-user package
+runs it beneath the native launcher under the interactive account; closing the
+desktop host stops that Manager process. The all-users Windows package uses SCM,
+and Linux native packages use systemd. See `specs/index.yaml` before changing behavior.
 
 ## Local match planning
 
@@ -164,10 +167,12 @@ Service, and the Lichess Bot adapter as named, selected-by-default components.
 The desktop Engines, Services, Bots, and Configuration views can review and
 apply a missing signed component from retained release media. The React view
 supplies only a fixed component id or asset kind; the native helper invokes the
-adjacent verified `arena-setup`, shows dependencies and disk impact, and asks
-for administrator confirmation only for the commit. External-browser sessions
+adjacent verified `arena-setup` and shows dependencies and disk impact. The
+recommended per-user package commits in user-owned storage without UAC; the
+all-users package asks for administrator confirmation for machine changes. External-browser sessions
 copy commands instead and never claim that copying performed installation.
-On Windows, reopen **UCI Arena Suite Setup** from Apps and Features and choose
+On Windows, reopen **UCI Arena Suite Setup (per-user)** or **UCI Arena Suite
+Setup (all users)** from Apps and Features and choose
 **Modify**, then **Choose Components**, to add or remove them. Feature choices
 are persisted across upgrades. The Lichess adapter is installed disabled until
 its token-file reference and evidence gates are explicitly completed.
@@ -184,11 +189,31 @@ incomplete startup restoration is reported as `rollback_failed`. Linux DEB/RPM
 lifecycle scripts perform the equivalent systemd stop, daemon-reload, enable,
 and start; portable `.run` installers use the same `arena-setup` operations and
 catalog.
-For each generated Book Forge, Evidence Service, or Lichess workspace,
-`arena-setup` grants only the Manager service account inherited workspace
-access: `LOCAL SERVICE` on Windows or `uci-arena` through the packaged `acl`
-dependency on Linux. Provider ownership is unchanged, and token files or other
-operator-profile paths are never included in that permission grant.
+For an all-users Windows or native Linux installation, `arena-setup` grants
+only the Manager service account inherited access to each generated Book Forge,
+Evidence Service, or Lichess workspace: `LOCAL SERVICE` on Windows or
+`uci-arena` through the packaged `acl` dependency on Linux. A per-user Windows
+installation needs no identity grant because Manager and providers run as that
+same user. Provider ownership is unchanged, and token files or other
+operator-profile paths are never included in a permission grant.
+
+Windows has two fixed-scope installer sets because the project stays on the
+free WiX 6 toolchain. Both packages use one tested native binary build; the MSI
+installs a scope marker and the owning bundle passes that same scope explicitly
+to setup, preventing a user update from drifting into machine-owned resources:
+
+- `...-windows-x64-user-*.exe` is recommended. Install, Modify, repair, update,
+  and uninstall use `%LOCALAPPDATA%`, user PATH, and the interactive account, so
+  they do not request UAC.
+- `...-windows-x64-machine-*.exe` installs for all users in Program Files,
+  writes machine PATH, and owns a LocalService Windows Service. Those operations
+  legitimately require UAC.
+
+Signing can improve publisher and SmartScreen trust, but it cannot suppress a
+legitimate all-users UAC prompt. Setup never uses an elevation bypass. Updating
+preserves the installed scope; moving between scopes requires an explicit
+uninstall and install so two Manager authorities cannot compete for the same
+loopback port.
 
 Installer sources and official output locations are:
 
@@ -212,7 +237,8 @@ preserves these assets; explicit purge removes only receipt-declared files that
 still match their installed digest.
 
 On Windows, normal uninstall also preserves the Manager data root at
-`C:\ProgramData\UCI Arena Manager`. This intentionally retains the database,
+`%LOCALAPPDATA%\UCI Arena Manager` for per-user setup or
+`C:\ProgramData\UCI Arena Manager` for all-users setup. This intentionally retains the database,
 local client key, knowledge assets, saved locators, verified repair media,
 rollback-protection state, content cache, and transaction evidence. Managed
 component roots, startup registrations, receipt documents, the Windows

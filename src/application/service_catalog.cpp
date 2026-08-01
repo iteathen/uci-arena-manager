@@ -12,6 +12,7 @@
 #include <optional>
 #include <set>
 #include <stdexcept>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
@@ -304,6 +305,331 @@ fs::path verified_entrypoint(
     }
     throw std::runtime_error(
         "installed component entrypoint is not in its signed file manifest");
+}
+
+struct BotProviderContext {
+    InstalledComponent adapter;
+    InstalledComponent node;
+    fs::path adapter_entrypoint;
+    fs::path node_entrypoint;
+    fs::path configuration_path;
+};
+
+BotProviderContext bot_provider_context(
+    const fs::path& manager_data_root) {
+    const fs::path receipts_root = manager_data_root / "receipts";
+    InstalledComponent adapter =
+        installed_component(receipts_root, "lichess.adapter", true);
+    InstalledComponent node =
+        installed_component(receipts_root, "node_runtime.private");
+    const fs::path configuration_path = fs::absolute(
+        adapter.receipt.value("configuration_path", std::string{}))
+                                                .lexically_normal();
+    if (configuration_path.empty() ||
+        !fs::is_regular_file(configuration_path) ||
+        fs::is_symlink(configuration_path)) {
+        throw std::runtime_error(
+            "the installed Lichess adapter configuration is unavailable");
+    }
+    const fs::path adapter_entrypoint =
+        verified_entrypoint(adapter, "adapter");
+    const fs::path node_entrypoint = verified_entrypoint(node, "node");
+    return {
+        std::move(adapter),
+        std::move(node),
+        adapter_entrypoint,
+        node_entrypoint,
+        configuration_path,
+    };
+}
+
+fs::path bot_runtime_directory(const InstalledComponent& adapter) {
+    if (!adapter.receipt.contains("data_paths") ||
+        !adapter.receipt.at("data_paths").is_array() ||
+        adapter.receipt.at("data_paths").empty() ||
+        !adapter.receipt.at("data_paths").at(0).is_string()) {
+        throw std::runtime_error(
+            "the installed Lichess adapter has no managed runtime directory");
+    }
+    const fs::path runtime = fs::absolute(
+        adapter.receipt.at("data_paths").at(0).get<std::string>())
+                                 .lexically_normal();
+    if (!fs::is_directory(runtime) || fs::is_symlink(runtime)) {
+        throw std::runtime_error(
+            "the installed Lichess adapter runtime directory is unavailable");
+    }
+    return runtime;
+}
+
+const json& required_object(
+    const json& value,
+    const std::string& field) {
+    if (!value.contains(field) || !value.at(field).is_object()) {
+        throw std::runtime_error(
+            "the provider returned invalid BOT options");
+    }
+    return value.at(field);
+}
+
+json selected_fields(
+    const json& source,
+    const std::initializer_list<std::string_view> fields) {
+    json result = json::object();
+    for (const auto field : fields) {
+        const std::string key(field);
+        if (!source.contains(key)) {
+            throw std::runtime_error(
+                "the provider returned incomplete BOT options");
+        }
+        result[key] = source.at(key);
+    }
+    return result;
+}
+
+int required_integer(
+    const json& source,
+    const std::string& field,
+    const int minimum,
+    const int maximum) {
+    if (!source.contains(field) ||
+        !source.at(field).is_number_integer()) {
+        throw std::runtime_error(
+            "the provider returned an invalid BOT option: " + field);
+    }
+    const int value = source.at(field).get<int>();
+    if (value < minimum || value > maximum) {
+        throw std::runtime_error(
+            "the provider returned an out-of-range BOT option: " + field);
+    }
+    return value;
+}
+
+bool required_boolean(const json& source, const std::string& field) {
+    if (!source.contains(field) || !source.at(field).is_boolean()) {
+        throw std::runtime_error(
+            "the provider returned an invalid BOT option: " + field);
+    }
+    return source.at(field).get<bool>();
+}
+
+void require_string_choice(
+    const json& source,
+    const std::string& field,
+    const std::set<std::string>& choices) {
+    if (!source.contains(field) || !source.at(field).is_string() ||
+        !choices.contains(source.at(field).get<std::string>())) {
+        throw std::runtime_error(
+            "the provider returned an invalid BOT option: " + field);
+    }
+}
+
+void require_string_choices(
+    const json& source,
+    const std::string& field,
+    const std::set<std::string>& choices) {
+    if (!source.contains(field) || !source.at(field).is_array() ||
+        source.at(field).empty() ||
+        source.at(field).size() > choices.size()) {
+        throw std::runtime_error(
+            "the provider returned an invalid BOT option: " + field);
+    }
+    std::set<std::string> observed;
+    for (const auto& entry : source.at(field)) {
+        if (!entry.is_string() ||
+            !choices.contains(entry.get<std::string>()) ||
+            !observed.insert(entry.get<std::string>()).second) {
+            throw std::runtime_error(
+                "the provider returned an invalid BOT option: " + field);
+        }
+    }
+}
+
+void validate_projected_bot_options(const json& options) {
+    const json& capacity = required_object(options, "capacity");
+    const int total_slots =
+        required_integer(capacity, "total_slots", 1, 64);
+    required_integer(capacity, "startup_parallelism", 1, 64);
+    const json& human = required_object(capacity, "human");
+    const json& bot = required_object(capacity, "bot");
+    const int human_slots = required_integer(human, "slots", 0, 64);
+    const int bot_slots = required_integer(bot, "slots", 0, 64);
+    if (human_slots + bot_slots != total_slots) {
+        throw std::runtime_error(
+            "the provider returned inconsistent BOT capacity");
+    }
+    static_cast<void>(required_boolean(human, "allow_borrowing"));
+    static_cast<void>(required_boolean(human, "accept_public"));
+    required_integer(bot, "target_active", 0, bot_slots);
+    const json& evidence = required_object(capacity, "evidence");
+    if (!evidence.contains("status") || !evidence.at("status").is_string() ||
+        evidence.at("status").get_ref<const std::string&>().empty() ||
+        evidence.at("status").get_ref<const std::string&>().size() > 64U ||
+        !evidence.contains("qualified") ||
+        !evidence.at("qualified").is_boolean() ||
+        !evidence.contains("maximum_concurrency") ||
+        !(evidence.at("maximum_concurrency").is_null() ||
+          evidence.at("maximum_concurrency").is_number_integer())) {
+        throw std::runtime_error(
+            "the provider returned invalid BOT capacity evidence");
+    }
+    if (evidence.at("qualified").get<bool>()) {
+        const int maximum = required_integer(
+            evidence, "maximum_concurrency", 1, 64);
+        if (total_slots > maximum) {
+            throw std::runtime_error(
+                "the provider BOT capacity exceeds qualified evidence");
+        }
+    } else if (!evidence.at("maximum_concurrency").is_null()) {
+        throw std::runtime_error(
+            "unqualified BOT capacity evidence exposed a maximum");
+    }
+
+    const json& inbound = required_object(options, "inbound_challenges");
+    static_cast<void>(required_boolean(inbound, "accept_bots"));
+    const int minimum_base =
+        required_integer(inbound, "min_base", 0, 86400);
+    const int maximum_base =
+        required_integer(inbound, "max_base", 0, 86400);
+    const int minimum_increment =
+        required_integer(inbound, "min_increment", 0, 300);
+    const int maximum_increment =
+        required_integer(inbound, "max_increment", 0, 300);
+    if (minimum_base > maximum_base ||
+        minimum_increment > maximum_increment) {
+        throw std::runtime_error(
+            "the provider returned inconsistent BOT challenge bounds");
+    }
+    require_string_choices(
+        inbound,
+        "speeds",
+        {"ultraBullet", "bullet", "blitz", "rapid", "classical",
+         "correspondence"});
+    require_string_choices(inbound, "modes", {"casual", "rated"});
+
+    const json& outbound = required_object(options, "outbound_challenge");
+    static_cast<void>(required_boolean(outbound, "rated"));
+    require_string_choice(
+        outbound, "color", {"random", "white", "black"});
+    required_integer(outbound, "clock_limit", 0, 86400);
+    required_integer(outbound, "clock_increment", 0, 300);
+
+    const json& scheduler = required_object(options, "scheduler");
+    static_cast<void>(required_boolean(scheduler, "enabled"));
+    required_integer(scheduler, "discovery_interval_seconds", 15, 3600);
+    required_integer(scheduler, "challenge_interval_seconds", 1, 300);
+    required_integer(scheduler, "reservation_retry_seconds", 5, 600);
+    required_integer(scheduler, "challenge_timeout_seconds", 10, 300);
+    const json& opponents = required_object(options, "opponent_selection");
+    required_integer(opponents, "max_games_per_opponent_per_day", 1, 100);
+    required_integer(opponents, "timeout_cooldown_minutes", 1, 1440);
+    required_integer(opponents, "decline_cooldown_minutes", 1, 10080);
+    required_integer(opponents, "rating_target", 400, 4000);
+    required_integer(opponents, "rating_spread", 50, 2000);
+}
+
+json project_bot_options(const json& result) {
+    if (!result.is_object() || result.dump().size() > 64U * 1024U ||
+        result.value("status", "") != "ready" ||
+        !result.contains("editable") ||
+        !result.at("editable").is_object()) {
+        throw std::runtime_error(
+            "the provider returned invalid BOT options");
+    }
+    const json& editable = result.at("editable");
+    if (editable.value("schema", "") !=
+        "uci_arena_lichess_manager_options_v1") {
+        throw std::runtime_error(
+            "the provider returned an unsupported BOT options schema");
+    }
+    const json& capacity = required_object(editable, "capacity");
+    json projected_capacity = selected_fields(
+        capacity, {"total_slots", "startup_parallelism"});
+    projected_capacity["human"] = selected_fields(
+        required_object(capacity, "human"),
+        {"slots", "allow_borrowing", "accept_public"});
+    projected_capacity["bot"] = selected_fields(
+        required_object(capacity, "bot"),
+        {"slots", "target_active"});
+    projected_capacity["evidence"] = selected_fields(
+        required_object(capacity, "evidence"),
+        {"status", "qualified", "maximum_concurrency"});
+    json projection{
+        {"schema", "uci_arena_lichess_manager_options_v1"},
+        {"capacity", std::move(projected_capacity)},
+        {"inbound_challenges",
+         selected_fields(
+             required_object(editable, "inbound_challenges"),
+             {"accept_bots", "min_base", "max_base", "min_increment",
+              "max_increment", "speeds", "modes"})},
+        {"outbound_challenge",
+         selected_fields(
+             required_object(editable, "outbound_challenge"),
+             {"rated", "color", "clock_limit", "clock_increment"})},
+        {"scheduler",
+         selected_fields(
+             required_object(editable, "scheduler"),
+             {"enabled", "discovery_interval_seconds",
+              "challenge_interval_seconds", "reservation_retry_seconds",
+              "challenge_timeout_seconds"})},
+        {"opponent_selection",
+         selected_fields(
+             required_object(editable, "opponent_selection"),
+             {"max_games_per_opponent_per_day",
+              "timeout_cooldown_minutes", "decline_cooldown_minutes",
+              "rating_target", "rating_spread"})},
+    };
+    if (projection.dump().size() > 32U * 1024U) {
+        throw std::runtime_error(
+            "the provider BOT options projection is too large");
+    }
+    validate_projected_bot_options(projection);
+    return projection;
+}
+
+void require_parameter_keys(
+    const json& parameters,
+    const std::set<std::string>& allowed) {
+    if (!parameters.is_object()) {
+        throw std::invalid_argument(
+            "BOT account-control parameters must be an object");
+    }
+    for (const auto& [key, value] : parameters.items()) {
+        static_cast<void>(value);
+        if (!allowed.contains(key)) {
+            throw std::invalid_argument(
+                "unsupported BOT account-control parameter");
+        }
+    }
+}
+
+int bounded_integer_parameter(
+    const json& parameters,
+    const std::string& name,
+    const int minimum,
+    const int maximum) {
+    if (!parameters.contains(name) ||
+        !parameters.at(name).is_number_integer()) {
+        throw std::invalid_argument(name + " must be an integer");
+    }
+    const int value = parameters.at(name).get<int>();
+    if (value < minimum || value > maximum) {
+        throw std::invalid_argument(name + " is outside the allowed range");
+    }
+    return value;
+}
+
+std::string account_parameter(
+    const json& parameters,
+    const std::string& name) {
+    if (!parameters.contains(name) ||
+        !parameters.at(name).is_string()) {
+        throw std::invalid_argument(name + " is required");
+    }
+    const std::string value = parameters.at(name).get<std::string>();
+    if (!valid_lichess_account_name(value)) {
+        throw std::invalid_argument(name + " is not a valid Lichess account");
+    }
+    return value;
 }
 
 bool compatible_manager_api_version(const std::string_view version) {
@@ -1056,8 +1382,8 @@ json ServiceCatalog::bot_profiles() {
             {"optional", true},
             {"capabilities",
              {"account_probe", "startup_status", "enable_startup",
-              "disable_startup",
-               "scheduler", "challenge_policy"}},
+              "disable_startup", "options", "owners", "reservations",
+              "scheduler", "challenge_policy"}},
         },
     });
 }
@@ -1076,7 +1402,7 @@ json ServiceCatalog::discover_bot(
         {"token_reference_available", false},
         {"configuration_state", "missing"},
         {"startup_state", "disabled"},
-        {"options", json::object()},
+        {"options_state", "interactive_helper_required"},
     };
     bool adapter_ready = false;
     bool configuration_ready = false;
@@ -1106,17 +1432,6 @@ json ServiceCatalog::discover_bot(
             try {
                 configuration = read_json_file(configuration_path);
                 configuration_ready = true;
-                candidate["options"] = {
-                    {"capacity",
-                     configuration.value("capacity", json::object())},
-                    {"challenges",
-                     configuration.value("challenges", json::object())},
-                    {"outbound_challenge",
-                     configuration.value(
-                         "outbound_challenge", json::object())},
-                    {"scheduler",
-                     configuration.value("scheduler", json::object())},
-                };
             } catch (const std::exception&) {
                 issues.push_back({
                     {"code", "bot_configuration_invalid"},
@@ -1523,6 +1838,290 @@ json ServiceCatalog::control_bot(
     };
     if (account_name.has_value()) {
         response["account_name"] = *account_name;
+    }
+    return response;
+}
+
+json ServiceCatalog::bot_options(
+    const fs::path& manager_data_root,
+    const ProcessSupervisor& process_supervisor) {
+    return bot_options(
+        manager_data_root,
+        [&process_supervisor](
+            const fs::path& executable,
+            const fs::path& working_directory,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds timeout) {
+            return process_supervisor.run_json(
+                executable, working_directory, arguments, timeout);
+        });
+}
+
+json ServiceCatalog::bot_options(
+    const fs::path& manager_data_root,
+    const BotCommandRunner& command_runner) {
+    const BotProviderContext provider =
+        bot_provider_context(manager_data_root);
+    const json result = command_runner(
+        provider.node_entrypoint,
+        provider.adapter.active_root,
+        {
+            provider.adapter_entrypoint.string(),
+            "config",
+            "get",
+            "--config",
+            provider.configuration_path.string(),
+        },
+        std::chrono::seconds(30));
+    return project_bot_options(result);
+}
+
+json ServiceCatalog::update_bot_options(
+    const fs::path& manager_data_root,
+    const ProcessSupervisor& process_supervisor,
+    const json& settings,
+    const bool confirm_rated,
+    const bool confirm_outbound) {
+    return update_bot_options(
+        manager_data_root,
+        [&process_supervisor](
+            const fs::path& executable,
+            const fs::path& working_directory,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds timeout) {
+            return process_supervisor.run_json(
+                executable, working_directory, arguments, timeout);
+        },
+        settings,
+        confirm_rated,
+        confirm_outbound);
+}
+
+json ServiceCatalog::update_bot_options(
+    const fs::path& manager_data_root,
+    const BotCommandRunner& command_runner,
+    const json& settings,
+    const bool confirm_rated,
+    const bool confirm_outbound) {
+    if (!settings.is_object() || settings.empty() ||
+        settings.dump().size() > 32U * 1024U) {
+        throw std::invalid_argument(
+            "BOT option settings must be a non-empty bounded object");
+    }
+    static const std::set<std::string> allowed_groups{
+        "capacity",
+        "inbound_challenges",
+        "outbound_challenge",
+        "scheduler",
+        "opponent_selection",
+    };
+    for (const auto& [group, value] : settings.items()) {
+        if (!allowed_groups.contains(group) || !value.is_object()) {
+            throw std::invalid_argument(
+                "BOT option settings contain an unsupported group");
+        }
+    }
+    const BotProviderContext provider =
+        bot_provider_context(manager_data_root);
+    std::vector<std::string> arguments{
+        provider.adapter_entrypoint.string(),
+        "config",
+        "update",
+        "--config",
+        provider.configuration_path.string(),
+        "--settings",
+        settings.dump(),
+    };
+    if (confirm_rated) {
+        arguments.insert(
+            arguments.end(),
+            {"--confirm-rated", "I_ACCEPT_RATED_BOT_GAMES"});
+    }
+    if (confirm_outbound) {
+        arguments.insert(
+            arguments.end(),
+            {"--confirm-outbound",
+             "I_ACCEPT_AUTOMATIC_OUTBOUND_CHALLENGES"});
+    }
+    const json result = command_runner(
+        provider.node_entrypoint,
+        provider.adapter.active_root,
+        arguments,
+        std::chrono::seconds(30));
+    return project_bot_options(result);
+}
+
+json ServiceCatalog::control_bot_account(
+    const fs::path& manager_data_root,
+    const ProcessSupervisor& process_supervisor,
+    const std::string& action,
+    const json& parameters) {
+    return control_bot_account(
+        manager_data_root,
+        [&process_supervisor](
+            const fs::path& executable,
+            const fs::path& working_directory,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds timeout) {
+            return process_supervisor.run_json(
+                executable, working_directory, arguments, timeout);
+        },
+        action,
+        parameters);
+}
+
+json ServiceCatalog::control_bot_account(
+    const fs::path& manager_data_root,
+    const BotCommandRunner& command_runner,
+    const std::string& action,
+    const json& parameters) {
+    static const std::set<std::string> actions{
+        "owner_list", "owner_add", "owner_remove",
+        "reservation_status", "reservation_create", "reservation_cancel",
+        "scheduler_status", "scheduler_pause", "scheduler_resume",
+    };
+    if (!actions.contains(action)) {
+        throw std::invalid_argument(
+            "unsupported BOT local account-control action");
+    }
+    std::vector<std::string> arguments;
+    if (action == "owner_list") {
+        require_parameter_keys(parameters, {});
+        arguments = {"owner", "list"};
+    } else if (action == "owner_add" || action == "owner_remove") {
+        require_parameter_keys(parameters, {"username"});
+        arguments = {
+            "owner",
+            action == "owner_add" ? "add" : "remove",
+            "--username",
+            account_parameter(parameters, "username"),
+        };
+    } else if (action == "reservation_status" ||
+               action == "reservation_cancel") {
+        require_parameter_keys(parameters, {});
+        arguments = {
+            "reservation",
+            action == "reservation_status" ? "status" : "cancel",
+        };
+    } else if (action == "reservation_create") {
+        require_parameter_keys(
+            parameters, {"opponent", "games", "minutes"});
+        arguments = {
+            "reserve",
+            "--opponent",
+            account_parameter(parameters, "opponent"),
+            "--games",
+            std::to_string(
+                bounded_integer_parameter(parameters, "games", 1, 100)),
+            "--minutes",
+            std::to_string(
+                bounded_integer_parameter(parameters, "minutes", 1, 1440)),
+        };
+    } else {
+        require_parameter_keys(parameters, {});
+        arguments = {
+            "scheduler",
+            action == "scheduler_status"
+                ? "status"
+                : action == "scheduler_pause" ? "pause" : "resume",
+        };
+    }
+
+    const BotProviderContext provider =
+        bot_provider_context(manager_data_root);
+    arguments.insert(arguments.begin(), provider.adapter_entrypoint.string());
+    arguments.insert(
+        arguments.end(),
+        {"--runtime-dir", bot_runtime_directory(provider.adapter).string()});
+    const json result = command_runner(
+        provider.node_entrypoint,
+        provider.adapter.active_root,
+        arguments,
+        std::chrono::seconds(30));
+    if (!result.is_object() || result.dump().size() > 32U * 1024U ||
+        result.value("status", "") != "ready") {
+        throw std::runtime_error(
+            "the provider returned invalid BOT local account state");
+    }
+    json response{
+        {"schema", "arena_bot_local_account_result_v1"},
+        {"schema_version", 1},
+        {"action", action},
+    };
+    if (action == "owner_list") {
+        if (!result.contains("owners") ||
+            !result.at("owners").is_array() ||
+            result.at("owners").size() > 128U) {
+            throw std::runtime_error("the provider returned invalid owners");
+        }
+        response["owners"] = json::array();
+        for (const auto& owner : result.at("owners")) {
+            if (!owner.is_object() ||
+                !valid_lichess_account_name(owner.value("username", "")) ||
+                !owner.contains("created_at") ||
+                !owner.at("created_at").is_number_integer()) {
+                throw std::runtime_error(
+                    "the provider returned invalid owners");
+            }
+            response["owners"].push_back({
+                {"username", owner.at("username")},
+                {"created_at", owner.at("created_at")},
+            });
+        }
+    } else if (action == "owner_add" || action == "owner_remove") {
+        const std::string username = result.value("username", "");
+        const std::string outcome =
+            action == "owner_add" ? "added" : "removed";
+        if (!valid_lichess_account_name(username) ||
+            !result.contains(outcome) || !result.at(outcome).is_boolean()) {
+            throw std::runtime_error(
+                "the provider returned invalid owner state");
+        }
+        response["username"] = username;
+        response[outcome] = result.at(outcome);
+    } else if (action.starts_with("reservation_")) {
+        if (action == "reservation_cancel") {
+            if (!result.contains("canceled") ||
+                !result.at("canceled").is_boolean()) {
+                throw std::runtime_error(
+                    "the provider returned invalid reservation state");
+            }
+            response["canceled"] = result.at("canceled");
+        } else if (!result.contains("reservation") ||
+                   !(result.at("reservation").is_null() ||
+                     result.at("reservation").is_object())) {
+            throw std::runtime_error(
+                "the provider returned invalid reservation state");
+        } else if (result.at("reservation").is_null()) {
+            response["reservation"] = nullptr;
+        } else {
+            const json& reservation = result.at("reservation");
+            if (!valid_lichess_account_name(
+                    reservation.value("opponent", "")) ||
+                !reservation.contains("games_remaining") ||
+                !reservation.at("games_remaining").is_number_integer() ||
+                !reservation.contains("expires_at") ||
+                !reservation.at("expires_at").is_number_integer() ||
+                !reservation.contains("created_at") ||
+                !reservation.at("created_at").is_number_integer()) {
+                throw std::runtime_error(
+                    "the provider returned invalid reservation state");
+            }
+            response["reservation"] = selected_fields(
+                reservation,
+                {"opponent", "games_remaining", "expires_at", "created_at"});
+        }
+    } else {
+        if (!result.contains("scheduler") ||
+            !result.at("scheduler").is_object() ||
+            !result.at("scheduler").contains("paused") ||
+            !result.at("scheduler").at("paused").is_boolean()) {
+            throw std::runtime_error(
+                "the provider returned invalid scheduler state");
+        }
+        response["scheduler"] = {
+            {"paused", result.at("scheduler").at("paused")},
+        };
     }
     return response;
 }

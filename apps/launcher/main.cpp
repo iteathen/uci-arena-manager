@@ -5,11 +5,13 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>
 
 #ifdef _WIN32
+#include "arena/platform/windows_install_scope.hpp"
 #define NOMINMAX
 #include <winsock2.h>
 #include <shlobj.h>
@@ -106,6 +108,150 @@ std::uint16_t find_available_picker_port() {
     }
     return port;
 }
+
+bool manager_endpoint_available() {
+    WSADATA winsock{};
+    if (WSAStartup(MAKEWORD(2, 2), &winsock) != 0) {
+        return false;
+    }
+    const SOCKET connection = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (connection == INVALID_SOCKET) {
+        WSACleanup();
+        return false;
+    }
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = htons(47831);
+    const bool available = connect(
+        connection,
+        reinterpret_cast<const sockaddr*>(&address),
+        sizeof(address)) == 0;
+    closesocket(connection);
+    WSACleanup();
+    return available;
+}
+
+std::filesystem::path per_user_data_directory() {
+    PWSTR raw_path = nullptr;
+    const HRESULT result = SHGetKnownFolderPath(
+        FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &raw_path);
+    if (FAILED(result) || raw_path == nullptr) {
+        throw std::runtime_error(
+            "cannot resolve the per-user Manager data directory");
+    }
+    const std::filesystem::path path =
+        std::filesystem::path(raw_path) / L"UCI Arena Manager";
+    CoTaskMemFree(raw_path);
+    return path;
+}
+
+class PerUserManagerProcess final {
+public:
+    explicit PerUserManagerProcess(
+        const std::filesystem::path& executable_root) {
+        if (manager_endpoint_available()) {
+            return;
+        }
+        const std::filesystem::path executable =
+            executable_root / L"arena-service.exe";
+        const std::filesystem::path web_root =
+            executable_root.parent_path() / L"share" / L"uci-arena" / L"web";
+        if (!std::filesystem::is_regular_file(executable) ||
+            !std::filesystem::is_directory(web_root)) {
+            throw std::runtime_error(
+                "the installed per-user Manager runtime is incomplete");
+        }
+
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        PROCESS_INFORMATION process{};
+        std::wstring command =
+            quote(executable.wstring()) +
+            L" --data-dir " + quote(per_user_data_directory().wstring()) +
+            L" --web-root " + quote(web_root.wstring());
+        const BOOL created = CreateProcessW(
+            executable.c_str(),
+            command.data(),
+            nullptr,
+            nullptr,
+            FALSE,
+            CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP,
+            nullptr,
+            executable_root.c_str(),
+            &startup,
+            &process);
+        if (!created) {
+            throw std::runtime_error(
+                "cannot start the per-user Manager process");
+        }
+        process_ = process.hProcess;
+        CloseHandle(process.hThread);
+
+        job_ = CreateJobObjectW(nullptr, nullptr);
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+        limits.BasicLimitInformation.LimitFlags =
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (job_ == nullptr ||
+            !SetInformationJobObject(
+                job_, JobObjectExtendedLimitInformation, &limits,
+                sizeof(limits)) ||
+            !AssignProcessToJobObject(job_, process_)) {
+            TerminateProcess(process_, 1);
+            WaitForSingleObject(process_, 3000);
+            close_handles();
+            throw std::runtime_error(
+                "cannot contain the per-user Manager process");
+        }
+
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (manager_endpoint_available()) {
+                return;
+            }
+            if (WaitForSingleObject(process_, 0) == WAIT_OBJECT_0) {
+                close_handles();
+                throw std::runtime_error(
+                    "the per-user Manager process exited during startup");
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        close_handles();
+        throw std::runtime_error(
+            "the per-user Manager process did not become ready");
+    }
+
+    PerUserManagerProcess(const PerUserManagerProcess&) = delete;
+    PerUserManagerProcess& operator=(const PerUserManagerProcess&) = delete;
+
+    ~PerUserManagerProcess() {
+        if (job_ != nullptr) {
+            CloseHandle(job_);
+            job_ = nullptr;
+        }
+        if (process_ != nullptr) {
+            WaitForSingleObject(process_, 3000);
+            CloseHandle(process_);
+            process_ = nullptr;
+        }
+    }
+
+private:
+    void close_handles() {
+        if (job_ != nullptr) {
+            CloseHandle(job_);
+            job_ = nullptr;
+        }
+        if (process_ != nullptr) {
+            CloseHandle(process_);
+            process_ = nullptr;
+        }
+    }
+
+    HANDLE process_{};
+    HANDLE job_{};
+};
 
 class UiHelper final {
 public:
@@ -289,7 +435,13 @@ int run_desktop() {
 
     try {
         configure_webview_user_data();
-        const auto cli = executable_directory() / L"arena.exe";
+        const auto executable_root = executable_directory();
+        std::unique_ptr<PerUserManagerProcess> manager;
+        if (arena::platform::is_windows_per_user_install()) {
+            manager = std::make_unique<PerUserManagerProcess>(
+                executable_root);
+        }
+        const auto cli = executable_root / L"arena.exe";
         if (!std::filesystem::is_regular_file(cli)) {
             throw std::runtime_error(
                 "arena.exe is missing; repair UCI Arena Suite Setup");

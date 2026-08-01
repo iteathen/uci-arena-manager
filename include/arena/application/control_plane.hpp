@@ -2,6 +2,7 @@
 
 #include "arena/ports/store.hpp"
 #include "arena/application/process_supervisor.hpp"
+#include "arena/application/tournament_executor.hpp"
 
 #include <filesystem>
 #include <memory>
@@ -67,6 +68,9 @@ class ControlPlane final {
     [[nodiscard]] nlohmann::json manage_service(
         const nlohmann::json& request,
         const std::string& actor);
+    [[nodiscard]] nlohmann::json manage_competition(
+        const nlohmann::json& request,
+        const std::string& actor);
 
     [[nodiscard]] static nlohmann::json resource_json(const ports::ResourceRecord& record);
     [[nodiscard]] static nlohmann::json event_json(const ports::EventRecord& record);
@@ -85,6 +89,7 @@ class ControlPlane final {
     std::shared_ptr<ports::Store> store_;
     std::filesystem::path manager_data_root_;
     ProcessSupervisor process_supervisor_;
+    TournamentExecutor tournament_executor_;
     std::string started_at_;
     nlohmann::json installed_service_reconciliation_{
         {"schema", "arena_installed_service_reconciliation_v1"},

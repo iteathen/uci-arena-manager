@@ -20,6 +20,7 @@ import {
   AppShell,
   Box,
   Burger,
+  Button,
   Center,
   Group,
   Loader,
@@ -40,6 +41,7 @@ import { BotsPage } from './pages/BotsPage'
 import { EnginesPage } from './pages/EnginesPage'
 import { LogsPage } from './pages/LogsPage'
 import { MatchPlannerPage } from './pages/MatchPlannerPage'
+import { TournamentPage } from './pages/TournamentPage'
 import { OverviewPage } from './pages/OverviewPage'
 import { ResourcePage } from './pages/ResourcePage'
 import { ServicesPage } from './pages/ServicesPage'
@@ -82,7 +84,9 @@ export default function App() {
   const [eventsConnected, setEventsConnected] = useState(false)
   const { colorScheme, toggleColorScheme } = useMantineColorScheme()
 
-  useEffect(() => {
+  const authenticate = useCallback(() => {
+    setAuthState('loading')
+    setAuthDetail('')
     void (async () => {
       try {
         await exchangePairingToken()
@@ -98,6 +102,16 @@ export default function App() {
       }
     })()
   }, [])
+
+  useEffect(() => {
+    const initialAuthentication = window.setTimeout(authenticate, 0)
+    const handlePairingNavigation = () => authenticate()
+    window.addEventListener('hashchange', handlePairingNavigation)
+    return () => {
+      window.clearTimeout(initialAuthentication)
+      window.removeEventListener('hashchange', handlePairingNavigation)
+    }
+  }, [authenticate])
 
   useEffect(() => {
     if (authState !== 'ready') return
@@ -123,35 +137,31 @@ export default function App() {
       case 'overview':
         return <OverviewPage navigate={navigate} />
       case 'services':
-        return <ServicesPage />
+        return <ServicesPage navigate={navigate} />
       case 'engines':
         return <EnginesPage />
       case 'planner':
-        return <MatchPlannerPage />
+        return <MatchPlannerPage navigate={navigate} />
       case 'bots':
-        return <BotsPage />
+        return <BotsPage navigate={navigate} />
       case 'live':
         return (
           <ResourcePage
             title="Live games"
             description="Canonical positions, clocks, evaluations, and engine state."
             kind="game"
+            emptyAction={{ label: 'Plan a match', onClick: () => navigate('planner') }}
           />
         )
       case 'tournaments':
-        return (
-          <ResourcePage
-            title="Tournaments"
-            description="Round robin, gauntlet, Swiss, and SPRT schedules."
-            kind="tournament"
-          />
-        )
+        return <TournamentPage navigate={navigate} />
       case 'history':
         return (
           <ResourcePage
             title="Game history & replay"
             description="Replay persisted games from backend-authoritative FEN snapshots."
             kind="game"
+            emptyAction={{ label: 'Plan a match', onClick: () => navigate('planner') }}
           />
         )
       case 'logs':
@@ -190,12 +200,17 @@ export default function App() {
             <>
               <Text c="dimmed" ta="center">
                 {authState === 'required'
-                  ? 'This dashboard needs a one-time local pairing session. Run arena ui from a terminal.'
+                  ? 'This dashboard needs a new local pairing session. Reopen UCI Arena Manager from the Start menu or application launcher.'
                   : `The local control plane is unavailable: ${authDetail}`}
               </Text>
-              <Box component="code" className="pair-command">
-                arena ui
-              </Box>
+              <Button variant="default" onClick={authenticate}>
+                Retry connection
+              </Button>
+              {authState === 'required' && (
+                <Text size="xs" c="dimmed" ta="center">
+                  Optional external-browser troubleshooting: <Box component="code" className="pair-command">arena ui</Box>
+                </Text>
+              )}
             </>
           )}
         </Stack>
@@ -249,6 +264,8 @@ export default function App() {
           {nav.slice(0, 8).map((item) => (
             <NavLink
               key={item.key}
+              component="a"
+              href={`#page=${item.key}`}
               label={item.label}
               leftSection={<item.icon size={18} stroke={1.8} />}
               active={page === item.key}
@@ -261,6 +278,8 @@ export default function App() {
           {nav.slice(8).map((item) => (
             <NavLink
               key={item.key}
+              component="a"
+              href={`#page=${item.key}`}
               label={item.label}
               leftSection={<item.icon size={18} stroke={1.8} />}
               active={page === item.key}
@@ -276,7 +295,7 @@ export default function App() {
                 Local host
               </Text>
               <Text size="xs" c="dimmed">
-                127.0.0.1 · administrator
+                127.0.0.1 · authenticated session
               </Text>
             </div>
           </Group>

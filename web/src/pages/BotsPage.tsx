@@ -7,8 +7,9 @@ import type { BotCandidate } from '../api/types'
 import { PageHeader } from '../components/PageHeader'
 import { PathPickerInput } from '../components/PathPickerInput'
 import { ComponentSetupButton } from '../components/ComponentSetupButton'
+import { BotOperationsPanel } from '../components/BotOperationsPanel'
 
-export function BotsPage() {
+export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
   const queryClient = useQueryClient()
   const profiles = useQuery({ queryKey: ['bot-profiles'], queryFn: api.botProfiles })
   const candidates = useQuery({ queryKey: ['bot-candidates'], queryFn: api.botCandidates })
@@ -17,6 +18,7 @@ export function BotsPage() {
     (component) => component.component_id === 'lichess.adapter',
   )
   const [tokenPath, setTokenPath] = useState('')
+  const [detectionMessage, setDetectionMessage] = useState('')
   const saveToken = useMutation({
     mutationFn: api.saveBotTokenReference,
     onSuccess: async () => {
@@ -62,6 +64,29 @@ export function BotsPage() {
     bot_account_probe: 'BOT account probe',
     startup: 'Provider startup',
   }
+  const issueDestination = (code: string) => {
+    if (code.includes('engine') || code.includes('model')) {
+      return { page: 'engines', label: 'Open Engines' }
+    }
+    if (code.includes('timing_profile')) {
+      return { page: 'reports', label: 'Review evidence' }
+    }
+    if (code.includes('adapter')) {
+      return { page: 'bots', label: 'Review adapter' }
+    }
+    return { page: 'configuration', label: 'Open Configuration' }
+  }
+  const detect = async () => {
+    setDetectionMessage('')
+    const result = await candidates.refetch()
+    if (result.error) return
+    const detected = result.data?.candidates[0]
+    setDetectionMessage(
+      detected
+        ? `Auto-detect completed: adapter ${detected.package_state}, configuration ${detected.configuration_state}, ${detected.issues.length} blocker${detected.issues.length === 1 ? '' : 's'}.`
+        : 'Auto-detect completed: no verified Lichess adapter candidate was found.',
+    )
+  }
 
   return (
     <>
@@ -72,7 +97,8 @@ export function BotsPage() {
           <Button
             variant="default"
             leftSection={<IconRefresh size={16} />}
-            onClick={() => candidates.refetch()}
+            loading={candidates.isFetching}
+            onClick={() => void detect()}
           >
             Auto-detect
           </Button>
@@ -154,10 +180,20 @@ export function BotsPage() {
             </Group>
             {candidate?.issues.map((issue) => (
               <Alert key={issue.code} color="orange" title={issue.code}>
-                {issue.detail}
+                <Group justify="space-between" align="flex-end">
+                  <Text size="sm">{issue.detail}</Text>
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    onClick={() => navigate(issueDestination(issue.code).page)}
+                  >
+                    {issueDestination(issue.code).label}
+                  </Button>
+                </Group>
               </Alert>
             ))}
             {candidates.error && <Alert color="red">{candidates.error.message}</Alert>}
+            {detectionMessage && <Alert color="blue">{detectionMessage}</Alert>}
             {saveToken.error && <Alert color="red">{saveToken.error.message}</Alert>}
             {saveToken.data && (
               <Alert color="green">
@@ -258,13 +294,16 @@ export function BotsPage() {
               {candidate.default_model.input_adapter_id}
             </Text>
           )}
-          <Code block mt="md">
-            {JSON.stringify(candidate?.options ?? {}, null, 2)}
-          </Code>
           <Text size="xs" c="dimmed" mt="md">
             {profiles.data?.[0]?.capabilities.length ?? 0} declared adapter capabilities.
             Token contents never enter the Manager API or dashboard.
           </Text>
+          <Stack mt="lg">
+            <BotOperationsPanel
+              installed={candidate?.package_state === 'installed'}
+              navigate={navigate}
+            />
+          </Stack>
         </Paper>
       </SimpleGrid>
     </>

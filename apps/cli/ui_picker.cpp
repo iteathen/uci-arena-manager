@@ -20,6 +20,7 @@
 #include <vector>
 
 #ifdef _WIN32
+#include "arena/platform/windows_install_scope.hpp"
 #define NOMINMAX
 #include <shobjidl.h>
 #include <windows.h>
@@ -389,6 +390,12 @@ json run_setup(
         throw std::runtime_error(
             "The adjacent arena-setup executable is unavailable; repair UCI Arena Suite Setup");
     }
+#ifdef _WIN32
+    const bool per_user_install =
+        arena::platform::is_windows_per_user_install();
+#else
+    const bool per_user_install = false;
+#endif
     if (!apply && request.operation == "import") {
         return {
             {"schema", "arena_ui_setup_plan_v1"},
@@ -423,12 +430,16 @@ json run_setup(
     std::vector<std::string> arguments{
         "--data-root",
         manager_data_root.string(),
+#ifdef _WIN32
+        "--install-scope",
+        per_user_install ? "per-user" : "per-machine",
+#endif
         "--json",
         "--result-file",
         result_path.string(),
     };
     if (request.operation == "component") {
-        if (apply) {
+        if (apply && !per_user_install) {
             arguments.push_back("--restart-manager-service");
         }
         arguments.insert(
@@ -460,8 +471,10 @@ json run_setup(
 
     if (apply && request.operation == "component") {
 #ifdef _WIN32
-        return run_setup_elevated(
-            setup_executable, arguments, result_path);
+        if (!per_user_install) {
+            return run_setup_elevated(
+                setup_executable, arguments, result_path);
+        }
 #else
         arena::application::ProcessSupervisor process;
         if (geteuid() != 0 &&
@@ -501,8 +514,8 @@ json run_setup(
                     std::chrono::minutes(2));
         if (!apply && request.operation == "component") {
             result["operation"] = "component";
-            result["elevation_required"] = true;
-            result["manager_service_restart"] = true;
+            result["elevation_required"] = !per_user_install;
+            result["manager_service_restart"] = !per_user_install;
         }
         return result;
     } catch (const std::exception&) {
@@ -964,6 +977,178 @@ void run_ui_picker(
                         "bot_control_failed",
                         "The verified adapter could not complete BOT startup control. "
                         "Refresh status and review the visible readiness blockers."),
+                    drogon::k422UnprocessableEntity,
+                    dashboard_origin));
+            }
+        },
+        {drogon::Post, drogon::Options});
+    application.registerHandler(
+        "/v1/bot-options",
+        [bearer_token, dashboard_origin, manager_data_root](
+            const drogon::HttpRequestPtr& request,
+            std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+            if (request->method() == drogon::Options) {
+                if (request->getHeader("Origin") != dashboard_origin) {
+                    callback(json_response(
+                        problem("origin_rejected", "Dashboard origin is not authorized"),
+                        drogon::k403Forbidden,
+                        dashboard_origin));
+                    return;
+                }
+                callback(json_response(
+                    json::object(), drogon::k204NoContent, dashboard_origin));
+                return;
+            }
+            if (request->getHeader("Origin") != dashboard_origin ||
+                request->getHeader("Authorization") !=
+                    "Bearer " + bearer_token) {
+                callback(json_response(
+                    problem(
+                        "picker_unauthorized",
+                        "Interactive-user helper session is unavailable"),
+                    drogon::k401Unauthorized,
+                    dashboard_origin));
+                return;
+            }
+            try {
+                if (request->body().size() > 64 * 1024) {
+                    throw std::invalid_argument("BOT options request is too large");
+                }
+                const json input = json::parse(request->body());
+                if (!input.is_object() ||
+                    input.value("schema", "") !=
+                        "arena_ui_bot_options_request_v1" ||
+                    !input.contains("operation") ||
+                    !input.at("operation").is_string()) {
+                    throw std::invalid_argument("invalid BOT options request");
+                }
+                const std::string operation =
+                    input.at("operation").get<std::string>();
+                arena::application::ProcessSupervisor process;
+                if (operation == "get" && input.size() == 2) {
+                    callback(json_response(
+                        arena::application::ServiceCatalog::bot_options(
+                            manager_data_root, process),
+                        drogon::k200OK,
+                        dashboard_origin));
+                    return;
+                }
+                if (operation != "update" || input.size() != 5 ||
+                    !input.contains("settings") ||
+                    !input.at("settings").is_object() ||
+                    !input.contains("confirm_rated") ||
+                    !input.at("confirm_rated").is_boolean() ||
+                    !input.contains("confirm_outbound") ||
+                    !input.at("confirm_outbound").is_boolean()) {
+                    throw std::invalid_argument("invalid BOT options request");
+                }
+                callback(json_response(
+                    arena::application::ServiceCatalog::update_bot_options(
+                        manager_data_root,
+                        process,
+                        input.at("settings"),
+                        input.at("confirm_rated").get<bool>(),
+                        input.at("confirm_outbound").get<bool>()),
+                    drogon::k200OK,
+                    dashboard_origin));
+            } catch (const std::invalid_argument&) {
+                callback(json_response(
+                    problem(
+                        "invalid_bot_options_request",
+                        "Interactive BOT options request is invalid"),
+                    drogon::k400BadRequest,
+                    dashboard_origin));
+            } catch (const json::exception&) {
+                callback(json_response(
+                    problem(
+                        "invalid_bot_options_request",
+                        "Interactive BOT options request is invalid"),
+                    drogon::k400BadRequest,
+                    dashboard_origin));
+            } catch (const std::exception& error) {
+                callback(json_response(
+                    problem(
+                        "bot_options_failed",
+                        std::string("The verified adapter rejected the BOT options: ") +
+                            error.what()),
+                    drogon::k422UnprocessableEntity,
+                    dashboard_origin));
+            }
+        },
+        {drogon::Post, drogon::Options});
+    application.registerHandler(
+        "/v1/bot-account",
+        [bearer_token, dashboard_origin, manager_data_root](
+            const drogon::HttpRequestPtr& request,
+            std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+            if (request->method() == drogon::Options) {
+                if (request->getHeader("Origin") != dashboard_origin) {
+                    callback(json_response(
+                        problem("origin_rejected", "Dashboard origin is not authorized"),
+                        drogon::k403Forbidden,
+                        dashboard_origin));
+                    return;
+                }
+                callback(json_response(
+                    json::object(), drogon::k204NoContent, dashboard_origin));
+                return;
+            }
+            if (request->getHeader("Origin") != dashboard_origin ||
+                request->getHeader("Authorization") !=
+                    "Bearer " + bearer_token) {
+                callback(json_response(
+                    problem(
+                        "picker_unauthorized",
+                        "Interactive-user helper session is unavailable"),
+                    drogon::k401Unauthorized,
+                    dashboard_origin));
+                return;
+            }
+            try {
+                if (request->body().size() > 4096) {
+                    throw std::invalid_argument(
+                        "BOT account-control request is too large");
+                }
+                const json input = json::parse(request->body());
+                if (!input.is_object() || input.size() != 3 ||
+                    input.value("schema", "") !=
+                        "arena_ui_bot_account_request_v1" ||
+                    !input.contains("action") ||
+                    !input.at("action").is_string() ||
+                    !input.contains("parameters") ||
+                    !input.at("parameters").is_object()) {
+                    throw std::invalid_argument(
+                        "invalid BOT account-control request");
+                }
+                arena::application::ProcessSupervisor process;
+                callback(json_response(
+                    arena::application::ServiceCatalog::control_bot_account(
+                        manager_data_root,
+                        process,
+                        input.at("action").get<std::string>(),
+                        input.at("parameters")),
+                    drogon::k200OK,
+                    dashboard_origin));
+            } catch (const std::invalid_argument&) {
+                callback(json_response(
+                    problem(
+                        "invalid_bot_account_request",
+                        "Interactive BOT account-control request is invalid"),
+                    drogon::k400BadRequest,
+                    dashboard_origin));
+            } catch (const json::exception&) {
+                callback(json_response(
+                    problem(
+                        "invalid_bot_account_request",
+                        "Interactive BOT account-control request is invalid"),
+                    drogon::k400BadRequest,
+                    dashboard_origin));
+            } catch (const std::exception& error) {
+                callback(json_response(
+                    problem(
+                        "bot_account_failed",
+                        std::string("The verified adapter rejected BOT account control: ") +
+                            error.what()),
                     drogon::k422UnprocessableEntity,
                     dashboard_origin));
             }

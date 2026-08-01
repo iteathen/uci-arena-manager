@@ -74,6 +74,27 @@ void MatchPlanner::validate(const MatchPlan& plan) {
     if (plan.time_control.initial_ms == 0) {
         throw PlanError("time control initial_ms must be positive");
     }
+    if (plan.time_control.moves_to_go && *plan.time_control.moves_to_go == 0) {
+        throw PlanError("time control moves_to_go must be positive");
+    }
+    if (plan.adjudication.max_plies < 2 || plan.adjudication.max_plies > 2048) {
+        throw PlanError("adjudication max_plies must be between 2 and 2048");
+    }
+    if (plan.adjudication.draw_cp &&
+        (*plan.adjudication.draw_cp < 0 || *plan.adjudication.draw_cp > 1000)) {
+        throw PlanError("adjudication draw_cp must be between 0 and 1000");
+    }
+    if (plan.adjudication.win_cp &&
+        (*plan.adjudication.win_cp < 1 || *plan.adjudication.win_cp > 100000)) {
+        throw PlanError("adjudication win_cp must be between 1 and 100000");
+    }
+    if (plan.adjudication.draw_consecutive_plies == 0 ||
+        plan.adjudication.draw_consecutive_plies > 100 ||
+        plan.adjudication.win_consecutive_plies == 0 ||
+        plan.adjudication.win_consecutive_plies > 100 ||
+        plan.adjudication.draw_min_plies > 1000) {
+        throw PlanError("adjudication consecutive-ply bounds are invalid");
+    }
     if ((plan.format == TournamentFormat::head_to_head ||
          plan.format == TournamentFormat::sprt) &&
         plan.engine_ids.size() != 2) {
@@ -81,6 +102,23 @@ void MatchPlanner::validate(const MatchPlan& plan) {
     }
     if (plan.format == TournamentFormat::gauntlet && plan.engine_ids.size() < 2) {
         throw PlanError("gauntlet plans require a champion and at least one challenger");
+    }
+    if (plan.format == TournamentFormat::swiss && plan.rounds == 0) {
+        throw PlanError("Swiss plans require at least one round");
+    }
+    if (plan.format == TournamentFormat::sprt) {
+        if (plan.games_per_pair % 2 != 0) {
+            throw PlanError("SPRT maximum games must be even for color pairing");
+        }
+        if (plan.sprt.elo0 < -1000.0 || plan.sprt.elo0 > 1000.0 ||
+            plan.sprt.elo1 < -1000.0 || plan.sprt.elo1 > 1000.0 ||
+            plan.sprt.elo1 <= plan.sprt.elo0) {
+            throw PlanError("SPRT requires -1000 <= elo0 < elo1 <= 1000");
+        }
+        if (plan.sprt.alpha <= 0.0 || plan.sprt.alpha >= 0.5 ||
+            plan.sprt.beta <= 0.0 || plan.sprt.beta >= 0.5) {
+            throw PlanError("SPRT alpha and beta must be between 0 and 0.5");
+        }
     }
 }
 
@@ -121,7 +159,7 @@ void MatchPlanner::schedule_head_to_head(MatchPlan& plan) {
             plan.engine_ids[reverse ? 0U : 1U],
             (game / 2) + 1,
             1,
-            game / 2,
+            plan.seed + game / 2,
         });
     }
 }
@@ -139,7 +177,7 @@ void MatchPlanner::schedule_round_robin(MatchPlan& plan) {
                     plan.engine_ids[reverse ? first : second],
                     round,
                     static_cast<std::uint32_t>(second),
-                    game / 2,
+                    plan.seed + (sequence - 2) / 2,
                 });
             }
             ++round;
@@ -158,7 +196,7 @@ void MatchPlanner::schedule_gauntlet(MatchPlan& plan) {
                 plan.engine_ids[reverse ? 0 : challenger],
                 static_cast<std::uint32_t>(challenger),
                 1,
-                game / 2,
+                plan.seed + (sequence - 2) / 2,
             });
         }
     }
@@ -172,13 +210,14 @@ void MatchPlanner::schedule_swiss_first_round(MatchPlan& plan) {
         seeded.end());
     std::uint32_t sequence = 1;
     for (std::size_t index = 0; index + 1 < seeded.size(); index += 2) {
+        const bool reverse = ((index / 2U) + plan.seed) % 2U == 1U;
         plan.pairings.push_back(GamePairing{
             sequence++,
-            seeded[index],
-            seeded[index + 1],
+            seeded[index + (reverse ? 1U : 0U)],
+            seeded[index + (reverse ? 0U : 1U)],
             1,
             static_cast<std::uint32_t>((index / 2) + 1),
-            0,
+            plan.seed + index / 2U,
         });
     }
 }

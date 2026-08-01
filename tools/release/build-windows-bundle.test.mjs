@@ -59,7 +59,7 @@ test("development bundle permits no synthetic TUF root but keeps the catalog", (
   }
 });
 
-test("Windows bundle owns complete install, repair, and uninstall lifecycle", () => {
+test("Windows per-machine bundle owns complete elevated lifecycle", () => {
   const source = readFileSync(
     path.join(repositoryRoot, "packaging", "windows", "Bundle.wxs"),
     "utf8",
@@ -68,7 +68,7 @@ test("Windows bundle owns complete install, repair, and uninstall lifecycle", ()
   assert.match(source, /<MsiPackage[\s\S]*?<ExePackage/);
   assert.match(source, /DetectCondition="WixBundleInstalled"/);
   assert.match(source, /Protocol="none"/);
-  assert.match(source, /Name="UCI Arena Suite Setup"/);
+  assert.match(source, /Name="UCI Arena Suite Setup \(all users\)"/);
   assert.doesNotMatch(source, /Name="\$\(var\.ProductName\)"/);
   assert.match(
     source,
@@ -78,6 +78,16 @@ test("Windows bundle owns complete install, repair, and uninstall lifecycle", ()
     source,
     /--bundle-owner &quot;\[WixBundleProviderKey\]&quot;/,
   );
+  assert.match(source, /--install-scope per-machine/);
+  for (const root of [
+    "--install-root",
+    "--data-root",
+    "--cache-root",
+    "--workspace-root",
+    "--knowledge-root",
+  ]) {
+    assert.match(source, new RegExp(root));
+  }
   assert.match(
     source,
     /<MsiProperty[\s\S]*?Name="ARENA_DATA_ROOT"[\s\S]*?Value="\$\(var\.ArenaDataRoot\)"/,
@@ -136,6 +146,37 @@ test("Windows bundle owns complete install, repair, and uninstall lifecycle", ()
   );
 });
 
+test("Windows per-user bundle remains fixed-scope and non-elevated", () => {
+  const source = readFileSync(
+    path.join(repositoryRoot, "packaging", "windows", "Bundle.User.wxs"),
+    "utf8",
+  );
+  assert.match(source, /Name="UCI Arena Suite Setup \(per-user\)"/);
+  assert.match(source, /<MsiPackage[\s\S]*?Visible="no"/);
+  assert.match(source, /ArenaDataRoot="\[LocalAppDataFolder\]UCI Arena Manager"/);
+  assert.match(source, /<MsiProperty[^>]*Name="ARENA_DATA_ROOT"[^>]*ArenaDataRoot/);
+  assert.match(source, /PerMachine="no"/);
+  assert.doesNotMatch(source, /PerMachine="yes"/);
+  assert.doesNotMatch(source, /--restart-manager-service/);
+  assert.match(source, /--install-scope per-user/);
+  assert.match(source, /--install-root[^\n]*ArenaInstallRoot/);
+  assert.match(source, /--cache-root[^\n]*ArenaCacheRoot/);
+  assert.match(source, /--workspace-root[^\n]*ArenaWorkspaceRoot/);
+  assert.match(source, /--knowledge-root[^\n]*ArenaKnowledgeRoot/);
+  for (const variable of [
+    "InstallUciArenaEngine",
+    "InstallBookForge",
+    "InstallEvidenceService",
+    "InstallLichessAdapter",
+  ]) {
+    assert.match(
+      source,
+      new RegExp(`Name="${variable}"[^>]*Value="1"[^>]*Persisted="yes"`),
+    );
+    assert.match(source, new RegExp(`--bundle-feature [^"]*=\\[${variable}\\]`));
+  }
+});
+
 test("Windows release workflow keeps channel labels out of the visible product name", () => {
   const source = readFileSync(
     path.join(repositoryRoot, ".github", "workflows", "release.yml"),
@@ -151,9 +192,11 @@ test("Windows release workflow keeps channel labels out of the visible product n
     source,
     /wix extension add -g WixToolset\.BootstrapperApplications\.wixext\/6\.0\.2/,
   );
-  assert.equal(
-    source.match(/-ext WixToolset\.BootstrapperApplications\.wixext/g)?.length,
-    2,
+  assert.match(source, /Template = 'packaging\/windows\/Bundle\.User\.wxs'/);
+  assert.match(source, /Template = 'packaging\/windows\/Bundle\.wxs'/);
+  assert.match(
+    source,
+    /UCI-Arena-Setup-\$version-windows-x64-\$\(\$scope\.Name\)-\$mode\.exe/,
   );
   assert.doesNotMatch(source, /WixToolset\.Bal\.wixext/);
   assert.doesNotMatch(source, /wix --version 7\./);
@@ -166,6 +209,10 @@ test("Windows Manager MSI patches the complete staged tree with service lifecycl
   );
   const patch = readFileSync(
     path.join(repositoryRoot, "packaging", "windows", "ServicePatch.xml"),
+    "utf8",
+  );
+  const userPatch = readFileSync(
+    path.join(repositoryRoot, "packaging", "windows", "UserPatch.xml"),
     "utf8",
   );
   const packageTemplate = readFileSync(
@@ -208,10 +255,61 @@ test("Windows Manager MSI patches the complete staged tree with service lifecycl
   assert.match(patch, /Value="\[INSTALL_ROOT\]bin"/);
   assert.match(patch, /Permanent="no"/);
   assert.match(patch, /System="yes"/);
+  assert.doesNotMatch(userPatch, /<ServiceInstall/);
+  assert.doesNotMatch(userPatch, /<ServiceControl/);
+  assert.match(userPatch, /LocalAppDataFolder/);
+  assert.match(userPatch, /System="no"/);
+  assert.doesNotMatch(userPatch, /Advertise="yes"/);
+  assert.match(userPatch, /Target="\[INSTALL_ROOT\]bin\\uci-arena-manager\.exe"/);
+  assert.match(userPatch, /ARENA_MACHINE_SCOPE_INSTALLED/);
+  assert.match(userPatch, /Installed OR NOT ARENA_MACHINE_SCOPE_INSTALLED/);
+  assert.match(userPatch, /Id="#PRODUCTFEATURE"/);
+  assert.match(cmake, /packaging\/windows\/UserFolders\.wxs/);
+  const userFolders = readFileSync(
+    path.join(repositoryRoot, "packaging", "windows", "UserFolders.wxs"),
+    "utf8",
+  );
+  const releaseWorkflow = readFileSync(
+    path.join(repositoryRoot, ".github", "workflows", "release.yml"),
+    "utf8",
+  );
+  assert.match(userFolders, /Id="ArenaUserProgramsFolderCleanup"/);
+  assert.match(userFolders, /Directory="INSTALL_PREFIX_1"/);
+  assert.match(userFolders, /Root="HKCU"/);
   assert.match(patch, /Id="CM_CP_bin\.uci_arena_manager\.exe"/);
   assert.match(patch, /Name="UCI Arena Manager"/);
-  assert.match(patch, /Target="\[INSTALL_ROOT\]bin\\uci-arena-manager\.exe"/);
+  assert.match(patch, /Advertise="yes"/);
+  assert.doesNotMatch(patch, /Target="\[INSTALL_ROOT\]/);
+  assert.match(patch, /ARENA_USER_SCOPE_INSTALLED/);
+  assert.match(patch, /Installed OR NOT ARENA_USER_SCOPE_INSTALLED/);
   assert.match(cmake, /CPACK_WIX_PRODUCT_ICON/);
+  assert.match(cmake, /ARENA_WINDOWS_PER_USER_INSTALL/);
+  assert.match(cmake, /install-scope\.txt\.in/);
+  assert.doesNotMatch(cmake, /ARENA_WINDOWS_PER_USER_INSTALL=1/);
+  const scopeReader = readFileSync(
+    path.join(
+      repositoryRoot,
+      "include",
+      "arena",
+      "platform",
+      "windows_install_scope.hpp",
+    ),
+    "utf8",
+  );
+  assert.match(scopeReader, /value\.back\(\) == '\\r'/);
+  assert.match(scopeReader, /return WindowsInstallScope::per_machine/);
+  assert.match(cmake, /CPACK_WIX_INSTALL_SCOPE "perUser"/);
+  assert.match(cmake, /CPACK_WIX_INSTALL_SCOPE "perMachine"/);
+  assert.match(cmake, /CPACK_WIX_ROOT_FOLDER_ID "LocalAppDataFolder"/);
+  assert.match(cmake, /CPACK_PACKAGE_INSTALL_DIRECTORY "Programs\/UCI Arena Manager"/);
+  assert.match(cmake, /CMAKE_VERSION VERSION_LESS 4\.3/);
+  assert.match(cmake, /CPACK_WIX_COMPONENT_KEYS_REGISTRY_PATH/);
+  assert.match(releaseWorkflow, /\$version = '4\.3\.4'/);
+  assert.match(
+    releaseWorkflow,
+    /86e5fcafb38bdf58346a78b187c7b6b4f252ae5242cffe24c463a92bbd2e77d1/,
+  );
+  assert.match(cmake, /packaging\/windows\/UserPatch\.xml/);
   const startupStop = setupEngine.indexOf(
     'invoke_provider_startup(paths, previous_receipt, "uninstall")',
   );
