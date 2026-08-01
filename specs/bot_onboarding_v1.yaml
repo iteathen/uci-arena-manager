@@ -41,6 +41,11 @@ discovery:
   rules:
     - Discovery never reads credentials, registers an account, or starts a process.
     - Missing or broken prerequisites remain explicit candidate blockers.
+    - The adapter is compatible only when its immutable manifest and receipt
+      bind an exact uci_arena_service_contract_v1 document, Manager operation
+      catalog, configuration schemas, and status schema by path and SHA-256.
+      Unknown majors, missing operations, identity drift, or tampering remain
+      visible as an incompatible adapter and no provider process is invoked.
 
 probe:
   owner: verified_provider_adapter_under_interactive_user_helper
@@ -77,6 +82,10 @@ account_control:
     - owners
     - reservation
     - scheduler
+    - provider_state
+    - provider_ready
+    - stream_connected
+    - blockers
   rules:
     - Status and disable resolve only receipt-verified adapter and runtime
       entrypoints and never require or open the token file.
@@ -96,6 +105,10 @@ account_control:
       provider database.
     - Helper shutdown removes account-control authority without stopping an
       already installed provider startup.
+    - Manager obtains each fixed provider command prefix from the
+      receipt-verified operation catalog and appends only operation-specific,
+      separately bounded scalar arguments. Provider command verbs are not
+      copied into Manager control flow.
     - A generic bot.register command is forbidden because it could create
       account state without the verified adapter probe.
 
@@ -147,6 +160,9 @@ readiness:
       - Provider-reported helper status is the live startup authority for the
         current interactive session. Installer receipt state is only a startup
         hint and must not overwrite a newer helper observation.
+      - Credential-free provider status is sampled with startup status and
+        independently projects active, ready, stream connectivity, and bounded
+        blockers. Startup registration alone never implies an active bot.
   rule: Missing readiness never appears as active.
 
 lifecycle:
@@ -178,3 +194,6 @@ acceptance:
   - No happy-path bot setup step requires a terminal command.
   - Automated HTTP integration uses a loopback fake Lichess API with a
     non-secret fixture token and never requires an operator credential.
+  - A fake conforming provider with a different executable layout proves that
+    startup, status, options, and account controls resolve the published
+    operation catalog rather than hardcoded provider verbs or source paths.

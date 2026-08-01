@@ -72,6 +72,10 @@ x-interactive-helper-contract:
     - Local account control carries one fixed action and its bounded typed
       scalar parameters. It never accepts paths, executable names, argv arrays,
       shell strings, token material, or raw provider configuration.
+    - The helper resolves provider command prefixes from the exact
+      receipt-verified operation catalog. Its response separates startup
+      registration from provider activity, readiness, stream connectivity,
+      and bounded blockers.
 paths:
   /auth/pair-token:
     post:

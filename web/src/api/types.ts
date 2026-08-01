@@ -408,7 +408,8 @@ export interface BotCandidate {
   profile_id: 'lichess_bot'
   display_name: string
   adapter_component_id: 'lichess.adapter'
-  package_state: 'installed' | 'missing'
+  package_state: 'installed' | 'missing' | 'broken'
+  integration_state: 'not_configured' | 'compatible' | 'incompatible'
   configuration_state: 'configured' | 'missing'
   token_reference_available: boolean
   startup_state: 'installed' | 'disabled'
@@ -449,6 +450,11 @@ export interface BotControlResult {
   state: 'disabled' | 'enabled' | 'active'
   installed: boolean
   active: boolean
+  provider_state: 'inactive' | 'ready' | 'degraded' | 'unavailable'
+  provider_active: boolean
+  provider_ready: boolean
+  stream_connected: boolean
+  blockers: string[]
   account_name?: string
 }
 
