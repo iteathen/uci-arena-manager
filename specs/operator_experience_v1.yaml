@@ -295,6 +295,11 @@ tournament_experience:
       the current round or game when available, and the last durable update.
     - Start, pause, resume, and cancel use backend-authoritative commands and
       durable events. React state never fabricates lifecycle or progress.
+    - If a lifecycle command collides with a concurrent backend progress
+      revision, the dashboard refreshes the exact resource and retries at most
+      three times. It retries only the same still-valid action, reports a
+      typed final conflict visibly, and never applies this behavior to plan
+      removal.
     - Empty tournament and match views link directly to the planner.
     - The planner exposes rounds for Swiss, the even maximum game count plus
       Elo hypotheses and alpha/beta for SPRT, moves-to-go, opening-suite path,

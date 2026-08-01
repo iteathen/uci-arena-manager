@@ -225,6 +225,11 @@ tournament_contract:
         schedule without replaying completed games.
       - Cancel stops admission, terminates active engine processes within the
         bounded cancellation deadline, and preserves completed game records.
+      - Optimistic revision conflicts are returned as the typed
+        resource_revision_conflict command error. The dashboard may refresh
+        and retry a lifecycle action at most three times while that action
+        remains valid; runtime-authored progress churn must not turn Pause,
+        Resume, or Cancel into an unactionable generic failure.
       - Every completed ply is legality-checked and durably represented in a
         game resource before the next move request.
       - A Manager restart marks interrupted active games explicitly and can

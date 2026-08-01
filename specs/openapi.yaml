@@ -27,7 +27,9 @@ x-command-actions:
     Lifecycle commands target a persisted match_plan or tournament resource,
     require its current revision, and return the durably updated resource.
     Progress is backend-authored in resource data and advanced by durable
-    events after each game-state transition.
+    events after each game-state transition. A concurrent update returns the
+    typed resource_revision_conflict error so an interactive client can
+    refresh and retry a still-valid lifecycle action within a bounded policy.
 x-competition-plan-contract:
   formats: [head_to_head, round_robin, gauntlet, swiss, sprt]
   common_parameters:

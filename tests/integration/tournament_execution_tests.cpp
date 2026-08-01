@@ -485,6 +485,19 @@ TEST_CASE("only never-started competition plans can be removed") {
         const json removable = create_competition(
             control_plane, "match.plan", "match_plan", engines, 1);
         const std::string removable_id = removable.at("resource").at("id");
+        try {
+            static_cast<void>(control_plane.submit(
+                command(
+                    "resource.remove",
+                    "match_plan",
+                    removable_id,
+                    json::object(),
+                    removable.at("resource").at("revision").get<std::uint64_t>() + 1),
+                "test"));
+            FAIL("stale plan removal unexpectedly succeeded");
+        } catch (const arena::application::CommandFailure& error) {
+            REQUIRE(error.code() == "resource_revision_conflict");
+        }
         static_cast<void>(control_plane.submit(
             command(
                 "resource.remove",
@@ -517,16 +530,27 @@ TEST_CASE("only never-started competition plans can be removed") {
                     running.at("resource").at("revision")),
                 "test"),
             arena::application::CommandFailure);
-        const json current = resource_by_id(
-            control_plane, "match_plan", retained_id);
-        static_cast<void>(control_plane.submit(
-            command(
-                "match.cancel",
-                "match_plan",
-                retained_id,
-                json::object(),
-                current.at("revision")),
-            "test"));
+        bool cancel_submitted = false;
+        for (int attempt = 0; attempt < 20 && !cancel_submitted; ++attempt) {
+            const json current = resource_by_id(
+                control_plane, "match_plan", retained_id);
+            try {
+                static_cast<void>(control_plane.submit(
+                    command(
+                        "match.cancel",
+                        "match_plan",
+                        retained_id,
+                        json::object(),
+                        current.at("revision")),
+                    "test"));
+                cancel_submitted = true;
+            } catch (const arena::application::CommandFailure& error) {
+                if (error.code() != "resource_revision_conflict") {
+                    throw;
+                }
+            }
+        }
+        REQUIRE(cancel_submitted);
         REQUIRE(wait_for_lifecycle(
                     control_plane, "match_plan", retained_id, "cancelled")
                     .at("data").at("lifecycle") == "cancelled");

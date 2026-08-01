@@ -1,10 +1,48 @@
+import type { MatchPlanData, Resource } from '../api/types'
+
 export type LifecycleAction = 'start' | 'pause' | 'resume' | 'cancel'
+
+type Competition = Resource<MatchPlanData>
+
+function isRevisionConflict(error: unknown): boolean {
+  return typeof error === 'object' && error !== null &&
+    'code' in error && error.code === 'resource_revision_conflict'
+}
 
 export function availableCompetitionActions(lifecycle: string): LifecycleAction[] {
   if (lifecycle === 'planned') return ['start']
   if (lifecycle === 'running') return ['pause', 'cancel']
   if (lifecycle === 'paused') return ['resume', 'cancel']
   return []
+}
+
+export async function submitCompetitionLifecycleAction<T>(
+  resource: Competition,
+  action: LifecycleAction,
+  operations: {
+    submit: (current: Competition, action: LifecycleAction) => Promise<T>
+    refresh: () => Promise<Competition | undefined>
+  },
+): Promise<T> {
+  let current = resource
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (!availableCompetitionActions(current.data.lifecycle).includes(action)) {
+      throw new Error(
+        `Competition changed to ${current.data.lifecycle}; ${action} is no longer available.`,
+      )
+    }
+    try {
+      return await operations.submit(current, action)
+    } catch (error) {
+      if (!isRevisionConflict(error) || attempt === 2) throw error
+      const refreshed = await operations.refresh()
+      if (!refreshed) {
+        throw new Error('Competition no longer exists; refresh the tournament list.')
+      }
+      current = refreshed
+    }
+  }
+  throw new Error('Competition lifecycle retry bound was exhausted.')
 }
 
 export function competitionPlanTarget(format: string) {
