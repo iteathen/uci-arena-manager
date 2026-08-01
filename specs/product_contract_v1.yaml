@@ -62,6 +62,10 @@ engine_contract:
         emitted before uciok; absence keeps an engine fully usable.
       - A model name, engine name, executable stem, or component name never
         selects the parser or fabricates runtime identity.
+      - A verified default_model.root is deployment metadata, not a model-name
+        dispatch. Receipt onboarding resolves it beneath the immutable
+        component root and supplies it only through an engine-advertised
+        ModelRoot UCI option.
   installed_candidate_entrypoints:
     rules:
       - A verified managed-component receipt contributes an engine candidate through an explicit `uci` entrypoint.

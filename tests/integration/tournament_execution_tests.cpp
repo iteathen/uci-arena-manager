@@ -120,7 +120,121 @@ json create_competition(
         "test");
 }
 
+void seed_engine(
+    const std::shared_ptr<arena::adapters::SqliteStore>& store,
+    const std::string& id,
+    const json& data) {
+    const std::string timestamp = "2026-01-01T00:00:00.000Z";
+    const std::string command_id = arena::domain::uuid_v7();
+    store->create_resource(
+        {
+            id,
+            "engine",
+            "local",
+            1,
+            timestamp,
+            timestamp,
+            "{}",
+            data.dump(),
+        },
+        {
+            command_id,
+            arena::domain::uuid_v7(),
+            arena::domain::uuid_v7(),
+            "test.seed",
+            "completed",
+            "{}",
+            timestamp,
+        },
+        {
+            0,
+            arena::domain::uuid_v7(),
+            timestamp,
+            "state",
+            "engine.created",
+            "engine",
+            id,
+            1,
+            command_id,
+            "{}",
+        });
+}
+
 }  // namespace
+
+TEST_CASE("legacy receipt engines launch tournaments with their packaged default model") {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() /
+        ("arena-tournament-default-model-" + arena::domain::uuid_v7());
+    const fs::path engine_root = root / "engine-component";
+    const fs::path model_root = engine_root / "models" / "default";
+    const fs::path executable =
+        engine_root / fs::path(ARENA_MOCK_UCI_PATH).filename();
+    fs::create_directories(model_root);
+    fs::copy_file(
+        ARENA_MOCK_UCI_PATH,
+        executable,
+        fs::copy_options::overwrite_existing);
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(
+            root / "arena.db");
+        arena::application::ControlPlane control_plane(store);
+        control_plane.initialize();
+        const json engine_data{
+            {"display_name", "Legacy receipt engine"},
+            {"executable", executable.string()},
+            {"working_directory", engine_root.string()},
+            {"arguments", {"--require-model-root", model_root.string()}},
+            {"option_overrides", json::object()},
+            {"fingerprint", std::string(64, 'a')},
+            {"onboarding_source", "install_receipt"},
+            {"default_model",
+             {{"model_id", "example_model_v1"},
+              {"display_name", "Example Model"},
+              {"input_adapter_id", "dense_planes_v1"},
+              {"root", "models/default"}}},
+        };
+        const std::string first = arena::domain::uuid_v7();
+        const std::string second = arena::domain::uuid_v7();
+        seed_engine(store, first, engine_data);
+        seed_engine(store, second, engine_data);
+        const json created = create_competition(
+            control_plane,
+            "match.plan",
+            "match_plan",
+            {first, second},
+            1,
+            {{"adjudication", {{"max_plies", 2}}}});
+        const std::string competition_id = created.at("resource").at("id");
+        control_plane.submit(
+            command(
+                "match.start",
+                "match_plan",
+                competition_id,
+                json::object(),
+                created.at("resource").at("revision")),
+            "test");
+        const json completed = wait_for_lifecycle(
+            control_plane,
+            "match_plan",
+            competition_id,
+            "completed");
+        REQUIRE(completed.at("data").at("lifecycle") == "completed");
+        const auto games = control_plane.list("game", 10, 0);
+        REQUIRE(games.size() == 1);
+        REQUIRE(
+            fs::path(
+                games.at(0).at("data").at("white_engine").at("options")
+                    .at("ModelRoot").get<std::string>()) ==
+            fs::weakly_canonical(model_root));
+        REQUIRE(
+            fs::path(
+                games.at(0).at("data").at("black_engine").at("options")
+                    .at("ModelRoot").get<std::string>()) ==
+            fs::weakly_canonical(model_root));
+    }
+    fs::remove_all(root);
+}
 
 TEST_CASE("tournament execution commits legal plies and truthful progress") {
     namespace fs = std::filesystem;

@@ -33,6 +33,10 @@ authority:
     - evidence_service_runtime
   rules:
     - Provider automation may publish only immutable, attested component candidates.
+    - A provider source fix is not delivered suite behavior until every
+      supported target has a new immutable component version and the reviewed
+      suite lock replaces the superseded candidate. A release lock must never
+      claim behavior that exists only on the provider's branch or main branch.
     - Suite composition pins exact provider, commit, manifest, provenance, and artifact digests.
     - A release steward mirrors only the exact lock-pinned provider artifact,
       result, and Sigstore bundle bytes into a private Manager prerelease.

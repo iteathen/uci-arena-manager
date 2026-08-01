@@ -242,8 +242,25 @@ void append_receipt_candidates(
             };
             if (manifest.contains("default_model") &&
                 manifest.at("default_model").is_object()) {
-                metadata["default_model"] =
-                    manifest.at("default_model");
+                const json& model = manifest.at("default_model");
+                metadata["default_model"] = model;
+                if (model.contains("root") && model.at("root").is_string()) {
+                    const fs::path relative_model_root =
+                        model.at("root").get<std::string>();
+                    if (safe_relative_path(relative_model_root)) {
+                        const fs::path model_root = normalized_absolute(
+                            active_root / relative_model_root);
+                        std::error_code model_error;
+                        if (fs::is_directory(model_root, model_error) &&
+                            !model_error &&
+                            !fs::is_symlink(model_root, model_error) &&
+                            !model_error) {
+                            metadata["uci_options"] = {
+                                {"ModelRoot", model_root.string()},
+                            };
+                        }
+                    }
+                }
             }
             const std::string component_id =
                 receipt.value("component_id", "");

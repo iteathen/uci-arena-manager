@@ -266,18 +266,56 @@ std::map<std::string, std::string> string_map(const json& value) {
     return result;
 }
 
+void add_receipt_default_model_option(
+    const json& data,
+    std::map<std::string, std::string>& options) {
+    if (options.contains("ModelRoot") ||
+        data.value("onboarding_source", "") != "install_receipt" ||
+        !data.contains("default_model") ||
+        !data.at("default_model").is_object()) {
+        return;
+    }
+    const json& model = data.at("default_model");
+    if (!model.contains("root") || !model.at("root").is_string()) {
+        return;
+    }
+    const std::filesystem::path relative_root =
+        model.at("root").get<std::string>();
+    if (relative_root.empty() || relative_root.is_absolute() ||
+        std::ranges::any_of(
+            relative_root,
+            [](const std::filesystem::path& part) { return part == ".."; })) {
+        return;
+    }
+    const std::filesystem::path working_directory =
+        data.value("working_directory", "");
+    std::error_code error;
+    const std::filesystem::path model_root =
+        std::filesystem::weakly_canonical(
+            working_directory / relative_root,
+            error);
+    if (error || !std::filesystem::is_directory(model_root, error) || error ||
+        std::filesystem::is_symlink(model_root, error) || error) {
+        return;
+    }
+    options.emplace("ModelRoot", model_root.string());
+}
+
 adapters::UciGameEngine game_engine(
     const std::shared_ptr<ports::Store>& store,
     const json& competition,
     const std::string& id) {
     const json data = engine_data(store, id);
+    auto options =
+        string_map(data.value("option_overrides", json::object()));
+    add_receipt_default_model_option(data, options);
     adapters::UciGameEngine engine{
         id,
         data.at("fingerprint").get<std::string>(),
         data.at("executable").get<std::string>(),
         data.at("working_directory").get<std::string>(),
         data.value("arguments", std::vector<std::string>{}),
-        string_map(data.value("option_overrides", json::object())),
+        std::move(options),
     };
     const json overrides = competition.value(
         "engine_option_overrides", json::object());

@@ -765,7 +765,24 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
         throw CommandFailure("working_directory_not_found", "working directory is invalid", 422);
     }
     const auto arguments = string_array(parameters, "arguments");
-    const auto probe = adapters::UciProcess::probe(executable, working_directory, arguments);
+    if (parameters.contains("uci_options") &&
+        parameters.contains("option_overrides") &&
+        parameters.at("uci_options") != parameters.at("option_overrides")) {
+        throw CommandFailure(
+            "invalid_engine_options",
+            "uci_options and option_overrides cannot conflict",
+            422);
+    }
+    const json raw_options = parameters.contains("uci_options")
+        ? parameters.at("uci_options")
+        : parameters.value("option_overrides", json::object());
+    const auto option_overrides = uci_option_overrides(raw_options);
+    const auto probe = adapters::UciProcess::probe(
+        executable,
+        working_directory,
+        arguments,
+        std::chrono::seconds(10),
+        option_overrides);
     if (!probe.ok) {
         throw CommandFailure("uci_probe_failed", probe.error, 422);
     }
@@ -784,7 +801,7 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
         {"executable", std::filesystem::absolute(executable).string()},
         {"working_directory", std::filesystem::absolute(working_directory).string()},
         {"arguments", arguments},
-        {"option_overrides", parameters.value("option_overrides", json::object())},
+        {"option_overrides", raw_options},
         {"discovered_options", options},
         {"engine_name", probe.engine_name},
         {"engine_author", probe.engine_author},
@@ -1826,7 +1843,28 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
             }
             const json raw_options =
                 engine_data.value("option_overrides", json::object());
-            const auto typed_options = uci_option_overrides(raw_options);
+            auto typed_options = uci_option_overrides(raw_options);
+            const auto model_root_option =
+                typed_options.find("ModelRoot");
+            if (model_root_option == typed_options.end()) {
+                typed_options.emplace("ModelRoot", model_root.string());
+            } else {
+                const std::filesystem::path configured_model_root =
+                    std::filesystem::path(model_root_option->second).is_absolute()
+                        ? std::filesystem::path(model_root_option->second)
+                        : working_directory / model_root_option->second;
+                std::error_code equivalent_error;
+                if (!std::filesystem::equivalent(
+                        configured_model_root,
+                        model_root,
+                        equivalent_error) ||
+                    equivalent_error) {
+                    throw CommandFailure(
+                        "evidence_model_root_mismatch",
+                        "the registered engine ModelRoot does not match its verified default deployment",
+                        422);
+                }
+            }
             const auto probe = adapters::UciProcess::probe(
                 executable,
                 working_directory,
@@ -1846,6 +1884,10 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
             std::string label = model.value("display_name", model_id);
             if (label.size() > 240) label.resize(240);
             label += " deployment";
+            json effective_options = json::object();
+            for (const auto& [name, value] : typed_options) {
+                effective_options[name] = value;
+            }
             operation_arguments = {
                 "target", "register",
                 "--label", label,
@@ -1854,7 +1896,7 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                 "--model-fingerprint", probe.runtime_model_fingerprint,
                 "--engine", std::filesystem::absolute(executable).string(),
                 "--provider", probe.runtime_provider,
-                "--uci-options-json", raw_options.dump(),
+                "--uci-options-json", effective_options.dump(),
             };
             if (!probe.runtime_provider_fingerprint.empty()) {
                 operation_arguments.insert(

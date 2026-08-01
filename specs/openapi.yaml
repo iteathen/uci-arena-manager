@@ -196,6 +196,10 @@ paths:
                     type: string
                 uci_options:
                   type: object
+                  description: >
+                    Bounded UCI option overrides applied before readyok and
+                    persisted for subsequent launches. Every key must be
+                    advertised by the probed engine.
       responses:
         "200":
           description: Engine passed the complete registration probe

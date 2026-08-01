@@ -148,6 +148,12 @@ are never accepted from the browser. If the preferred engine is not registered,
 the prerequisite control links directly to Engines instead of leaving the
 operator at a dead end.
 
+Receipt engine discovery resolves a verified `default_model.root` beneath the
+immutable component directory and projects it through the engine's advertised
+`ModelRoot` UCI option. Registration applies that option before `readyok` and
+the legal-bestmove check, then persists it for matches and Evidence probes. A
+model label or product name never selects an engine path or parser.
+
 The Bots dashboard installs and detects the packaged Lichess adapter, lets the
 operator select an existing token file, and verifies the BOT account without a
 terminal. Manager saves only normalized path metadata. The credential probe
@@ -173,6 +179,12 @@ startup that is already enabled.
 This repository is the suite composition and release authority. Provider
 repositories build immutable component candidates; they cannot publish suite
 installers or advance release channels.
+
+A fix merged in a provider repository is not present in the suite until it has
+a new immutable component version for each supported platform and this
+repository's reviewed release lock selects those exact signed artifacts. The
+installer never silently substitutes newer provider source for its locked
+component bytes.
 
 Complete Arena setup presents UCI Arena Engine, Book Forge, UCI Arena Evidence
 Service, and the Lichess Bot adapter as named, selected-by-default components.
