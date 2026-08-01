@@ -652,7 +652,11 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                           {service.data.status_projection.collection.reason ??
                             'No exact compatible model deployment target is available yet.'}
                         </Text>
-                        {preferredEvidenceEngine ? (
+                        {engines.isLoading ? (
+                          <Button size="xs" variant="default" loading disabled>
+                            Checking engines
+                          </Button>
+                        ) : preferredEvidenceEngine ? (
                           <Button
                             size="xs"
                             color="violet"
