@@ -127,8 +127,11 @@ export function CompetitionList({
                 <Group justify="space-between" gap="xs">
                   <Text size="sm" c="dimmed">
                     {progress?.completed_games ?? 0} completed · {progress?.active_games ?? 0} active ·{' '}
-                    {progress?.queued_games ?? totalGames} queued /{' '}
-                    {progress?.total_games ?? totalGames} total
+                    {progress?.queued_games ?? totalGames} queued
+                    {(progress?.cancelled_games ?? 0) > 0 && ` · ${progress?.cancelled_games} cancelled`}
+                    {(progress?.failed_games ?? 0) > 0 && ` · ${progress?.failed_games} failed`}
+                    {(progress?.unplayed_games ?? 0) > 0 && ` · ${progress?.unplayed_games} unplayed`}
+                    {' '}/ {progress?.total_games ?? totalGames} total
                   </Text>
                   <Text size="xs" c="dimmed">
                     {progress?.current_round ? `Round ${progress.current_round} · ` : ''}

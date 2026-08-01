@@ -269,6 +269,9 @@ TEST_CASE("tournament execution commits legal plies and truthful progress") {
     REQUIRE(progress.at("completed_games") == 2);
     REQUIRE(progress.at("active_games") == 0);
     REQUIRE(progress.at("queued_games") == 0);
+    REQUIRE(progress.at("cancelled_games") == 0);
+    REQUIRE(progress.at("failed_games") == 0);
+    REQUIRE(progress.at("unplayed_games") == 0);
     REQUIRE(progress.at("percentage") == 100.0);
 
     std::size_t games = 0;
@@ -288,6 +291,80 @@ TEST_CASE("tournament execution commits legal plies and truthful progress") {
     }
         REQUIRE(games == 2);
     }
+    fs::remove_all(root);
+}
+
+TEST_CASE("startup reconciles legacy terminal competition progress once") {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() /
+        ("arena-tournament-progress-migration-" + arena::domain::uuid_v7());
+    auto store = std::make_shared<arena::adapters::SqliteStore>(root / "arena.db");
+    store->initialize();
+    const std::string id = arena::domain::uuid_v7();
+    const std::string timestamp = "2026-01-01T00:00:00.000Z";
+    const std::string command_id = arena::domain::uuid_v7();
+    store->create_resource(
+        {
+            id,
+            "tournament",
+            "local",
+            1,
+            timestamp,
+            timestamp,
+            "{}",
+            json({
+                {"lifecycle", "cancelled"},
+                {"planned_total_games", 2},
+                {"pairings", json::array({json::object(), json::object()})},
+                {"progress",
+                 {{"total_games", 2},
+                  {"queued_games", 2},
+                  {"active_games", 0},
+                  {"completed_games", 0},
+                  {"percentage", 0.0},
+                  {"current_round", nullptr},
+                  {"updated_at", timestamp}}},
+            }).dump(),
+        },
+        {
+            command_id,
+            arena::domain::uuid_v7(),
+            arena::domain::uuid_v7(),
+            "test.seed",
+            "completed",
+            "{}",
+            timestamp,
+        },
+        {
+            0,
+            arena::domain::uuid_v7(),
+            timestamp,
+            "state",
+            "competition.seeded",
+            "tournament",
+            id,
+            1,
+            command_id,
+            "{}",
+        });
+
+    {
+        arena::application::ControlPlane control_plane(store);
+        control_plane.initialize();
+        const json reconciled = resource_by_id(control_plane, "tournament", id);
+        const json progress = reconciled.at("data").at("progress");
+        REQUIRE(progress.at("queued_games") == 0);
+        REQUIRE(progress.at("active_games") == 0);
+        REQUIRE(progress.at("unplayed_games") == 2);
+        REQUIRE(progress.at("percentage") == 100.0);
+        const std::uint64_t reconciled_revision =
+            reconciled.at("revision").get<std::uint64_t>();
+        control_plane.initialize();
+        REQUIRE(
+            resource_by_id(control_plane, "tournament", id)
+                .at("revision").get<std::uint64_t>() == reconciled_revision);
+    }
+    store.reset();
     fs::remove_all(root);
 }
 
@@ -624,7 +701,7 @@ TEST_CASE("only never-started competition plans can be removed") {
                     control_plane, "match_plan", removable_id).is_null());
 
         const json retained = create_competition(
-            control_plane, "match.plan", "match_plan", engines, 1);
+            control_plane, "match.plan", "match_plan", engines, 2);
         const std::string retained_id = retained.at("resource").at("id");
         const json running = control_plane.submit(
             command(
@@ -644,6 +721,22 @@ TEST_CASE("only never-started competition plans can be removed") {
                     running.at("resource").at("revision")),
                 "test"),
             arena::application::CommandFailure);
+        bool ply_committed = false;
+        const auto active_deadline = std::chrono::steady_clock::now() +
+            std::chrono::seconds(5);
+        while (std::chrono::steady_clock::now() < active_deadline &&
+               !ply_committed) {
+            for (const auto& game : control_plane.list("game", 100, 0)) {
+                ply_committed =
+                    game.at("data").value("competition_id", "") == retained_id &&
+                    !game.at("data").value("uci_moves", json::array()).empty();
+                if (ply_committed) {
+                    break;
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        REQUIRE(ply_committed);
         bool cancel_submitted = false;
         for (int attempt = 0; attempt < 20 && !cancel_submitted; ++attempt) {
             const json current = resource_by_id(
@@ -665,9 +758,34 @@ TEST_CASE("only never-started competition plans can be removed") {
             }
         }
         REQUIRE(cancel_submitted);
-        REQUIRE(wait_for_lifecycle(
-                    control_plane, "match_plan", retained_id, "cancelled")
-                    .at("data").at("lifecycle") == "cancelled");
+        json cancelled;
+        const auto deadline = std::chrono::steady_clock::now() +
+            std::chrono::seconds(10);
+        while (std::chrono::steady_clock::now() < deadline) {
+            cancelled = resource_by_id(
+                control_plane, "match_plan", retained_id);
+            const json progress = cancelled.at("data").at("progress");
+            if (cancelled.at("data").at("lifecycle") == "cancelled" &&
+                progress.at("active_games") == 0 &&
+                progress.at("percentage") == 100.0) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        const json progress = cancelled.at("data").at("progress");
+        REQUIRE(cancelled.at("data").at("lifecycle") == "cancelled");
+        REQUIRE(progress.at("active_games") == 0);
+        REQUIRE(progress.at("queued_games") == 0);
+        REQUIRE(progress.at("percentage") == 100.0);
+        REQUIRE(
+            progress.at("total_games").get<std::size_t>() ==
+            progress.at("completed_games").get<std::size_t>() +
+                progress.at("cancelled_games").get<std::size_t>() +
+                progress.at("failed_games").get<std::size_t>() +
+                progress.at("unplayed_games").get<std::size_t>());
+        REQUIRE(
+            progress.at("cancelled_games").get<std::size_t>() +
+                progress.at("unplayed_games").get<std::size_t>() > 0);
     }
     fs::remove_all(root);
 }

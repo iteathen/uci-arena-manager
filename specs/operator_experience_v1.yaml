@@ -293,6 +293,8 @@ tournament_experience:
       not expose invalid lifecycle actions.
     - Progress shows completed, active, queued, and total games, a percentage,
       the current round or game when available, and the last durable update.
+      Cancelled, failed, and unplayed counts are shown when nonzero so a
+      terminal competition never presents abandoned work as still queued.
     - Start, pause, resume, and cancel use backend-authoritative commands and
       durable events. React state never fabricates lifecycle or progress.
     - If a lifecycle command collides with a concurrent backend progress

@@ -1079,6 +1079,9 @@ json ControlPlane::plan_match(const json& request, const std::string& actor) {
              {"queued_games", planned_total_games},
              {"active_games", 0},
              {"completed_games", 0},
+             {"cancelled_games", 0},
+             {"failed_games", 0},
+             {"unplayed_games", 0},
              {"percentage", 0.0},
              {"current_round", nullptr},
              {"updated_at", domain::utc_now()},
@@ -1169,7 +1172,22 @@ json ControlPlane::manage_competition(
     json progress = data.value("progress", json::object());
     progress["updated_at"] = domain::utc_now();
     if (next == "cancelled") {
+        const std::size_t total = progress.value(
+            "total_games", data.value("planned_total_games", 0U));
+        const std::size_t resolved =
+            progress.value("completed_games", 0U) +
+            progress.value("cancelled_games", 0U) +
+            progress.value("failed_games", 0U);
+        const std::size_t active = progress.value("active_games", 0U);
         progress["queued_games"] = 0;
+        progress["unplayed_games"] = total > resolved + active
+            ? total - resolved - active
+            : 0;
+        const std::size_t dispositioned =
+            resolved + progress.at("unplayed_games").get<std::size_t>();
+        progress["percentage"] = total == 0 ? 0.0 :
+            (100.0 * static_cast<double>(dispositioned) /
+             static_cast<double>(total));
     }
     data["progress"] = std::move(progress);
     ports::ResourceRecord updated = *existing;

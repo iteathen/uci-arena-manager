@@ -176,6 +176,9 @@ export interface MatchPlanData extends Record<string, unknown> {
     queued_games: number
     active_games: number
     completed_games: number
+    cancelled_games: number
+    failed_games: number
+    unplayed_games: number
     percentage: number
     current_round: number | null
     updated_at: string

@@ -232,7 +232,7 @@ tournament_contract:
   sprt: color_paired_elo_bounds_alpha_beta_immutable_verdict
   execution:
     actions: [start, pause, resume, cancel]
-    progress_fields: [total_games, queued_games, active_games, completed_games, percentage, current_round, updated_at]
+    progress_fields: [total_games, queued_games, active_games, completed_games, cancelled_games, failed_games, unplayed_games, percentage, current_round, updated_at]
     rules:
       - Start launches only persisted, registered engine identities and repeats
         UCI readiness before the first scheduled game.
@@ -243,6 +243,16 @@ tournament_contract:
         schedule without replaying completed games.
       - Cancel stops admission, terminates active engine processes within the
         bounded cancellation deadline, and preserves completed game records.
+      - Progress classifies every scheduled game exactly once as queued,
+        active, completed, cancelled, failed, or unplayed. Unplayed means a
+        schedule entry that will never be admitted because the competition is
+        terminal; it is not a fabricated game resource.
+      - Terminal competitions expose zero active and queued games. Their
+        percentage reaches 100 only when every scheduled game has a durable
+        terminal outcome or an explicit unplayed disposition.
+      - Manager startup reconciles legacy terminal progress that predates the
+        complete disposition fields. Reconciliation derives outcomes from
+        durable game resources, creates no synthetic games, and is idempotent.
       - Optimistic revision conflicts are returned as the typed
         resource_revision_conflict command error. The dashboard may refresh
         and retry a lifecycle action at most three times while that action

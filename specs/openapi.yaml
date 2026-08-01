@@ -31,6 +31,10 @@ x-command-actions:
     events after each game-state transition. A concurrent update returns the
     typed resource_revision_conflict error so an interactive client can
     refresh and retry a still-valid lifecycle action within a bounded policy.
+  progress_contract:
+    fields: [total_games, queued_games, active_games, completed_games, cancelled_games, failed_games, unplayed_games, percentage, current_round, updated_at]
+    invariant: total_games_equals_sum_of_all_game_dispositions
+    terminal_state: zero_active_zero_queued_all_games_resolved
 x-competition-plan-contract:
   formats: [head_to_head, round_robin, gauntlet, swiss, sprt]
   common_parameters:
