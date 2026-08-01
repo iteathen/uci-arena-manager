@@ -3,10 +3,13 @@
 #include <catch2/catch_test_macros.hpp>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <optional>
+#include <sodium.h>
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <vector>
 
 #include "arena/application/installer/credential_recovery.hpp"
 #include "arena/application/installer/setup.hpp"
@@ -40,6 +43,37 @@ json component(const std::string& id, const std::vector<std::string>& dependenci
         {"artifacts",
          {{"any",
            {{"source", id + ".tar.gz"}, {"sha256", std::string(64, '0')}, {"size_bytes", 1}}}}},
+    };
+}
+
+std::string sha256_text(const std::string_view value) {
+    std::array<unsigned char, crypto_hash_sha256_BYTES> digest{};
+    if (crypto_hash_sha256(
+            digest.data(),
+            reinterpret_cast<const unsigned char*>(value.data()),
+            static_cast<unsigned long long>(value.size())) != 0) {
+        throw std::runtime_error("test SHA-256 calculation failed");
+    }
+    std::array<char, crypto_hash_sha256_BYTES * 2 + 1> encoded{};
+    sodium_bin2hex(encoded.data(), encoded.size(), digest.data(), digest.size());
+    return encoded.data();
+}
+
+json manager_service_api(
+    const std::initializer_list<const char*> additional_operations = {}) {
+    json operations = json::array(
+        {"describe", "status", "outputs_list", "outputs_inspect", "config_validate"});
+    for (const char* operation : additional_operations) {
+        operations.push_back(operation);
+    }
+    return {
+        {"schema", "uci_arena_manager_service_api_v1"},
+        {"version", "1.0"},
+        {"transport", "cli_json"},
+        {"entrypoint", "cli"},
+        {"arguments", {"api"}},
+        {"operations", std::move(operations)},
+        {"output_schema", "uci_arena_service_output_v1"},
     };
 }
 
@@ -154,6 +188,98 @@ void write_book_forge_service_install(
         << receipt.dump(2);
 }
 
+void write_manager_api_service_install(const SetupPaths& paths, const json& manager_api) {
+    constexpr std::string_view component_id = "uci_arena_evidence.service";
+    constexpr std::string_view component_version = "0.3.0";
+    constexpr std::string_view cli_relative = "services/evidence-service/src/cli.mjs";
+    constexpr std::string_view contract_relative =
+        "services/evidence-service/contracts/service-contract.json";
+    constexpr std::string_view cli_contents = "evidence";
+    const fs::path active_root =
+        paths.install_root / "components" / component_id / component_version;
+    const fs::path cli = active_root / cli_relative;
+    const fs::path contract_path = active_root / contract_relative;
+    fs::create_directories(cli.parent_path());
+    fs::create_directories(contract_path.parent_path());
+    fs::create_directories(paths.data_root / "receipts");
+    std::ofstream(cli, std::ios::binary) << cli_contents;
+
+    const json startup{
+        {"windows", "per_user_task_scheduler"},
+        {"linux", "per_user_systemd"},
+    };
+    const json contract{
+        {"schema", "uci_arena_standalone_service_contract_v1"},
+        {"component_id", component_id},
+        {"component_version", component_version},
+        {"cli_entrypoint", cli_relative},
+        {"configuration_schema", "uci_arena_evidence_service_config_v1"},
+        {"status_schema", "uci_arena_evidence_status_v1"},
+        {"capabilities", json::array({"status", "start"})},
+        {"data_paths", json::array({"workspace"})},
+        {"startup", startup},
+        {"health_smoke",
+         {{"command", "status"}, {"success", "exit_zero_and_status_schema"}}},
+        {"manager_integration_api", manager_api},
+        {"outputs", json::object()},
+        {"persistence",
+         {{"upgrade", "preserve_and_migrate"},
+          {"repair", "preserve"},
+          {"uninstall_default", "preserve"}}},
+    };
+    const std::string contract_contents = contract.dump();
+    std::ofstream(contract_path, std::ios::binary) << contract_contents;
+    const std::string contract_sha256 = sha256_text(contract_contents);
+
+    std::ofstream(active_root / "arena-component.json", std::ios::binary)
+        << json{
+               {"schema", "arena_install_component_v1"},
+               {"schema_version", 1},
+               {"component_id", component_id},
+               {"component_version", component_version},
+               {"entrypoints", {{"cli", cli_relative}}},
+               {"contract_manifest", contract_relative},
+               {"manager_integration_api", manager_api},
+               {"capabilities", json::array({"status", "start"})},
+               {"data_paths", json::array({"workspace"})},
+               {"startup", startup},
+               {"files",
+                json::array(
+                    {{{"path", cli_relative},
+                      {"size_bytes", cli_contents.size()},
+                      {"sha256", sha256_text(cli_contents)}},
+                     {{"path", contract_relative},
+                      {"size_bytes", contract_contents.size()},
+                      {"sha256", contract_sha256}}})},
+           }
+               .dump(2);
+
+    std::ofstream(
+        paths.data_root / "receipts" / "uci_arena_evidence.service.json",
+        std::ios::binary)
+        << json{
+               {"schema", "arena_install_receipt_v1"},
+               {"schema_version", 1},
+               {"component_id", component_id},
+               {"component_version", component_version},
+               {"state", "installed_managed"},
+               {"active_root", active_root.string()},
+               {"artifact_sha256", std::string(64, 'a')},
+               {"dependencies", json::array()},
+               {"data_paths", json::array()},
+               {"configuration_path", ""},
+               {"activated_files", json::array()},
+               {"service_contract",
+                {{"schema", "uci_arena_standalone_service_contract_v1"},
+                 {"path", contract_relative},
+                 {"sha256", contract_sha256},
+                 {"configuration_schema", "uci_arena_evidence_service_config_v1"},
+                 {"status_schema", "uci_arena_evidence_status_v1"},
+                 {"manager_integration_api", manager_api}}},
+           }
+               .dump(2);
+}
+
 } // namespace
 
 TEST_CASE("setup plan resolves dependencies once and includes Manager Core") {
@@ -262,6 +388,29 @@ TEST_CASE("standalone service contracts are identity-bound and receipt-verified"
     write_book_forge_service_install(missing_paths, std::nullopt);
     REQUIRE(SetupEngine::verify(missing_paths).at("ok") == false);
     fs::remove_all(missing_root);
+}
+
+TEST_CASE("standalone Manager API accepts additive typed operations") {
+    const fs::path valid_root = temporary_directory();
+    const SetupPaths valid_paths = paths_under(valid_root);
+    const json extended_api = manager_service_api(
+        {"orchestration_status", "campaign_enqueue", "job_control"});
+    write_manager_api_service_install(valid_paths, extended_api);
+    const json verified = SetupEngine::verify(valid_paths);
+    REQUIRE(verified.at("ok") == true);
+    fs::remove_all(valid_root);
+
+    const fs::path incomplete_root = temporary_directory();
+    const SetupPaths incomplete_paths = paths_under(incomplete_root);
+    json incomplete_api = manager_service_api({"orchestration_status"});
+    incomplete_api["operations"].erase(incomplete_api["operations"].end() - 2);
+    write_manager_api_service_install(incomplete_paths, incomplete_api);
+    const json rejected = SetupEngine::verify(incomplete_paths);
+    REQUIRE(rejected.at("ok") == false);
+    REQUIRE(
+        rejected.at("components").at(0).at("error") ==
+        "standalone service Manager API operations are incomplete");
+    fs::remove_all(incomplete_root);
 }
 
 TEST_CASE("download missing knowledge selects opening book and bounded Syzygy WDL") {

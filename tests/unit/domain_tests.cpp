@@ -42,10 +42,11 @@ json manager_service_api() {
         {"arguments", {"api"}},
         {"operations",
          {"describe",
-          "status",
-          "outputs_list",
-          "outputs_inspect",
-          "config_validate"}},
+           "status",
+           "outputs_list",
+           "outputs_inspect",
+           "config_validate",
+           "acquisition_retry_auth"}},
         {"output_schema", "uci_arena_service_output_v1"},
     };
 }
@@ -355,6 +356,13 @@ TEST_CASE("installed service receipts reconcile exact private runtime entrypoint
             .at("manager_integration_api")
             .at("schema") ==
         "uci_arena_manager_service_api_v1");
+    REQUIRE(
+        discovered.at("services")
+            .at(0)
+            .at("manager_integration_api")
+            .at("operations")
+            .at(5) ==
+        "acquisition_retry_auth");
     REQUIRE(
         discovered.at("services")
             .at(0)

@@ -221,8 +221,10 @@ standalone_service_contracts:
       declaration.
     - The declaration uses uci_arena_manager_service_api_v1 version 1.x over
       CLI JSON, selects the verified cli entrypoint with the argv prefix
-      [api], declares all five required operations, and emits only
-      uci_arena_service_output_v1 output records.
+      [api], declares all five required operations as a subset, and emits only
+      uci_arena_service_output_v1 output records. Additional unique typed
+      operation identifiers are permitted so service-owned capabilities can
+      extend the API without weakening the required common surface.
     - Manager service API metadata is covered by the immutable component
       manifest and provider attestation; installer or Manager code never
       synthesizes it for an installed provider.

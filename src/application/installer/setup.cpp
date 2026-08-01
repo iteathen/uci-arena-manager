@@ -814,8 +814,9 @@ json validate_manager_service_api(const json& declaration,
         "outputs_list",
         "status",
     };
-    if (identifier_set_field(declaration, "operations") !=
-        required_operations) {
+    const std::set<std::string> operations =
+        identifier_set_field(declaration, "operations");
+    if (!std::ranges::includes(operations, required_operations)) {
         throw std::runtime_error(
             "standalone service Manager API operations are incomplete");
     }
