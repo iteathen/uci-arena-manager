@@ -58,6 +58,11 @@ function Get-Entrypoint {
     $manifestPath = Join-Path $receipt.active_root "arena-component.json"
     $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
     $relative = $manifest.entrypoints.$Name
+    if (-not $relative -and
+        $ComponentId -eq "node_runtime.private" -and
+        $Name -eq "node") {
+        $relative = $manifest.entrypoints.executable
+    }
     if (-not $relative) {
         throw "missing $ComponentId entrypoint $Name"
     }
@@ -71,6 +76,7 @@ function Get-Entrypoint {
 function Invoke-UciAcceptance {
     param(
         [string]$Engine,
+        [string]$ModelRoot,
         [string]$KnowledgeRoot,
         [string]$TracePath
     )
@@ -82,9 +88,10 @@ function Invoke-UciAcceptance {
     $start.RedirectStandardInput = $true
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
+    $start.EnvironmentVariables["UCI_ARENA_MODEL_ROOT"] = $ModelRoot
     $start.EnvironmentVariables["UCI_ARENA_KNOWLEDGE_ROOT"] = $KnowledgeRoot
-    $start.EnvironmentVariables.Remove("UCI_ARENA_MODEL_ROOT")
     $process = [System.Diagnostics.Process]::Start($start)
+    $stderrTask = $process.StandardError.ReadToEndAsync()
     $process.StandardInput.AutoFlush = $true
     $deadline = [DateTimeOffset]::UtcNow.AddSeconds(120)
     $readLine = {
@@ -130,10 +137,7 @@ function Invoke-UciAcceptance {
         }
         $fingerprint = $Matches[1]
         $provider = $Matches[2]
-        $expectedModelRoot = Join-Path `
-            (Join-Path (Split-Path -Parent (Split-Path -Parent $Engine)) "models") `
-            "default"
-        if ([IO.Path]::GetFullPath($modelRoot) -ne [IO.Path]::GetFullPath($expectedModelRoot)) {
+        if ([IO.Path]::GetFullPath($modelRoot) -ne [IO.Path]::GetFullPath($ModelRoot)) {
             throw "installed ModelRoot mismatch: $modelRoot"
         }
         $modelMetadataPath = Join-Path $modelRoot "model.meta.json"
@@ -175,11 +179,21 @@ function Invoke-UciAcceptance {
         }
     } finally {
         if (-not $process.HasExited) {
-            $process.StandardInput.WriteLine("quit")
-            $process.StandardInput.Close()
+            try {
+                $process.StandardInput.WriteLine("quit")
+                $process.StandardInput.Close()
+            } catch {
+                # The engine may close stdin while reporting its own failure.
+            }
             if (-not $process.WaitForExit(10000)) {
                 $process.Kill()
+                $process.WaitForExit()
             }
+        }
+        $stderr = $stderrTask.GetAwaiter().GetResult()
+        if (-not [string]::IsNullOrWhiteSpace($stderr)) {
+            Add-Content -LiteralPath $TracePath -Value "--- stderr ---"
+            Add-Content -LiteralPath $TracePath -Value $stderr
         }
         $process.Dispose()
     }
@@ -237,13 +251,15 @@ try {
         "--workspace", $initialBookWorkspace,
         "--config", $initialBookConfig
     ))
-    $initialBookStartup = Invoke-JsonCommand $initialNode @(
-        $initialBookCli, "startup", "install",
-        "--workspace", $initialBookWorkspace,
-        "--config", $initialBookConfig
-    )
-    if (-not $initialBookStartup.startup.installed) {
-        throw "Book Forge startup registration was not installed before suite uninstall"
+    if (-not $SkipStartupRegistration) {
+        $initialBookStartup = Invoke-JsonCommand $initialNode @(
+            $initialBookCli, "startup", "install",
+            "--workspace", $initialBookWorkspace,
+            "--config", $initialBookConfig
+        )
+        if (-not $initialBookStartup.startup.installed) {
+            throw "Book Forge startup registration was not installed before suite uninstall"
+        }
     }
     $initialEvidenceCli =
         Get-Entrypoint "uci_arena_evidence.service" "cli"
@@ -258,13 +274,15 @@ try {
         "--workspace", $initialEvidenceWorkspace,
         "--config", $initialEvidenceConfig
     ))
-    $initialEvidenceStartup = Invoke-JsonCommand $initialNode @(
-        $initialEvidenceCli, "startup", "install",
-        "--workspace", $initialEvidenceWorkspace,
-        "--config", $initialEvidenceConfig
-    )
-    if (-not $initialEvidenceStartup.installed) {
-        throw "Evidence startup registration was not installed before suite uninstall"
+    if (-not $SkipStartupRegistration) {
+        $initialEvidenceStartup = Invoke-JsonCommand $initialNode @(
+            $initialEvidenceCli, "startup", "install",
+            "--workspace", $initialEvidenceWorkspace,
+            "--config", $initialEvidenceConfig
+        )
+        if (-not $initialEvidenceStartup.installed) {
+            throw "Evidence startup registration was not installed before suite uninstall"
+        }
     }
     $initialReceipts = @(
         Get-ChildItem -File (Join-Path $RunRoot "data/receipts") |
@@ -285,15 +303,17 @@ try {
         @($uninstall.components).Count -ne $initialReceipts.Count) {
         throw "Complete suite uninstall did not remove every managed receipt"
     }
-    foreach ($componentId in @(
-        "book_forge.service",
-        "uci_arena_evidence.service"
-    )) {
-        $cleanup = $uninstall.components |
-            Where-Object { $_.component_id -eq $componentId } |
-            Select-Object -First 1
-        if ($cleanup.startup_cleanup.installed -ne $false) {
-            throw "$componentId startup registration survived suite uninstall"
+    if (-not $SkipStartupRegistration) {
+        foreach ($componentId in @(
+            "book_forge.service",
+            "uci_arena_evidence.service"
+        )) {
+            $cleanup = $uninstall.components |
+                Where-Object { $_.component_id -eq $componentId } |
+                Select-Object -First 1
+            if ($cleanup.startup_cleanup.installed -ne $false) {
+                throw "$componentId startup registration survived suite uninstall"
+            }
         }
     }
     foreach ($root in $initialRoots) {
@@ -304,12 +324,14 @@ try {
     if (@(Get-ChildItem -File (Join-Path $RunRoot "data/receipts")).Count -ne 0) {
         throw "Managed receipts survived suite uninstall"
     }
-    foreach ($taskName in @(
-        "UCI Arena Book Forge",
-        "UCI Arena Evidence Service"
-    )) {
-        if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
-            throw "Scheduled task survived suite uninstall: $taskName"
+    if (-not $SkipStartupRegistration) {
+        foreach ($taskName in @(
+            "UCI Arena Book Forge",
+            "UCI Arena Evidence Service"
+        )) {
+            if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+                throw "Scheduled task survived suite uninstall: $taskName"
+            }
         }
     }
     $providerRoots = @(
@@ -360,8 +382,21 @@ try {
     $node = Get-Entrypoint "node_runtime.private" "node"
     $engine = Get-Entrypoint "uci_arena.engine" "uci"
     $uciReceipt = Get-Receipt "uci_arena.engine"
+    $uciManifestPath = Join-Path $uciReceipt.active_root "arena-component.json"
+    $uciManifest =
+        Get-Content -Raw -LiteralPath $uciManifestPath |
+            ConvertFrom-Json
+    $declaredModelRoot = [string]$uciManifest.default_model.root
+    if ([string]::IsNullOrWhiteSpace($declaredModelRoot)) {
+        throw "installed UCI manifest does not declare default_model.root"
+    }
+    $uciModelRoot = Join-Path $uciReceipt.active_root $declaredModelRoot
+    if (-not (Test-Path -LiteralPath $uciModelRoot -PathType Container)) {
+        throw "installed UCI default model root is missing: $uciModelRoot"
+    }
     $uci = Invoke-UciAcceptance `
         $engine `
+        $uciModelRoot `
         (Join-Path $RunRoot "knowledge") `
         "$ResultPath.uci.log"
     $stages.Add("uci")
@@ -462,8 +497,16 @@ try {
         maxPlies = 4
         adjudicationCp = 0
         adjudicationDepth = 1
-        candidateOptions = @("McgsTemporalWeightProfile=AdaptiveCurveV1")
-        controlOptions = @("McgsTemporalWeightProfile=EarlyCurrent")
+        candidateOptions = @(
+            "SearchCore=mcgs",
+            "McgsTimePolicy=RelativeClockTemporalV1",
+            "McgsTemporalWeightProfile=AdaptiveCurveV1"
+        )
+        controlOptions = @(
+            "SearchCore=mcgs",
+            "McgsTimePolicy=RelativeClockTemporalV1",
+            "McgsTemporalWeightProfile=EarlyCurrent"
+        )
     } | ConvertTo-Json -Compress
     $job = Invoke-JsonCommand $node @(
         $evidenceCli, "job", "enqueue",

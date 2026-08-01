@@ -24,13 +24,53 @@ test("Complete acceptance uses the current MCGS timing experiment contract", () 
   ), "utf8");
   assert.match(
     acceptance,
-    /candidateOptions = @\("McgsTemporalWeightProfile=AdaptiveCurveV1"\)/u,
+    /candidateOptions = @\([\s\S]*?"SearchCore=mcgs"[\s\S]*?"McgsTimePolicy=RelativeClockTemporalV1"[\s\S]*?"McgsTemporalWeightProfile=AdaptiveCurveV1"[\s\S]*?\)/u,
   );
   assert.match(
     acceptance,
-    /controlOptions = @\("McgsTemporalWeightProfile=EarlyCurrent"\)/u,
+    /controlOptions = @\([\s\S]*?"SearchCore=mcgs"[\s\S]*?"McgsTimePolicy=RelativeClockTemporalV1"[\s\S]*?"McgsTemporalWeightProfile=EarlyCurrent"[\s\S]*?\)/u,
   );
   assert.doesNotMatch(acceptance, /TimePolicy=RelativeClockV3/u);
+});
+
+test("Complete acceptance limits the managed entrypoint alias to Node", () => {
+  const acceptance = readFileSync(new URL(
+    "../../tests/e2e/windows-complete-suite.ps1",
+    import.meta.url,
+  ), "utf8");
+  assert.match(
+    acceptance,
+    /\$ComponentId -eq "node_runtime\.private" -and\s+\$Name -eq "node"/u,
+  );
+  assert.equal(
+    acceptance.match(/\$manifest\.entrypoints\.executable/gu)?.length,
+    1,
+    "the legacy executable alias must not become a generic entrypoint fallback",
+  );
+});
+
+test("Complete acceptance uses the installed engine model contract", () => {
+  const acceptance = readFileSync(new URL(
+    "../../tests/e2e/windows-complete-suite.ps1",
+    import.meta.url,
+  ), "utf8");
+  assert.match(
+    acceptance,
+    /\$declaredModelRoot = \[string\]\$uciManifest\.default_model\.root/u,
+  );
+  assert.match(
+    acceptance,
+    /\$start\.EnvironmentVariables\["UCI_ARENA_MODEL_ROOT"\] = \$ModelRoot/u,
+  );
+  assert.doesNotMatch(
+    acceptance,
+    /EnvironmentVariables\.Remove\("UCI_ARENA_MODEL_ROOT"\)/u,
+  );
+  assert.doesNotMatch(
+    acceptance,
+    /Get-ChildItem[^\n]+model\.onnx/u,
+    "acceptance must use the provider contract instead of guessing by filename",
+  );
 });
 
 test("clean build requires an explicit Manager-Core scope locally", () => {
