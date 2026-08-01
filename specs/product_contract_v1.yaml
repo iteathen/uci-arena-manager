@@ -59,7 +59,12 @@ engine_contract:
     fields: [model_fingerprint, provider, provider_numeric_fingerprint]
     rules:
       - The generic probe may retain a structurally valid runtime identity
-        emitted before uciok; absence keeps an engine fully usable.
+        emitted during startup interrogation, including after advertised UCI
+        options are applied and before the following readyok; absence keeps an
+        engine fully usable.
+      - An option-selected model deployment is evidence-eligible only when the
+        engine republishes the effective typed identity after that selection;
+        Manager never reuses a pre-selection identity for the new deployment.
       - A model name, engine name, executable stem, or component name never
         selects the parser or fabricates runtime identity.
       - A verified default_model.root is deployment metadata, not a model-name
