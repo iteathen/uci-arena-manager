@@ -5,6 +5,18 @@ specs:
     owner: governance
     applies_to:
       - "*"
+  - spec_id: arena_suite_lego_boundaries_v1
+    path: specs/suite_lego_boundaries_v1.yaml
+    owner: governance
+    applies_to:
+      - AGENTS.md
+      - include
+      - src
+      - apps
+      - web
+      - contracts
+      - release
+      - packaging
   - spec_id: arena_product_contract_v1
     path: specs/product_contract_v1.yaml
     owner: domain

@@ -1,0 +1,83 @@
+meta:
+  spec_id: arena_suite_lego_boundaries_v1
+  version: 1
+  status: active
+  owner: governance
+  purpose: >
+    Make the canonical UCI Arena complete-suite architecture enforceable at
+    the Manager repository boundary without duplicating provider behavior.
+
+authority:
+  canonical_document:
+    repository: iteathen/uci-arena-installer
+    path: docs/architecture/UCI_ARENA_COMPLETE_LEGO_ARCHITECTURE.md
+    url: https://github.com/iteathen/uci-arena-installer/blob/main/docs/architecture/UCI_ARENA_COMPLETE_LEGO_ARCHITECTURE.md
+  local_foundation: specs/00_READ_FIRST.yaml
+  rule: >
+    Detailed Manager specifications remain authoritative for Manager behavior
+    when they do not violate the canonical suite ownership boundaries.
+
+repository_role:
+  repository: iteathen/uci-arena-manager
+  product_role: installed_suite_local_control_plane
+  owns:
+    - manager_service_and_local_api
+    - local_persistence_and_product_status
+    - component_discovery_and_provider_registration
+    - typed_process_and_lifecycle_controls
+    - configuration_ui_cli_desktop_host_and_browser_dashboard
+    - privileged_allowlisted_local_broker
+    - health_and_progress_projections
+    - operator_authorization
+    - account_and_bot_control_projections
+    - installed_provider_orchestration
+  must_not_own:
+    - chess_or_search_behavior
+    - provider_domain_behavior_or_private_state
+    - lichess_token_contents_or_challenge_policy
+    - opening_book_acquisition_or_qualification
+    - evidence_qualification_or_dataset_publication
+    - suite_installation_transaction_or_release_composition
+
+mandatory_boundaries:
+  - "The Manager is one product repository because service, CLI, desktop host, web dashboard, broker, persistence, and projections share one control-plane domain model and evolve atomically."
+  - "The Manager consumes installed component manifests and fixed typed provider operations; it never imports provider source, opens provider-private storage, or executes arbitrary provider shell commands."
+  - "Providers remain authoritative for configuration validation, lifecycle constraints, credential access, persistent provider state, and their domain operations."
+  - "Manager may project and request allowed provider options but must not duplicate provider validation or policy."
+  - "Adding a provider changes its published service contract plus Manager registration/composition and provider-specific projection only; Manager core domain behavior remains unchanged."
+  - "All mutating clients use the same Manager command contract and all read clients consume the same projections."
+  - "The unprivileged Manager service is the sole control-plane state authority; the privileged broker accepts only typed allowlisted actions."
+  - "The Installer is an independent product that installs Manager through Manager's immutable artifact and component manifest; Manager does not own installer transaction behavior."
+  - "Repositories exchange versioned contracts and immutable release artifacts and never import one another's internal source trees."
+  - "Operator secrets are write-only at Manager boundaries; token contents belong to the provider and are never returned, logged, packaged, or persisted by Manager."
+
+required_provider_operations:
+  characteristics:
+    - typed
+    - bounded
+    - versioned
+    - authorization_checked
+    - structured_result
+    - cancellation_and_timeout_defined
+  forbidden:
+    - arbitrary_shell
+    - arbitrary_executable_path
+    - provider_source_import
+    - provider_private_database_access
+    - credential_content_projection
+
+substitution_acceptance:
+  required:
+    - "A fake provider proves discovery, status, configuration projection, lifecycle control, and error presentation through the public provider contract."
+    - "An unknown provider major version fails visibly without corrupting Manager or provider state."
+    - "A provider can be replaced by a conforming implementation without Manager core changes."
+    - "Manager operates when optional providers are absent and reports their installation and activity state clearly."
+    - "Manager builds and runs without any provider source checkout."
+
+change_gate:
+  questions:
+    - "Is this control-plane behavior or provider-owned domain behavior?"
+    - "Does the boundary use a fixed typed operation rather than a shell or source dependency?"
+    - "Can a conforming provider be substituted through registration and composition?"
+    - "Does Manager expose only redacted provider state and operator-authorized controls?"
+    - "Would this change force unrelated providers or installer mechanisms to understand the implementation?"
