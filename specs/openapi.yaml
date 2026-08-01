@@ -18,6 +18,7 @@ x-command-actions:
     - tournament.resume
     - tournament.cancel
   evidence_orchestration:
+    - service.evidence_target_register
     - service.evidence_campaign_enqueue
     - service.evidence_job_cancel
     - service.evidence_job_retry

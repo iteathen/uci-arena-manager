@@ -50,9 +50,18 @@ engine_contract:
     - readyok
     - typed_option_discovery
     - legal_startpos_bestmove
+    - optional_typed_runtime_model_identity
   rule: >
     UCI Arena Engine, LC0, Stockfish, and every other registered UCI engine use
     this same resource and interrogation path. Engine names never dispatch code.
+  runtime_model_identity:
+    source: optional_generic_uci_info_signal
+    fields: [model_fingerprint, provider, provider_numeric_fingerprint]
+    rules:
+      - The generic probe may retain a structurally valid runtime identity
+        emitted before uciok; absence keeps an engine fully usable.
+      - A model name, engine name, executable stem, or component name never
+        selects the parser or fabricates runtime identity.
   installed_candidate_entrypoints:
     rules:
       - A verified managed-component receipt contributes an engine candidate through an explicit `uci` entrypoint.
@@ -267,7 +276,7 @@ managed_service_contract:
     - stopping
     - failed
   evidence_orchestration:
-    actions: [evidence_campaign_enqueue, evidence_job_cancel, evidence_job_retry]
+    actions: [evidence_target_register, evidence_campaign_enqueue, evidence_job_cancel, evidence_job_retry]
     rules:
       - The Evidence Service remains orchestration authority; Manager invokes
         only component-declared typed API operations and stores bounded
@@ -275,6 +284,13 @@ managed_service_contract:
       - The built-in first campaign may target the active deployment or an
         existing service-issued target UUID. Arbitrary adapter execution is
         outside the Manager contract.
+      - Evidence target registration accepts only a Manager-owned registered
+        engine UUID. Manager repeats the generic UCI probe, combines its typed
+        runtime identity with receipt-derived default-model metadata, and
+        invokes the provider's declared target_register operation.
+      - Browser input cannot provide target paths, fingerprints, providers,
+        UCI options, commands, or argv. Evidence hashes and validates the
+        resulting exact target and owns idempotent target identity.
   discovery:
     - executable_and_required_paths
     - declared_version_probe

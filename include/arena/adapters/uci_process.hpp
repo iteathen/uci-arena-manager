@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,9 @@ struct UciProbeResult {
     std::string engine_name;
     std::string engine_author;
     std::string fingerprint;
+    std::string runtime_model_fingerprint;
+    std::string runtime_provider;
+    std::string runtime_provider_fingerprint;
     std::vector<domain::UciOption> options;
     std::string bestmove;
     std::uint64_t elapsed_ms{};
@@ -27,7 +31,8 @@ class UciProcess final {
         const std::filesystem::path& executable,
         const std::filesystem::path& working_directory,
         const std::vector<std::string>& arguments,
-        std::chrono::milliseconds timeout = std::chrono::seconds(10));
+        std::chrono::milliseconds timeout = std::chrono::seconds(10),
+        const std::map<std::string, std::string, std::less<>>& option_overrides = {});
 };
 
 }  // namespace arena::adapters

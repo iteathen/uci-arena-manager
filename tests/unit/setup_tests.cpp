@@ -394,7 +394,7 @@ TEST_CASE("standalone Manager API accepts additive typed operations") {
     const fs::path valid_root = temporary_directory();
     const SetupPaths valid_paths = paths_under(valid_root);
     const json extended_api = manager_service_api(
-        {"orchestration_status", "campaign_enqueue", "job_control"});
+        {"orchestration_status", "target_register", "campaign_enqueue", "job_control"});
     write_manager_api_service_install(valid_paths, extended_api);
     const json verified = SetupEngine::verify(valid_paths);
     REQUIRE(verified.at("ok") == true);

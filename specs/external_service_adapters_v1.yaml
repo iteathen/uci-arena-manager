@@ -316,8 +316,16 @@ profiles:
         - Waiting for a target and an empty dataset set remain healthy.
         - A dataset schema or identity mismatch marks the integration incompatible.
     orchestration_integration:
-      operations: [orchestration_status, campaign_enqueue, job_control]
+      operations: [orchestration_status, target_register, campaign_enqueue, job_control]
       rules:
+        - Manager target registration accepts only a registered engine UUID,
+          repeats the universal UCI probe, and obtains paths, default-model
+          metadata, runtime fingerprint, provider, provider numeric identity,
+          and option overrides from that backend-authoritative resource and
+          probe. None of those fields are caller supplied.
+        - The provider validates paths and option bounds, hashes the engine,
+          and idempotently owns target creation. Manager stores only the
+          bounded returned summary and refreshed orchestration projection.
         - Manager may enqueue only the provider-defined first campaign against
           the active deployment or an existing service-issued target UUID.
         - Manager may cancel or retry only a service-issued job UUID; arbitrary

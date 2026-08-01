@@ -1061,6 +1061,11 @@ transaction:
         payload removal.
       - When a provider reports matchesCurrentConfiguration, it must be true.
         Manager never reinterprets or substitutes a provider health contract.
+      - Evidence Service startup install must report active true in addition
+        to installed true and matchesCurrentConfiguration true. The suite
+        transaction fails before commit when the replacement daemon is not
+        live; a retained status file or successful task creation is not a
+        substitute.
       - Verify invokes the provider's public startup status operation and fails
         when an installed startup receipt no longer reports installed true or
         reports matchesCurrentConfiguration false.

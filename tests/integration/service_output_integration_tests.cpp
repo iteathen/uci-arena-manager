@@ -73,13 +73,14 @@ void seed_managed_service(
     const std::shared_ptr<arena::adapters::SqliteStore>& store,
     const std::string& id,
     const json& data,
-    const json& labels = json::object()) {
+    const json& labels = json::object(),
+    const std::string& kind = "managed_service") {
     const std::string timestamp = "2026-01-01T00:00:00.000Z";
     const std::string command_id = arena::domain::uuid_v7();
     store->create_resource(
         {
             id,
-            "managed_service",
+            kind,
             "local",
             1,
             timestamp,
@@ -101,8 +102,8 @@ void seed_managed_service(
             arena::domain::uuid_v7(),
             timestamp,
             "state",
-            "managed_service.created",
-            "managed_service",
+            kind + ".created",
+            kind,
             id,
             1,
             command_id,
@@ -131,6 +132,7 @@ json register_installed_evidence_and_status(
           "outputs_inspect",
           "config_validate",
           "orchestration_status",
+          "target_register",
           "campaign_enqueue",
           "job_control"}},
         {"output_schema", "uci_arena_service_output_v1"},
@@ -336,7 +338,7 @@ TEST_CASE("Book Forge and Evidence outputs cross only validated public contracts
             "uci_arena_manager_service_api_v1");
         REQUIRE(
             evidence_data.at("manager_api_projection")
-                .at("operations").size() == 8);
+                .at("operations").size() == 9);
         REQUIRE(
             evidence_data.at("orchestration_projection")
                 .at("targets").size() == 1);
@@ -346,6 +348,62 @@ TEST_CASE("Book Forge and Evidence outputs cross only validated public contracts
 
         const std::string evidence_id =
             evidence.at("resource").at("id");
+        const fs::path engine_root = root / "engine-component";
+        const fs::path engine_executable =
+#ifdef _WIN32
+            engine_root / "bin" / "uci_arena_engine.exe";
+#else
+            engine_root / "bin" / "uci_arena_engine";
+#endif
+        fs::create_directories(engine_executable.parent_path());
+        fs::create_directories(engine_root / "models" / "default");
+        fs::copy_file(
+            ARENA_MOCK_UCI_PATH,
+            engine_executable,
+            fs::copy_options::overwrite_existing);
+        const std::string engine_id = arena::domain::uuid_v7();
+        seed_managed_service(
+            store,
+            engine_id,
+            {
+                {"display_name", "UCI Arena Engine"},
+                {"executable", engine_executable.string()},
+                {"working_directory", engine_root.string()},
+                {"arguments", json::array()},
+                {"option_overrides", json::object()},
+                {"component_id", "uci_arena.engine"},
+                {"onboarding_source", "install_receipt"},
+                {"recommended", true},
+                {"default_model",
+                 {{"model_id", "example_model_v1"},
+                  {"display_name", "Example Model"},
+                  {"input_adapter_id", "dense_planes_v1"},
+                  {"root", "models/default"}}},
+            },
+            json::object(),
+            "engine");
+        REQUIRE_THROWS_AS(
+            control_plane.submit(
+                command(
+                    "service.evidence_target_register",
+                    {{"kind", "managed_service"}, {"id", evidence_id}},
+                    {{"engine_id", engine_id},
+                     {"engine", "C:/browser-selected.exe"}}),
+                "test"),
+            arena::application::CommandFailure);
+        const json target = control_plane.submit(
+            command(
+                "service.evidence_target_register",
+                {{"kind", "managed_service"}, {"id", evidence_id}},
+                {{"engine_id", engine_id}}),
+            "test");
+        REQUIRE(
+            target.at("resource").at("data")
+                .at("last_control_result").at("created") == true);
+        REQUIRE(
+            target.at("resource").at("data")
+                .at("last_control_result").at("target").at("model_id") ==
+            "example_model_v1");
         const json campaign = control_plane.submit(
             command(
                 "service.evidence_campaign_enqueue",

@@ -326,6 +326,15 @@ evidence_service_experience:
     - A configured compatible Evidence Service exposes one guided action to
       enqueue its built-in first campaign; an absent exact target explains how
       to start or register a compatible model deployment before collecting.
+    - When no target exists, the Services surface offers one guided Use
+      preferred engine action if a receipt-verified UCI Arena Engine with
+      default-model metadata is registered. The action repeats the full UCI
+      probe, registers the exact deployment through the typed provider API,
+      refreshes provider state, and requires no path, fingerprint, provider,
+      JSON, or command-line entry from the operator.
+    - If no eligible registered engine exists, the missing-target guidance
+      links directly to Engines and names engine registration as the next step;
+      Engines is never a dead-end prerequisite reference.
     - The first-campaign action is disabled while provider state explicitly
       reports waiting for a target and no provider-issued target is present;
       the UI does not invite a command that is already known to be invalid.
