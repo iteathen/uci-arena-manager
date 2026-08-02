@@ -1,12 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
 set(ARENA_VERSION "0.1.0" CACHE STRING "Suite-compatible Manager version")
-set(
-  ARENA_TUF_ROOT_SHA256
-  ""
-  CACHE STRING
-  "Pinned SHA-256 of the trusted TUF root metadata for official arena-setup builds"
-)
 project(
   uci_arena_manager
   VERSION ${ARENA_VERSION}
@@ -66,13 +60,11 @@ find_package(CLI11 CONFIG REQUIRED)
 find_package(CURL CONFIG REQUIRED)
 find_package(Drogon CONFIG REQUIRED)
 find_package(unofficial-libharu CONFIG REQUIRED)
-find_package(LibArchive REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
 find_package(tomlplusplus CONFIG REQUIRED)
 find_package(unofficial-sodium CONFIG REQUIRED)
-find_package(zstd CONFIG REQUIRED)
 
 add_library(arena_core
   src/domain/uuid.cpp
@@ -84,8 +76,6 @@ add_library(arena_core
   src/application/service_catalog.cpp
   src/application/process_supervisor.cpp
   src/application/tournament_executor.cpp
-  src/application/installer/credential_recovery.cpp
-  src/application/installer/setup.cpp
   src/adapters/sqlite_store.cpp
   src/adapters/uci_process.cpp
   src/adapters/uci_game_runner.cpp
@@ -100,20 +90,16 @@ target_include_directories(arena_core
 target_compile_definitions(
   arena_core
   PUBLIC ARENA_VERSION="${ARENA_VERSION}"
-  PRIVATE ARENA_TUF_ROOT_SHA256="${ARENA_TUF_ROOT_SHA256}"
 )
 
 target_link_libraries(arena_core
   PUBLIC
     nlohmann_json::nlohmann_json
   PRIVATE
-    CURL::libcurl
     unofficial::sqlite3::sqlite3
     spdlog::spdlog
     unofficial-sodium::sodium
     unofficial::libharu::hpdf
-    zstd::libzstd
-    LibArchive::LibArchive
 )
 
 if(WIN32)
@@ -158,9 +144,6 @@ endif()
 add_executable(arena-broker apps/broker/main.cpp)
 target_link_libraries(arena-broker PRIVATE arena_core CLI11::CLI11)
 
-add_executable(arena-setup apps/setup/main.cpp)
-target_link_libraries(arena-setup PRIVATE arena_core CLI11::CLI11 CURL::libcurl)
-
 if(WIN32)
   add_executable(
     uci-arena-manager
@@ -197,32 +180,28 @@ if(MSVC)
   target_compile_options(arena-service PRIVATE /W4 /permissive- /EHsc)
   target_compile_options(arena PRIVATE /W4 /permissive- /EHsc)
   target_compile_options(arena-broker PRIVATE /W4 /permissive- /EHsc)
-  target_compile_options(arena-setup PRIVATE /W4 /permissive- /EHsc)
   target_compile_options(uci-arena-manager PRIVATE /W4 /permissive- /EHsc)
 else()
   target_compile_options(arena_core PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(arena-service PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(arena PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(arena-broker PRIVATE -Wall -Wextra -Wpedantic)
-  target_compile_options(arena-setup PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(uci-arena-manager PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 if(WIN32)
-  install(TARGETS arena-service arena arena-broker arena-setup uci-arena-manager RUNTIME DESTINATION bin)
   install(
-    DIRECTORY
-      "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/"
-    DESTINATION bin
-    CONFIGURATIONS Release RelWithDebInfo MinSizeRel
-    FILES_MATCHING PATTERN "*.dll"
-  )
-  install(
-    DIRECTORY
-      "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin/"
-    DESTINATION bin
-    CONFIGURATIONS Debug
-    FILES_MATCHING PATTERN "*.dll"
+    TARGETS arena-service arena arena-broker uci-arena-manager
+    RUNTIME_DEPENDENCIES
+      PRE_EXCLUDE_REGEXES
+        "api-ms-"
+        "ext-ms-"
+        "[Aa]zure[Aa]ttest.*"
+        "[Hh]vsi[Ff]ile[Tt]rust\\.dll"
+        "[Pp]dm[Uu]tilities\\.dll"
+        "[Ww]paxholder\\.dll"
+      POST_EXCLUDE_REGEXES ".*[Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\\\][Ss][Yy][Ss][Tt][Ee][Mm]32[/\\\\].*"
+    RUNTIME DESTINATION bin
   )
   file(GLOB ARENA_VCPKG_COPYRIGHTS CONFIGURE_DEPENDS
     "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/*/copyright")
@@ -235,7 +214,7 @@ if(WIN32)
       DESTINATION "share/vcpkg/${ARENA_VCPKG_PACKAGE}")
   endforeach()
 else()
-  install(TARGETS arena-service arena arena-broker arena-setup uci-arena-manager RUNTIME DESTINATION bin)
+  install(TARGETS arena-service arena arena-broker uci-arena-manager RUNTIME DESTINATION bin)
 endif()
 install(DIRECTORY web/dist/ DESTINATION share/uci-arena/web)
 install(DIRECTORY specs/ DESTINATION share/uci-arena/specs)
@@ -279,16 +258,11 @@ if(NOT WIN32)
     COPYONLY
   )
   configure_file(
-    docs/arena-setup.1
-    "${ARENA_GENERATED_LINUX_DOC_DIR}/arena-setup.1"
-    COPYONLY
-  )
-  configure_file(
     packaging/linux/changelog.in
     "${ARENA_GENERATED_LINUX_DOC_DIR}/changelog"
     @ONLY
   )
-  foreach(ARENA_LINUX_DOC arena.1 arena-setup.1 changelog)
+  foreach(ARENA_LINUX_DOC arena.1 changelog)
     execute_process(
       COMMAND
         "${ARENA_GZIP_EXECUTABLE}" -9 -n -c
@@ -307,7 +281,6 @@ if(NOT WIN32)
   install(
     FILES
       "${ARENA_GENERATED_LINUX_DOC_DIR}/arena.1.gz"
-      "${ARENA_GENERATED_LINUX_DOC_DIR}/arena-setup.1.gz"
     DESTINATION share/man/man1
   )
   install(
@@ -345,7 +318,6 @@ if(ARENA_BUILD_TESTS)
     tests/unit/engine_onboarding_tests.cpp
     tests/unit/match_planner_tests.cpp
     tests/unit/security_report_tests.cpp
-    tests/unit/setup_tests.cpp
     tests/integration/service_output_integration_tests.cpp
     tests/integration/sqlite_store_tests.cpp
     tests/integration/tournament_execution_tests.cpp

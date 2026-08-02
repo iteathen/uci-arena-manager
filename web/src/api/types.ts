@@ -461,13 +461,6 @@ export interface BotControlResult {
   account_name?: string
 }
 
-export interface BotTokenReferenceResult {
-  schema: 'arena_bot_token_reference_result_v1'
-  schema_version: 1
-  state: 'saved'
-  validation: 'path_reference_only'
-}
-
 export interface BotOptions {
   schema: 'uci_arena_lichess_manager_options_v1'
   capacity: {

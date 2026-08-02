@@ -5,7 +5,7 @@ candidate described by `release/components/manager-core.json`.
 
 The explicitly dispatched `Manager component candidate` workflow builds and
 tests the Manager service, CLI, desktop host, broker, and packaged web view,
-stages the exact install tree, removes Installer-owned `arena-setup`, and emits
+stages the exact Manager-only install tree, and emits
 one deterministic component artifact, provider result, and Sigstore bundle for
 the requested target. The candidate is not a suite installer and has no suite
 release authority.

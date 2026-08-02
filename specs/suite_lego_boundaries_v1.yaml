@@ -48,6 +48,7 @@ mandatory_boundaries:
   - "All mutating clients use the same Manager command contract and all read clients consume the same projections."
   - "The unprivileged Manager service is the sole control-plane state authority; the privileged broker accepts only typed allowlisted actions."
   - "The Installer is an independent product that installs Manager through Manager's immutable artifact and component manifest; Manager does not own installer transaction behavior."
+  - "Installer-owned saved locators are mutated only through the adjacent typed arena-setup transaction; Manager may validate and project their redacted availability but its service API never writes them."
   - "Repositories exchange versioned contracts and immutable release artifacts and never import one another's internal source trees."
   - "Operator secrets are write-only at Manager boundaries; token contents belong to the provider and are never returned, logged, packaged, or persisted by Manager."
 

@@ -28,7 +28,7 @@ test("Linux packages declare policy metadata and reproducible documentation", ()
   assert.match(cmake, /gzip REQUIRED/u);
   assert.match(cmake, /ARENA_GZIP_EXECUTABLE\}" -9 -n -c/u);
   assert.match(cmake, /arena\.1\.gz/u);
-  assert.match(cmake, /arena-setup\.1\.gz/u);
+  assert.doesNotMatch(cmake, /arena-setup\.1\.gz/u);
   assert.match(cmake, /changelog\.gz/u);
   assert.match(cmake, /packaging\/linux\/copyright/u);
   assert.match(cmake, /share\/doc\/uci-arena-manager\/third-party/u);
@@ -86,12 +86,9 @@ test("Lintian exceptions are exact, reviewed, and cannot mask new tags", () => {
     .filter((line) => line && !line.startsWith("#"));
   const expected = [
     "uci-arena-manager binary: embedded-library bzip2 [usr/bin/arena-service]",
-    "uci-arena-manager binary: embedded-library bzip2 [usr/bin/arena-setup]",
     "uci-arena-manager binary: embedded-library curl [usr/bin/arena-service]",
-    "uci-arena-manager binary: embedded-library curl [usr/bin/arena-setup]",
     "uci-arena-manager binary: embedded-library curl [usr/bin/arena]",
     "uci-arena-manager binary: embedded-library zlib [usr/bin/arena-service]",
-    "uci-arena-manager binary: embedded-library zlib [usr/bin/arena-setup]",
     "uci-arena-manager binary: embedded-library zlib [usr/bin/arena]",
     "uci-arena-manager binary: no-manual-page [usr/bin/arena-broker]",
     "uci-arena-manager binary: no-manual-page [usr/bin/arena-service]",

@@ -253,6 +253,10 @@ bot_experience:
     - Use an operator-owned token-file path permanently. Local installations
       provide their own credential; repositories, packages, tests, and Manager
       state never contain one.
+    - Saving or replacing the token-file reference uses the same reviewed
+      Installer-owned import plan and commit from both Bots and Configuration.
+      The Manager HTTP API remains read-only for saved locators and cannot
+      report success before consumer configuration regeneration commits.
     - Detect and reject non-BOT accounts through the verified adapter.
     - Default engine selection to the verified uci_arena.engine component and
       show its model package separately.

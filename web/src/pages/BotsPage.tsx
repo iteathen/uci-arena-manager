@@ -2,12 +2,13 @@ import { IconRefresh, IconRobot } from '@tabler/icons-react'
 import { Alert, Badge, Button, Code, Group, Paper, SimpleGrid, Stack, Text, ThemeIcon, Title } from '@mantine/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { api, controlLocalBot, probeLocalBot } from '../api/client'
+import { api, controlLocalBot, localSetupAvailable, probeLocalBot } from '../api/client'
 import type { BotCandidate } from '../api/types'
 import { PageHeader } from '../components/PageHeader'
 import { PathPickerInput } from '../components/PathPickerInput'
 import { ComponentSetupButton } from '../components/ComponentSetupButton'
 import { BotOperationsPanel } from '../components/BotOperationsPanel'
+import { LocalSetupImportButton } from '../components/LocalSetupImportButton'
 
 export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
   const queryClient = useQueryClient()
@@ -18,14 +19,8 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
     (component) => component.component_id === 'lichess.adapter',
   )
   const [tokenPath, setTokenPath] = useState('')
+  const [tokenSaveMessage, setTokenSaveMessage] = useState('')
   const [detectionMessage, setDetectionMessage] = useState('')
-  const saveToken = useMutation({
-    mutationFn: api.saveBotTokenReference,
-    onSuccess: async () => {
-      setTokenPath('')
-      await candidates.refetch()
-    },
-  })
   const probe = useMutation({ mutationFn: probeLocalBot })
   const candidate = candidates.data?.candidates[0]
   const startup = useQuery({
@@ -162,15 +157,32 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
               filters={[{ name: 'Token reference files', patterns: ['*.txt', '*.token', '*'] }]}
             />
             <Group justify="flex-end">
-              <Button
-                variant="default"
-                loading={saveToken.isPending}
-                disabled={!tokenPath}
-                onClick={() => saveToken.mutate(tokenPath)}
-              >
-                Save token-file reference
-              </Button>
+              <LocalSetupImportButton
+                assetKind="lichess_token_path"
+                path={tokenPath}
+                label="Review token-file reference"
+                onCompleted={async () => {
+                  setTokenPath('')
+                  setTokenSaveMessage(
+                    'Token-file reference and affected consumer configuration committed.',
+                  )
+                  await candidates.refetch()
+                }}
+              />
             </Group>
+            {!localSetupAvailable() && (
+              <Alert color="blue" title="Desktop setup required">
+                <Group justify="space-between" align="flex-end">
+                  <Text size="sm">
+                    Reopen the installed desktop application to save this reference, or
+                    use Configuration to copy the equivalent setup command.
+                  </Text>
+                  <Button size="xs" variant="subtle" onClick={() => navigate('configuration')}>
+                    Open Configuration
+                  </Button>
+                </Group>
+              </Alert>
+            )}
             <Group justify="space-between">
               <Text size="sm">Startup</Text>
               <Code>
@@ -220,12 +232,7 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
             ))}
             {candidates.error && <Alert color="red">{candidates.error.message}</Alert>}
             {detectionMessage && <Alert color="blue">{detectionMessage}</Alert>}
-            {saveToken.error && <Alert color="red">{saveToken.error.message}</Alert>}
-            {saveToken.data && (
-              <Alert color="green">
-                Token-file reference saved without reading its contents.
-              </Alert>
-            )}
+            {tokenSaveMessage && <Alert color="green">{tokenSaveMessage}</Alert>}
             {probe.error && <Alert color="red">{probe.error.message}</Alert>}
             {startup.error && (
               <Alert color="blue">

@@ -55,8 +55,6 @@ class ControlPlane final {
     [[nodiscard]] nlohmann::json component_inventory() const;
     [[nodiscard]] nlohmann::json bot_profiles() const;
     [[nodiscard]] nlohmann::json bot_candidates() const;
-    [[nodiscard]] nlohmann::json save_bot_token_reference(
-        const std::filesystem::path& path) const;
     [[nodiscard]] ReportArtifact report_artifact(
         const std::string& report_id,
         const std::string& format) const;

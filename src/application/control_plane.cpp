@@ -3,7 +3,6 @@
 #include "arena/adapters/report_renderer.hpp"
 #include "arena/adapters/uci_process.hpp"
 #include "arena/application/engine_onboarding.hpp"
-#include "arena/application/installer/setup.hpp"
 #include "arena/application/service_catalog.hpp"
 #include "arena/domain/match_planner.hpp"
 #include "arena/domain/uuid.hpp"
@@ -1306,17 +1305,6 @@ json ControlPlane::bot_profiles() const {
 
 json ControlPlane::bot_candidates() const {
     return ServiceCatalog::discover_bot(manager_data_root_);
-}
-
-json ControlPlane::save_bot_token_reference(
-    const std::filesystem::path& path) const {
-    try {
-        return installer::SetupEngine::save_lichess_token_reference(
-            manager_data_root_, path);
-    } catch (const std::exception& error) {
-        throw CommandFailure(
-            "bot_token_reference_invalid", error.what(), 422);
-    }
 }
 
 json ControlPlane::generate_report(const json& request, const std::string& actor) {

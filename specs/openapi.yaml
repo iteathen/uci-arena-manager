@@ -270,35 +270,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BotDiscovery"
-  /bot-token-reference:
-    post:
-      operationId: saveBotTokenReference
-      description: >
-        Save a normalized path reference selected by the interactive user.
-        Manager checks filesystem metadata but never opens or returns the file.
-        Account probing is deliberately excluded because it must run through
-        the authenticated interactive-user helper.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [path]
-              properties:
-                path:
-                  type: string
-                  minLength: 1
-      responses:
-        "200":
-          description: Saved path-reference acknowledgement with no path or token material
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/BotTokenReferenceResult"
-        "422":
-          $ref: "#/components/responses/Problem"
   /resources/{kind}:
     get:
       operationId: listResources
@@ -482,19 +453,6 @@ components:
           type: array
           items:
             type: object
-    BotTokenReferenceResult:
-      type: object
-      additionalProperties: false
-      required: [schema, schema_version, state, validation]
-      properties:
-        schema:
-          const: arena_bot_token_reference_result_v1
-        schema_version:
-          const: 1
-        state:
-          const: saved
-        validation:
-          const: path_reference_only
     SystemStatus:
       type: object
       required:

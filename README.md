@@ -14,10 +14,14 @@ limits, and identity fingerprint.
 - `arena-service`: authoritative C++ service and local HTTP/WebSocket API
 - `arena`: native CLI using the same public control contract
 - `uci-arena-manager`: thin native desktop host for the packaged React view
-- `arena-setup`: typed, provenance-verifying component installer
 - `arena-broker`: minimal allowlisted privileged service-control boundary
 - `web`: React and TypeScript operator dashboard
 - `specs`: authoritative product, API, persistence, lifecycle, and UX contracts
+
+The adjacent `arena-setup` executable is produced by the independent
+[`uci-arena-installer`](https://github.com/iteathen/uci-arena-installer)
+repository. Manager calls it only through the authenticated typed desktop
+helper and does not compile or publish a second installer engine.
 
 ## Start the installed application
 
@@ -156,7 +160,9 @@ model label or product name never selects an engine path or parser.
 
 The Bots dashboard installs and detects the packaged Lichess adapter, lets the
 operator select an existing token file, and verifies the BOT account without a
-terminal. Manager saves only normalized path metadata. The credential probe
+terminal. Saving the reference invokes the same reviewed Installer import
+transaction used by Configuration; Manager only reads and projects its redacted
+availability. The credential probe
 runs through the authenticated, ephemeral helper hosted by the desktop
 launcher under the interactive user; only the receipt-verified adapter may
 open the token file, and only redacted account identity returns to the
@@ -165,8 +171,9 @@ UCI Arena Engine and default model, opening book, Syzygy, timing, single-game,
 capacity and transport evidence, token reference, account probe, and provider
 startup; a missing dimension is never collapsed into a generic active state.
 Every installation supplies its own operator-owned token file outside the
-repository, Manager data, and installed provider component. Manager stores only
-the normalized external path and rejects a file placed under Manager-owned data.
+repository, Manager data, and installed provider component. Installer stores
+only the normalized external path, rejects a file placed under Manager-owned
+data, and regenerates affected consumer configuration before commit.
 The same desktop-helper session provides **Refresh startup status**, **Enable
 startup**, and **Disable startup** controls. Enablement repeats the BOT-only
 account probe and uses that verified identity; the browser cannot provide an
@@ -176,15 +183,15 @@ startup that is already enabled.
 
 ## Installer and releases
 
-This repository is the suite composition and release authority. Provider
-repositories build immutable component candidates; they cannot publish suite
-installers or advance release channels.
+This repository publishes only the immutable `manager.core` candidate. The
+independent `uci-arena-installer` repository owns suite composition, release
+locks, platform installers, install/upgrade/repair/removal transactions, and
+release-channel advancement.
 
-A fix merged in a provider repository is not present in the suite until it has
-a new immutable component version for each supported platform and this
-repository's reviewed release lock selects those exact signed artifacts. The
-installer never silently substitutes newer provider source for its locked
-component bytes.
+A fix merged here is not present in the suite until Manager has a new immutable
+component version for each supported platform and the Installer repository's
+reviewed release lock selects those exact signed artifacts. Installer never
+silently substitutes newer source for locked component bytes.
 
 Complete Arena setup presents UCI Arena Engine, Book Forge, UCI Arena Evidence
 Service, and the Lichess Bot adapter as named, selected-by-default components.
@@ -260,12 +267,7 @@ preserves the installed scope; moving between scopes requires an explicit
 uninstall and install so two Manager authorities cannot compete for the same
 loopback port.
 
-Installer sources and official output locations are:
-
-- Windows: `packaging/windows` → `dist/windows`
-- Linux: `packaging/linux` → `dist/linux`
-
-`arena-setup` supports `inventory`, `plan`, `apply`, `verify`, `repair`,
+The installed Installer-owned `arena-setup` supports `inventory`, `plan`, `apply`, `verify`, `repair`,
 `upgrade`, and `uninstall`; every command supports `--json`. It detects
 Restaurant but never installs or changes it. To review signed catalog actions
 for missing chess knowledge:
@@ -288,7 +290,8 @@ local client key, knowledge assets, saved locators, verified repair media,
 rollback-protection state, content cache, and transaction evidence. Managed
 component roots, startup registrations, receipt documents, the Windows
 service, and MSI-owned program files are removed. The exact retention contract
-and the reversible clean-install test procedure are documented in
+and reversible clean-install test procedure are owned by
+`uci-arena-installer`; Manager's consumed boundary is documented in
 `specs/installation_contract_v1.yaml` and `release/README.md`.
 
 ## License

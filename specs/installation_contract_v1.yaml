@@ -470,6 +470,10 @@ packaging:
       - dashboard_assets
       - installed_contract_schemas
     rules:
+      - Manager component staging resolves the runtime dependency closure of
+        its declared entrypoints and never copies an entire package-manager
+        binary directory. Unused Installer or provider libraries cannot enter
+        manager.core merely because they share a build toolchain.
       - Per-user and per-machine MSIs package one tested native binary set and
         install an MSI-owned share/uci-arena/install-scope.txt marker containing
         exactly per-user or per-machine. Native entry points fail safely to

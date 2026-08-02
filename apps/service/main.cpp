@@ -392,37 +392,6 @@ int run_control_plane(const Options& options) {
             {drogon::Get});
 
         app.registerHandler(
-            "/api/v1/bot-token-reference",
-            [control_plane, auth](
-                const HttpRequestPtr& request,
-                std::function<void(const HttpResponsePtr&)>&& callback) {
-                if (!mutation_authorized(request, auth)) {
-                    callback(response(
-                        {{"code", "authentication_required"}},
-                        drogon::k401Unauthorized));
-                    return;
-                }
-                try {
-                    const json body = parse_body(request);
-                    if (!body.is_object() || !body.contains("path") ||
-                        !body.at("path").is_string() ||
-                        body.at("path").get_ref<const std::string&>().empty()) {
-                        throw arena::application::CommandFailure(
-                            "invalid_bot_token_reference",
-                            "path must be a nonempty string",
-                            400);
-                    }
-                    callback(response(control_plane->save_bot_token_reference(
-                        body.at("path").get<std::string>())));
-                } catch (const arena::application::CommandFailure& failure) {
-                    callback(response(
-                        arena::application::problem_json(failure),
-                        status_code(failure.http_status())));
-                }
-            },
-            {drogon::Post});
-
-        app.registerHandler(
             "/api/v1/resources/{1}",
             [control_plane, auth](
                 const HttpRequestPtr& request,

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -23,6 +24,24 @@ const script = path.join(
   "release",
   "build-manager-component.mjs",
 );
+
+test("Manager source and component definition contain no Installer engine", () => {
+  const cmake = readFileSync(path.join(repositoryRoot, "CMakeLists.txt"), "utf8");
+  const definition = JSON.parse(readFileSync(
+    path.join(repositoryRoot, "release", "components", "manager-core.json"),
+    "utf8",
+  ));
+  assert.doesNotMatch(cmake, /add_executable\(arena-setup/u);
+  assert.doesNotMatch(cmake, /application\/installer\/setup\.cpp/u);
+  assert.match(cmake, /RUNTIME_DEPENDENCIES/u);
+  assert.doesNotMatch(cmake, /VCPKG_INSTALLED_DIR[^\n]*\/bin/u);
+  assert.equal(definition.exclude_by_target, undefined);
+  assert.equal(existsSync(path.join(repositoryRoot, "apps", "setup", "main.cpp")), false);
+  assert.equal(
+    existsSync(path.join(repositoryRoot, "src", "application", "installer", "setup.cpp")),
+    false,
+  );
+});
 
 test("Manager component workflow uses the manifest's exact vcpkg baseline", () => {
   const manifest = JSON.parse(readFileSync(
@@ -53,7 +72,6 @@ test("Manager component archives accept a source epoch and remain reproducible",
       "arena-service.exe",
       "arena.exe",
       "arena-broker.exe",
-      "arena-setup.exe",
       "uci-arena-manager.exe",
     ]) {
       writeFileSync(path.join(bin, name), `${name}\n`);

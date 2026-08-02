@@ -1,22 +1,19 @@
 # The standalone package intentionally links the reviewed vcpkg bzip2 build
-# into the two binaries that read or create compressed release media.
+# into the service that reads compressed control-plane artifacts.
 uci-arena-manager binary: embedded-library bzip2 [usr/bin/arena-service]
-uci-arena-manager binary: embedded-library bzip2 [usr/bin/arena-setup]
 
-# The loopback control plane and typed setup client intentionally link the
+# The loopback control plane and CLI intentionally link the
 # reviewed vcpkg curl build so a clean installation does not vary by distro ABI.
 uci-arena-manager binary: embedded-library curl [usr/bin/arena-service]
-uci-arena-manager binary: embedded-library curl [usr/bin/arena-setup]
 uci-arena-manager binary: embedded-library curl [usr/bin/arena]
 
 # The reviewed vcpkg zlib build is intentionally linked into the exact
 # compressed-data consumers below; bundled license evidence ships separately.
 uci-arena-manager binary: embedded-library zlib [usr/bin/arena-service]
-uci-arena-manager binary: embedded-library zlib [usr/bin/arena-setup]
 uci-arena-manager binary: embedded-library zlib [usr/bin/arena]
 
 # These are private lifecycle or desktop entrypoints, not operator-facing CLIs.
-# Public commands arena and arena-setup each ship a compressed manual page.
+# The public arena command ships a compressed manual page.
 uci-arena-manager binary: no-manual-page [usr/bin/arena-broker]
 uci-arena-manager binary: no-manual-page [usr/bin/arena-service]
 uci-arena-manager binary: no-manual-page [usr/bin/uci-arena-manager]
