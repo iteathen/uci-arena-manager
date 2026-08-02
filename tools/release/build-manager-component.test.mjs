@@ -24,6 +24,21 @@ const script = path.join(
   "build-manager-component.mjs",
 );
 
+test("Manager component workflow uses the manifest's exact vcpkg baseline", () => {
+  const manifest = JSON.parse(readFileSync(
+    path.join(repositoryRoot, "vcpkg.json"),
+    "utf8",
+  ));
+  const workflow = readFileSync(
+    path.join(repositoryRoot, ".github", "workflows", "component-release.yml"),
+    "utf8",
+  );
+  assert.match(
+    workflow,
+    new RegExp(`vcpkgGitCommitId: ${manifest["builtin-baseline"]}`, "u"),
+  );
+});
+
 function sha256(filename) {
   return createHash("sha256").update(readFileSync(filename)).digest("hex");
 }
