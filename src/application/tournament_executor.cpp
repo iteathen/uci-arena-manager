@@ -266,18 +266,56 @@ std::map<std::string, std::string> string_map(const json& value) {
     return result;
 }
 
+void add_receipt_default_model_option(
+    const json& data,
+    std::map<std::string, std::string>& options) {
+    if (options.contains("ModelRoot") ||
+        data.value("onboarding_source", "") != "install_receipt" ||
+        !data.contains("default_model") ||
+        !data.at("default_model").is_object()) {
+        return;
+    }
+    const json& model = data.at("default_model");
+    if (!model.contains("root") || !model.at("root").is_string()) {
+        return;
+    }
+    const std::filesystem::path relative_root =
+        model.at("root").get<std::string>();
+    if (relative_root.empty() || relative_root.is_absolute() ||
+        std::ranges::any_of(
+            relative_root,
+            [](const std::filesystem::path& part) { return part == ".."; })) {
+        return;
+    }
+    const std::filesystem::path working_directory =
+        data.value("working_directory", "");
+    std::error_code error;
+    const std::filesystem::path model_root =
+        std::filesystem::weakly_canonical(
+            working_directory / relative_root,
+            error);
+    if (error || !std::filesystem::is_directory(model_root, error) || error ||
+        std::filesystem::is_symlink(model_root, error) || error) {
+        return;
+    }
+    options.emplace("ModelRoot", model_root.string());
+}
+
 adapters::UciGameEngine game_engine(
     const std::shared_ptr<ports::Store>& store,
     const json& competition,
     const std::string& id) {
     const json data = engine_data(store, id);
+    auto options =
+        string_map(data.value("option_overrides", json::object()));
+    add_receipt_default_model_option(data, options);
     adapters::UciGameEngine engine{
         id,
         data.at("fingerprint").get<std::string>(),
         data.at("executable").get<std::string>(),
         data.at("working_directory").get<std::string>(),
         data.value("arguments", std::vector<std::string>{}),
-        string_map(data.value("option_overrides", json::object())),
+        std::move(options),
     };
     const json overrides = competition.value(
         "engine_option_overrides", json::object());
@@ -734,17 +772,36 @@ void persist_progress(
         "planned_total_games",
         competition.value("pairings", json::array()).size());
     std::size_t completed = 0;
+    std::size_t cancelled = 0;
+    std::size_t failed = 0;
     std::optional<std::uint32_t> current_round;
     for (const auto& game : competition_games(store, id)) {
-        if (game.value("lifecycle", "") == "completed") {
+        const std::string game_lifecycle = game.value("lifecycle", "");
+        if (game_lifecycle == "completed") {
             ++completed;
-        } else if (game.value("lifecycle", "") == "running") {
+        } else if (game_lifecycle == "cancelled") {
+            ++cancelled;
+        } else if (game_lifecycle == "failed") {
+            ++failed;
+        } else if (game_lifecycle == "running") {
             current_round = game.value("round", 0U);
         }
     }
-    const std::size_t queued = total > completed + active_games
-        ? total - completed - active_games
+    const std::string effective_lifecycle = lifecycle.value_or(
+        competition.value("lifecycle", "planned"));
+    const bool terminal = effective_lifecycle == "completed" ||
+        effective_lifecycle == "cancelled" ||
+        effective_lifecycle == "failed";
+    const std::size_t terminal_games = completed + cancelled + failed;
+    const std::size_t effective_active = total > terminal_games
+        ? std::min(active_games, total - terminal_games)
         : 0;
+    const std::size_t pending = total > terminal_games + effective_active
+        ? total - terminal_games - effective_active
+        : 0;
+    const std::size_t queued = terminal ? 0 : pending;
+    const std::size_t unplayed = terminal ? pending : 0;
+    const std::size_t dispositioned = terminal_games + unplayed;
     update_resource_data(
         store,
         kind,
@@ -758,15 +815,16 @@ void persist_progress(
             data["progress"] = {
                 {"total_games", total},
                 {"queued_games", queued},
-                {"active_games", active_games},
+                {"active_games", effective_active},
                 {"completed_games", completed},
+                {"cancelled_games", cancelled},
+                {"failed_games", failed},
+                {"unplayed_games", unplayed},
                 {"percentage", total == 0 ? 0.0 :
-                     (100.0 * static_cast<double>(completed) /
+                     (100.0 * static_cast<double>(dispositioned) /
                       static_cast<double>(total))},
                 {"current_round",
-                 lifecycle && (*lifecycle == "completed" ||
-                               *lifecycle == "cancelled" ||
-                               *lifecycle == "failed")
+                 terminal
                      ? json(nullptr)
                      : current_round ? json(*current_round) : json(nullptr)},
                 {"updated_at", domain::utc_now()},
@@ -777,6 +835,37 @@ void persist_progress(
                 data.erase("failure_detail");
             }
         });
+}
+
+bool terminal_progress_requires_reconciliation(const json& competition) {
+    const std::string lifecycle = competition.value("lifecycle", "planned");
+    if (lifecycle != "completed" && lifecycle != "cancelled" &&
+        lifecycle != "failed") {
+        return false;
+    }
+    if (!competition.contains("progress") ||
+        !competition.at("progress").is_object()) {
+        return true;
+    }
+    const json& progress = competition.at("progress");
+    for (const auto* field : {
+             "total_games", "queued_games", "active_games",
+             "completed_games", "cancelled_games", "failed_games",
+             "unplayed_games", "percentage"}) {
+        if (!progress.contains(field) || !progress.at(field).is_number()) {
+            return true;
+        }
+    }
+    const std::size_t total = progress.at("total_games").get<std::size_t>();
+    const std::size_t dispositioned =
+        progress.at("completed_games").get<std::size_t>() +
+        progress.at("cancelled_games").get<std::size_t>() +
+        progress.at("failed_games").get<std::size_t>() +
+        progress.at("unplayed_games").get<std::size_t>();
+    return progress.at("active_games").get<std::size_t>() != 0 ||
+        progress.at("queued_games").get<std::size_t>() != 0 ||
+        dispositioned != total ||
+        (total != 0 && progress.at("percentage").get<double>() != 100.0);
 }
 
 }  // namespace
@@ -811,6 +900,10 @@ void TournamentExecutor::recover_interrupted() {
         for (const auto& record : store_->list_resources(kind, 10'000, 0)) {
             const json data = json::parse(record.data_json);
             const std::string lifecycle = data.value("lifecycle", "planned");
+            if (terminal_progress_requires_reconciliation(data)) {
+                persist_progress(store_, kind, record.id, 0, lifecycle);
+                continue;
+            }
             if (lifecycle != "running" && lifecycle != "queued") {
                 continue;
             }
@@ -825,7 +918,22 @@ void TournamentExecutor::recover_interrupted() {
                     current["interruption"] =
                         "Manager restarted; resume continues from committed game state.";
                     json progress = current.value("progress", json::object());
+                    const std::size_t interrupted =
+                        progress.value("active_games", 0U);
+                    const std::size_t queued =
+                        progress.value("queued_games", 0U);
+                    const std::size_t total =
+                        progress.value("total_games", 0U);
+                    const std::size_t resolved =
+                        progress.value("completed_games", 0U) +
+                        progress.value("cancelled_games", 0U) +
+                        progress.value("failed_games", 0U);
+                    const std::size_t remaining = total > resolved
+                        ? total - resolved
+                        : 0;
                     progress["active_games"] = 0;
+                    progress["queued_games"] =
+                        std::min(remaining, queued + interrupted);
                     progress["updated_at"] = domain::utc_now();
                     current["progress"] = std::move(progress);
                 });

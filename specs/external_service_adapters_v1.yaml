@@ -148,6 +148,27 @@ common_contract:
         incompatible and discard projections whose authority can no longer be
         established.
 
+lichess_provider_contract:
+  schema: uci_arena_service_contract_v1
+  transport: cli_json
+  authority: verified_installer_receipt_and_immutable_component_manifest
+  rules:
+    - Manager validates the exact service contract, operation catalog,
+      configuration schemas, status schema, entrypoint, component identity,
+      component version, and receipt digests before invoking any bot operation.
+    - The provider-specific projection owns request validation and response
+      reduction, while the generic installed-component verifier owns paths,
+      file inventories, digests, contract compatibility, and shell-free
+      transport.
+    - Fixed command prefixes come from the operation catalog. Browser input
+      never selects an operation catalog entry directly and never supplies an
+      executable, working directory, command prefix, path, argv array, shell
+      string, or credential value.
+    - Unknown contract majors, missing required operations, unsafe contract
+      paths, substituted identities, and digest drift are incompatible before
+      process launch. Additive minor operations remain inert until explicitly
+      supported by the Manager provider projection.
+
 profiles:
   book_forge:
     display_name: Book Forge
@@ -328,6 +349,9 @@ profiles:
           bounded returned summary and refreshed orchestration projection.
         - Manager may enqueue only the provider-defined first campaign against
           the active deployment or an existing service-issued target UUID.
+          A sole projected target is selected automatically; any explicit
+          target must be a member of the current provider projection, and the
+          resulting jobs retain that target id.
         - Manager may cancel or retry only a service-issued job UUID; arbitrary
           adapter commands, flags, paths, and raw catalog access are forbidden.
         - Target and job projections are bounded, omit provider-owned paths and
@@ -372,3 +396,6 @@ validation:
     cannot cross the typed provider API.
   - Starting a provider that exits before its public status contract reports
     an active non-stale daemon never yields an observed running state.
+  - A fake Lichess provider with a different component entrypoint path and
+    operation prefixes exercises discovery and every supported control through
+    the public contract without Manager source-layout or command-verb changes.

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { ManagedServiceData, Resource } from '../api/types'
 import {
   canEnqueueEvidenceCampaign,
+  evidenceCampaignBlocker,
+  needsEvidenceTarget,
   selectPreferredService,
   serviceCardStates,
   serviceLocatorMode,
@@ -63,6 +65,8 @@ describe('managed-service catalog selection', () => {
     }
 
     expect(canEnqueueEvidenceCampaign(evidence.data)).toBe(false)
+    expect(needsEvidenceTarget(evidence.data)).toBe(true)
+    expect(evidenceCampaignBlocker(evidence.data)).toContain('register')
     evidence.data.orchestration_projection.targets.push({
       id: '01900000-0000-7000-8000-000000000001',
       label: 'active deployment',
@@ -73,6 +77,24 @@ describe('managed-service catalog selection', () => {
       created_at: '2026-01-01T00:00:00.000Z',
     })
     expect(canEnqueueEvidenceCampaign(evidence.data)).toBe(true)
+    expect(needsEvidenceTarget(evidence.data)).toBe(false)
+    expect(evidenceCampaignBlocker(evidence.data)).toBeNull()
+    evidence.data.orchestration_projection.jobs.push({
+      id: '01900000-0000-7000-8000-000000000002',
+      adapter: 'timing_profile',
+      state: 'queued',
+      priority: 100,
+      target_id: evidence.data.orchestration_projection.targets[0]!.id,
+      shard_id: 'deadline-provider-qualification',
+      dataset_id: '01900000-0000-7000-8000-000000000003',
+      attempts: 0,
+      wait_reason: '',
+      last_error: '',
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+    })
+    expect(canEnqueueEvidenceCampaign(evidence.data)).toBe(false)
+    expect(evidenceCampaignBlocker(evidence.data)).toContain('already')
   })
 
   it('keeps package locator and runtime truth separate during loading', () => {

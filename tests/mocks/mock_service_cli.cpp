@@ -15,6 +15,16 @@ void replace_all(
     }
 }
 
+bool has_model_root_option(const int argc, char** argv) {
+    for (int index = 1; index + 1 < argc; ++index) {
+        if (std::string_view(argv[index]) == "--uci-options-json") {
+            return std::string_view(argv[index + 1]).find("\"ModelRoot\"") !=
+                std::string_view::npos;
+        }
+    }
+    return false;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -60,13 +70,20 @@ int main(int argc, char** argv) {
     }
     if (evidence && operation == "campaign" && argc > 4 &&
         std::string(argv[4]) == "enqueue") {
+        if (argc < 7 || std::string(argv[5]) != "--target" ||
+            std::string(argv[6]) != "123e4567-e89b-42d3-a456-426614174001") {
+            return 5;
+        }
         std::cout
-            << R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"uci_arena_evidence.service","component_version":"0.3.0","operation":"campaign_enqueue","ok":true,"payload":{"schema":"uci_arena_evidence_campaign_enqueue_v1","campaign":"time_control_curve_v1","target_id":null,"jobs":[]}})"
+            << R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"uci_arena_evidence.service","component_version":"0.3.0","operation":"campaign_enqueue","ok":true,"payload":{"schema":"uci_arena_evidence_campaign_enqueue_v1","campaign":"time_control_curve_v1","target_id":"123e4567-e89b-42d3-a456-426614174001","jobs":[]}})"
             << '\n';
         return 0;
     }
     if (evidence && operation == "target" && argc > 4 &&
         std::string(argv[4]) == "register") {
+        if (!has_model_root_option(argc, argv)) {
+            return 4;
+        }
         std::cout
             << R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"uci_arena_evidence.service","component_version":"0.3.0","operation":"target_register","ok":true,"payload":{"schema":"uci_arena_evidence_target_register_v1","created":true,"target":{"id":"123e4567-e89b-42d3-a456-426614174003","label":"Example Model deployment","model_id":"example_model_v1","model_fingerprint":"8104116015256418347","engine_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","provider":"cpu","created_at":"2026-07-25T00:00:00Z"}}})"
             << '\n';

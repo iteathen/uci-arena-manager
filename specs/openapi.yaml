@@ -31,6 +31,10 @@ x-command-actions:
     events after each game-state transition. A concurrent update returns the
     typed resource_revision_conflict error so an interactive client can
     refresh and retry a still-valid lifecycle action within a bounded policy.
+  progress_contract:
+    fields: [total_games, queued_games, active_games, completed_games, cancelled_games, failed_games, unplayed_games, percentage, current_round, updated_at]
+    invariant: total_games_equals_sum_of_all_game_dispositions
+    terminal_state: zero_active_zero_queued_all_games_resolved
 x-competition-plan-contract:
   formats: [head_to_head, round_robin, gauntlet, swiss, sprt]
   common_parameters:
@@ -72,6 +76,10 @@ x-interactive-helper-contract:
     - Local account control carries one fixed action and its bounded typed
       scalar parameters. It never accepts paths, executable names, argv arrays,
       shell strings, token material, or raw provider configuration.
+    - The helper resolves provider command prefixes from the exact
+      receipt-verified operation catalog. Its response separates startup
+      registration from provider activity, readiness, stream connectivity,
+      and bounded blockers.
 paths:
   /auth/pair-token:
     post:
@@ -85,6 +93,17 @@ paths:
       responses:
         "200":
           description: HttpOnly local session and CSRF token
+  /auth/session:
+    get:
+      operationId: resumeBrowserSession
+      description: >
+        Return the CSRF value for the existing unexpired HttpOnly browser
+        session. This does not create or extend a session.
+      responses:
+        "200":
+          description: Existing browser session CSRF token
+        "401":
+          $ref: "#/components/responses/Problem"
   /system/status:
     get:
       operationId: getSystemStatus
@@ -196,6 +215,10 @@ paths:
                     type: string
                 uci_options:
                   type: object
+                  description: >
+                    Bounded UCI option overrides applied before readyok and
+                    persisted for subsequent launches. Every key must be
+                    advertised by the probed engine.
       responses:
         "200":
           description: Engine passed the complete registration probe

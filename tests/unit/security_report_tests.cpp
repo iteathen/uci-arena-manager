@@ -31,6 +31,11 @@ TEST_CASE("pairing tokens are one-time and browser sessions require CSRF") {
     REQUIRE(session);
     REQUIRE_FALSE(auth.exchange_pairing_token(token));
     REQUIRE(auth.authenticate_session(session->id));
+    const auto resumed = auth.resume_browser_session(session->id);
+    REQUIRE(resumed);
+    REQUIRE(resumed->id == session->id);
+    REQUIRE(resumed->csrf_token == session->csrf_token);
+    REQUIRE_FALSE(auth.resume_browser_session("missing"));
     REQUIRE(auth.validate_csrf(session->id, session->csrf_token));
     REQUIRE_FALSE(auth.validate_csrf(session->id, "wrong"));
 

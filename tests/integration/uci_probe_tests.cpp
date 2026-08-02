@@ -33,6 +33,20 @@ TEST_CASE("UCI probe discovers identity options and a legal bestmove") {
     REQUIRE(result.runtime_provider_fingerprint == "5805769137532863231");
 }
 
+TEST_CASE("UCI probe rejects an option the engine did not advertise") {
+    const std::filesystem::path executable = ARENA_MOCK_UCI_PATH;
+    const auto result = arena::adapters::UciProcess::probe(
+        executable,
+        executable.parent_path(),
+        {},
+        std::chrono::seconds(5),
+        {{"ModelRoot", "not-advertised"}});
+    REQUIRE_FALSE(result.ok);
+    REQUIRE(
+        result.error.find("requested UCI option is not advertised: ModelRoot") !=
+        std::string::npos);
+}
+
 TEST_CASE("engine registration derives preferred metadata from the verified receipt") {
     namespace fs = std::filesystem;
     using nlohmann::json;
@@ -51,6 +65,8 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
         active_root / "bin" / "uci_arena_engine";
 #endif
     fs::create_directories(executable.parent_path());
+    const fs::path model_root = active_root / "models" / "default";
+    fs::create_directories(model_root);
     fs::create_directories(data_root / "receipts");
     fs::copy_file(
         ARENA_MOCK_UCI_PATH,
@@ -70,7 +86,8 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                {"default_model",
                 {{"model_id", "example_model_v1"},
                  {"display_name", "Example Model"},
-                 {"input_adapter_id", "dense_planes_v1"}}},
+                 {"input_adapter_id", "dense_planes_v1"},
+                 {"root", "models/default"}}},
                {"files", json::array()},
            }
                .dump(2);
@@ -92,6 +109,11 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
     REQUIRE(discovery.at("candidates").size() == 1);
     const std::string candidate_id =
         discovery.at("candidates").at(0).at("candidate_id");
+    const json candidate_options =
+        discovery.at("candidates").at(0).at("uci_options");
+    REQUIRE(
+        fs::path(candidate_options.at("ModelRoot").get<std::string>()) ==
+        fs::weakly_canonical(model_root));
 
     {
         auto store =
@@ -119,7 +141,9 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                          {"executable", executable.string()},
                          {"working_directory",
                           executable.parent_path().string()},
-                         {"arguments", json::array()},
+                         {"arguments",
+                          {"--require-model-root", model_root.string()}},
+                         {"uci_options", candidate_options},
                          {"candidate_id",
                           selected_candidate_id},
                          {"component_id", "forged.engine"},
@@ -147,6 +171,14 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
         REQUIRE(
             verified.at("default_model").at("display_name") ==
             "Example Model");
+        REQUIRE(
+            fs::path(
+                verified.at("option_overrides")
+                    .at("ModelRoot")
+                    .get<std::string>()) == fs::weakly_canonical(model_root));
+        REQUIRE(
+            verified.at("runtime_model_identity")
+                .at("model_fingerprint") == "8104116015256418347");
 
         const json forged =
             registration("engcand-forged")

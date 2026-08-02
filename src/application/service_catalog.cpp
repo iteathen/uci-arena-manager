@@ -114,6 +114,16 @@ bool safe_relative_path(const fs::path& path) {
     return true;
 }
 
+bool valid_contract_identifier(const std::string_view value) {
+    return !value.empty() && value.size() <= 128U &&
+           std::ranges::all_of(
+               value,
+               [](const unsigned char character) {
+                   return std::isalnum(character) != 0 || character == '.' ||
+                          character == '_' || character == '-';
+               });
+}
+
 bool within(const fs::path& root, const fs::path& candidate) {
     const fs::path normalized_root =
         fs::absolute(root).lexically_normal();
@@ -307,11 +317,292 @@ fs::path verified_entrypoint(
         "installed component entrypoint is not in its signed file manifest");
 }
 
+fs::path verified_component_file(
+    const InstalledComponent& component,
+    const fs::path& relative,
+    const std::string& expected_sha256) {
+    const std::string component_id =
+        component.receipt.at("component_id").get<std::string>();
+    if (!safe_relative_path(relative) || expected_sha256.size() != 64U) {
+        throw std::runtime_error(
+            component_id + " public contract reference is unsafe");
+    }
+    const fs::path normalized = relative.lexically_normal();
+    for (const auto& file : component.manifest.at("files")) {
+        if (fs::path(file.value("path", "")).lexically_normal() != normalized) {
+            continue;
+        }
+        const fs::path path = component.active_root / normalized;
+        if (!fs::is_regular_file(path) || fs::is_symlink(path) ||
+            file.value("sha256", "") != expected_sha256 ||
+            sha256_file(path) != expected_sha256) {
+            throw std::runtime_error(
+                component_id + " public contract digest does not match its receipt");
+        }
+        return path;
+    }
+    throw std::runtime_error(
+        component_id + " public contract is not in its immutable file inventory");
+}
+
+struct ProviderServiceContract {
+    fs::path executable;
+    std::vector<std::string> invocation_prefix;
+    json operations;
+};
+
+ProviderServiceContract verified_provider_service_contract(
+    const fs::path& receipts_root,
+    const InstalledComponent& component) {
+    if (!component.receipt.contains("service_contract") ||
+        !component.receipt.at("service_contract").is_object()) {
+        throw std::runtime_error(
+            "installed provider has no receipt-verified service contract");
+    }
+    const json& receipt_contract = component.receipt.at("service_contract");
+    if (receipt_contract.value("schema", "") !=
+            "uci_arena_service_contract_v1" ||
+        !receipt_contract.value("credential_gated_startup", false)) {
+        throw std::runtime_error(
+            "installed provider service contract is incompatible");
+    }
+    const auto contract_reference = [&component, &receipt_contract](
+                                        const char* path_field,
+                                        const char* digest_field) {
+        if (!receipt_contract.contains(path_field) ||
+            !receipt_contract.at(path_field).is_string() ||
+            !receipt_contract.contains(digest_field) ||
+            !receipt_contract.at(digest_field).is_string()) {
+            throw std::runtime_error(
+                "installed provider contract receipt is incomplete");
+        }
+        const fs::path relative =
+            receipt_contract.at(path_field).get<std::string>();
+        return std::pair{
+            relative,
+            verified_component_file(
+                component,
+                relative,
+                receipt_contract.at(digest_field).get<std::string>()),
+        };
+    };
+    const auto [contract_relative, contract_path] =
+        contract_reference("path", "sha256");
+    if (!component.manifest.contains("contract_manifest") ||
+        !component.manifest.at("contract_manifest").is_string() ||
+        fs::path(component.manifest.at("contract_manifest").get<std::string>())
+                .lexically_normal() != contract_relative.lexically_normal()) {
+        throw std::runtime_error(
+            "installed provider manifest and receipt contract paths disagree");
+    }
+    const json contract = read_json_file(contract_path);
+    if (contract.value("schema", "") != "uci_arena_service_contract_v1" ||
+        !contract.contains("service") || !contract.at("service").is_object()) {
+        throw std::runtime_error("installed provider service contract is malformed");
+    }
+    const json& service = contract.at("service");
+    const std::string contract_version = service.value("contract_version", "");
+    if (service.value("component_id", "") !=
+            component.receipt.value("component_id", "") ||
+        service.value("component_version", "") !=
+            component.receipt.value("component_version", "") ||
+        service.value("transport", "") != "cli_json" ||
+        contract_version.size() <= 2 ||
+        !contract_version.starts_with("1.") ||
+        !std::ranges::all_of(
+            std::string_view(contract_version).substr(2),
+            [](const unsigned char character) {
+                return std::isdigit(character) != 0;
+            }) ||
+        !service.contains("entrypoint") ||
+        !service.at("entrypoint").is_string()) {
+        throw std::runtime_error(
+            "installed provider service identity is incompatible");
+    }
+    if (!component.manifest.contains("entrypoints") ||
+        !component.manifest.at("entrypoints").is_object() ||
+        !component.manifest.at("entrypoints").contains("cli") ||
+        component.manifest.at("entrypoints").at("cli") !=
+            service.at("entrypoint")) {
+        throw std::runtime_error(
+            "installed provider CLI entrypoint is not contract-owned");
+    }
+    const fs::path component_entrypoint = verified_entrypoint(component, "cli");
+
+    const auto verify_referenced_contract = [
+                                                &contract,
+                                                &contract_reference](
+                                                const char* contract_field,
+                                                const char* receipt_path_field,
+                                                const char* receipt_digest_field) {
+        const auto [relative, path] = contract_reference(
+            receipt_path_field, receipt_digest_field);
+        if (!contract.contains(contract_field) ||
+            !contract.at(contract_field).is_string() ||
+            fs::path(contract.at(contract_field).get<std::string>())
+                    .lexically_normal() != relative.lexically_normal()) {
+            throw std::runtime_error(
+                "installed provider contract references disagree");
+        }
+        return path;
+    };
+    const fs::path operations_path = verify_referenced_contract(
+        "manager_operations", "manager_operations_path",
+        "manager_operations_sha256");
+    static_cast<void>(verify_referenced_contract(
+        "configuration_schema", "configuration_schema_path",
+        "configuration_schema_sha256"));
+    static_cast<void>(verify_referenced_contract(
+        "configuration_update_schema", "configuration_update_schema_path",
+        "configuration_update_schema_sha256"));
+    static_cast<void>(verify_referenced_contract(
+        "status_schema", "status_schema_path", "status_schema_sha256"));
+
+    if (!contract.contains("credential_contract") ||
+        !contract.at("credential_contract").is_object() ||
+        contract.at("credential_contract").value("contents_visible_to", "") !=
+            "provider_transport_only" ||
+        contract.at("credential_contract").value("manager_projection", "") !=
+            "path_and_redacted_status_only" ||
+        !contract.contains("error_contract") ||
+        !contract.at("error_contract").is_object() ||
+        contract.at("error_contract").value("format", "") !=
+            "bounded_typed_json" ||
+        contract.at("error_contract").value("secrets", "") != "redacted") {
+        throw std::runtime_error(
+            "installed provider credential or error contract is incompatible");
+    }
+
+    const json operations = read_json_file(operations_path);
+    const std::string operation_schema = operations.value("schema", "");
+    if (!valid_contract_identifier(operation_schema) ||
+        !operation_schema.ends_with("_manager_api_v1") ||
+        operations.value("version", "") != contract_version ||
+        !operations.contains("transport") ||
+        !operations.at("transport").is_object() ||
+        operations.at("transport").value("kind", "") != "cli_json" ||
+        operations.at("transport").value("entrypoint", "") !=
+            service.at("entrypoint").get<std::string>() ||
+        operations.at("transport").value("stdout", "") !=
+            "one_bounded_json_document" ||
+        operations.at("transport").value("shell", true) ||
+        !operations.contains("operations") ||
+        !operations.at("operations").is_object() ||
+        operations.at("operations").size() > 64U) {
+        throw std::runtime_error(
+            "installed provider Manager operation catalog is incompatible");
+    }
+    for (const auto& [name, operation] : operations.at("operations").items()) {
+        if (!valid_contract_identifier(name) || !operation.is_object() ||
+            !operation.contains("arguments") ||
+            !operation.at("arguments").is_array() ||
+            operation.at("arguments").empty() ||
+            operation.at("arguments").size() > 8U ||
+            !operation.contains("mutates") ||
+            !operation.at("mutates").is_boolean() ||
+            !operation.contains("credential") ||
+            !operation.at("credential").is_string()) {
+            throw std::runtime_error(
+                "installed provider Manager operation is malformed: " + name);
+        }
+        const std::string credential =
+            operation.at("credential").get<std::string>();
+        if (credential != "forbidden" &&
+            credential != "external_file_path_only") {
+            throw std::runtime_error(
+                "installed provider operation credential boundary is invalid: " +
+                name);
+        }
+        for (const auto& argument : operation.at("arguments")) {
+            if (!argument.is_string() ||
+                !valid_contract_identifier(argument.get<std::string>())) {
+                throw std::runtime_error(
+                    "installed provider operation argument is invalid: " + name);
+            }
+        }
+    }
+    const std::set<std::string> required_operations{
+        "account_probe", "config_get", "config_update", "owner_add",
+        "owner_list", "owner_remove", "provider_status",
+        "reservation_cancel", "reservation_create", "reservation_status",
+        "scheduler_pause", "scheduler_resume", "scheduler_status",
+        "startup_install", "startup_status", "startup_uninstall",
+    };
+    for (const auto& operation : required_operations) {
+        if (!operations.at("operations").contains(operation)) {
+            throw std::runtime_error(
+                "installed provider is missing required Manager operation: " +
+                operation);
+        }
+    }
+
+    if (!contract.contains("invocation") ||
+        !contract.at("invocation").is_object()) {
+        throw std::runtime_error("installed provider invocation is missing");
+    }
+    const json& invocation = contract.at("invocation");
+    const std::string invocation_kind = invocation.value("kind", "");
+    if (invocation_kind == "direct") {
+        return {component_entrypoint, {}, operations};
+    }
+    if (invocation_kind != "dependency_runtime" ||
+        !invocation.contains("runtime_component_id") ||
+        !invocation.at("runtime_component_id").is_string() ||
+        !invocation.contains("runtime_entrypoint") ||
+        !invocation.at("runtime_entrypoint").is_string()) {
+        throw std::runtime_error(
+            "installed provider invocation kind is incompatible");
+    }
+    const std::string runtime_component =
+        invocation.at("runtime_component_id").get<std::string>();
+    const std::string runtime_entrypoint =
+        invocation.at("runtime_entrypoint").get<std::string>();
+    if (!valid_contract_identifier(runtime_component) ||
+        !valid_contract_identifier(runtime_entrypoint) ||
+        !component.manifest.contains("dependencies") ||
+        !component.manifest.at("dependencies").is_array() ||
+        std::ranges::none_of(
+            component.manifest.at("dependencies"),
+            [&runtime_component](const json& dependency) {
+                return dependency.is_string() &&
+                       dependency.get_ref<const std::string&>() == runtime_component;
+            })) {
+        throw std::runtime_error(
+            "installed provider runtime is not a declared dependency");
+    }
+    const InstalledComponent runtime =
+        installed_component(receipts_root, runtime_component);
+    return {
+        verified_entrypoint(runtime, runtime_entrypoint),
+        {component_entrypoint.string()},
+        operations,
+    };
+}
+
+std::vector<std::string> provider_operation_arguments(
+    const ProviderServiceContract& contract,
+    const std::string& operation_name,
+    const std::string& expected_credential) {
+    if (!contract.operations.at("operations").contains(operation_name)) {
+        throw std::runtime_error(
+            "provider does not publish the required operation: " + operation_name);
+    }
+    const json& operation =
+        contract.operations.at("operations").at(operation_name);
+    if (operation.value("credential", "") != expected_credential) {
+        throw std::runtime_error(
+            "provider operation credential boundary changed: " + operation_name);
+    }
+    std::vector<std::string> arguments = contract.invocation_prefix;
+    for (const auto& argument : operation.at("arguments")) {
+        arguments.push_back(argument.get<std::string>());
+    }
+    return arguments;
+}
+
 struct BotProviderContext {
     InstalledComponent adapter;
-    InstalledComponent node;
-    fs::path adapter_entrypoint;
-    fs::path node_entrypoint;
+    ProviderServiceContract contract;
     fs::path configuration_path;
 };
 
@@ -320,8 +611,8 @@ BotProviderContext bot_provider_context(
     const fs::path receipts_root = manager_data_root / "receipts";
     InstalledComponent adapter =
         installed_component(receipts_root, "lichess.adapter", true);
-    InstalledComponent node =
-        installed_component(receipts_root, "node_runtime.private");
+    ProviderServiceContract contract =
+        verified_provider_service_contract(receipts_root, adapter);
     const fs::path configuration_path = fs::absolute(
         adapter.receipt.value("configuration_path", std::string{}))
                                                 .lexically_normal();
@@ -331,14 +622,9 @@ BotProviderContext bot_provider_context(
         throw std::runtime_error(
             "the installed Lichess adapter configuration is unavailable");
     }
-    const fs::path adapter_entrypoint =
-        verified_entrypoint(adapter, "adapter");
-    const fs::path node_entrypoint = verified_entrypoint(node, "node");
     return {
         std::move(adapter),
-        std::move(node),
-        adapter_entrypoint,
-        node_entrypoint,
+        std::move(contract),
         configuration_path,
     };
 }
@@ -359,6 +645,38 @@ fs::path bot_runtime_directory(const InstalledComponent& adapter) {
             "the installed Lichess adapter runtime directory is unavailable");
     }
     return runtime;
+}
+
+json project_bot_provider_status(const json& result) {
+    if (!result.is_object() || result.dump().size() > 64U * 1024U ||
+        result.value("schema", "") != "uci_arena_lichess_status_v3" ||
+        !result.contains("active") || !result.at("active").is_boolean() ||
+        !result.contains("ready") || !result.at("ready").is_boolean() ||
+        !result.contains("stream_connected") ||
+        !result.at("stream_connected").is_boolean() ||
+        !result.contains("blockers") || !result.at("blockers").is_array() ||
+        result.at("blockers").size() > 32U) {
+        throw std::runtime_error(
+            "the provider returned invalid BOT runtime status");
+    }
+    json blockers = json::array();
+    for (const auto& blocker : result.at("blockers")) {
+        if (!blocker.is_string() ||
+            !valid_contract_identifier(blocker.get<std::string>())) {
+            throw std::runtime_error(
+                "the provider returned an invalid BOT runtime blocker");
+        }
+        blockers.push_back(blocker);
+    }
+    const bool active = result.at("active").get<bool>();
+    const bool ready = result.at("ready").get<bool>();
+    return {
+        {"provider_state", !active ? "inactive" : ready ? "ready" : "degraded"},
+        {"provider_active", active},
+        {"provider_ready", ready},
+        {"stream_connected", result.at("stream_connected")},
+        {"blockers", std::move(blockers)},
+    };
 }
 
 const json& required_object(
@@ -1399,6 +1717,7 @@ json ServiceCatalog::discover_bot(
         {"display_name", "Lichess Bot"},
         {"adapter_component_id", "lichess.adapter"},
         {"package_state", "missing"},
+        {"integration_state", "not_configured"},
         {"token_reference_available", false},
         {"configuration_state", "missing"},
         {"startup_state", "disabled"},
@@ -1415,9 +1734,19 @@ json ServiceCatalog::discover_bot(
         candidate["package_state"] = "installed";
         candidate["component_version"] =
             adapter.receipt.value("component_version", "");
-        static_cast<void>(verified_entrypoint(adapter, "adapter"));
         adapter_root = adapter.active_root;
-        adapter_ready = true;
+        try {
+            static_cast<void>(
+                verified_provider_service_contract(receipts_root, adapter));
+            candidate["integration_state"] = "compatible";
+            adapter_ready = true;
+        } catch (const std::exception& error) {
+            candidate["integration_state"] = "incompatible";
+            issues.push_back({
+                {"code", "bot_adapter_incompatible"},
+                {"detail", error.what()},
+            });
+        }
         const std::string configuration_path =
             adapter.receipt.value("configuration_path", "");
         if (configuration_path.empty() ||
@@ -1444,7 +1773,15 @@ json ServiceCatalog::discover_bot(
                 .value("installed", false);
         candidate["startup_state"] =
             startup_installed ? "installed" : "disabled";
-    } catch (const std::exception&) {
+    } catch (const std::exception& error) {
+        if (fs::is_regular_file(receipts_root / "lichess.adapter.json")) {
+            candidate["package_state"] = "broken";
+            candidate["integration_state"] = "incompatible";
+            issues.push_back({
+                {"code", "bot_adapter_broken"},
+                {"detail", error.what()},
+            });
+        }
     }
     project_bot_prerequisite(
         readiness,
@@ -1455,15 +1792,11 @@ json ServiceCatalog::discover_bot(
         "Install or repair the verified Lichess Bot adapter.");
     readiness["startup"] = startup_installed ? "enabled" : "disabled";
 
-    bool runtime_ready = false;
-    try {
-        static_cast<void>(
-            installed_component(receipts_root, "node_runtime.private"));
-        runtime_ready = true;
-    } catch (const std::exception& error) {
+    const bool runtime_ready = adapter_ready;
+    if (!runtime_ready) {
         issues.push_back({
             {"code", "bot_runtime_unavailable"},
-            {"detail", error.what()},
+            {"detail", "The adapter's declared execution runtime is unavailable."},
         });
     }
     readiness["adapter_runtime"] = runtime_ready ? "ready" : "missing";
@@ -1649,11 +1982,8 @@ json ServiceCatalog::probe_bot(
 json ServiceCatalog::probe_bot(
     const fs::path& manager_data_root,
     const BotCommandRunner& command_runner) {
-    const fs::path receipts_root = manager_data_root / "receipts";
-    const InstalledComponent adapter =
-        installed_component(receipts_root, "lichess.adapter", true);
-    const InstalledComponent node =
-        installed_component(receipts_root, "node_runtime.private");
+    const BotProviderContext provider =
+        bot_provider_context(manager_data_root);
     const fs::path token_path =
         saved_locator_reference(manager_data_root, "lichess_token_path")
             .value_or(fs::path{});
@@ -1661,31 +1991,24 @@ json ServiceCatalog::probe_bot(
         throw std::runtime_error(
             "a valid Lichess token-file reference is required");
     }
-    if (same_or_within(adapter.active_root, token_path)) {
+    if (same_or_within(provider.adapter.active_root, token_path)) {
         throw std::runtime_error(
             "the Lichess token file must be outside the installed adapter");
     }
-    const std::string configuration_path =
-        adapter.receipt.value("configuration_path", "");
-    if (configuration_path.empty() ||
-        !fs::is_regular_file(configuration_path) ||
-        fs::is_symlink(configuration_path)) {
-        throw std::runtime_error(
-            "the installed Lichess adapter configuration is unavailable");
-    }
-    const fs::path adapter_entrypoint =
-        verified_entrypoint(adapter, "adapter");
-    const json result = command_runner(
-        verified_entrypoint(node, "node"),
-        adapter.active_root,
+    std::vector<std::string> arguments = provider_operation_arguments(
+        provider.contract, "account_probe", "external_file_path_only");
+    arguments.insert(
+        arguments.end(),
         {
-            adapter_entrypoint.string(),
-            "probe",
             "--config",
-            configuration_path,
+            provider.configuration_path.string(),
             "--token-file",
             token_path.string(),
-        },
+        });
+    const json result = command_runner(
+        provider.contract.executable,
+        provider.adapter.active_root,
+        arguments,
         std::chrono::seconds(30));
     if (result.value("status", "") != "ready" ||
         !result.value("is_bot", false) ||
@@ -1733,30 +2056,19 @@ json ServiceCatalog::control_bot(
         action != "disable_startup") {
         throw std::invalid_argument("unsupported BOT account-control action");
     }
-    const fs::path receipts_root = manager_data_root / "receipts";
-    const InstalledComponent adapter =
-        installed_component(receipts_root, "lichess.adapter", true);
-    const InstalledComponent node =
-        installed_component(receipts_root, "node_runtime.private");
-    if (!adapter.receipt.contains("data_paths") ||
-        !adapter.receipt.at("data_paths").is_array() ||
-        adapter.receipt.at("data_paths").empty() ||
-        !adapter.receipt.at("data_paths").at(0).is_string()) {
-        throw std::runtime_error(
-            "the installed Lichess adapter has no managed runtime directory");
-    }
-    const fs::path runtime_directory = fs::absolute(
-        adapter.receipt.at("data_paths").at(0).get<std::string>())
-                                               .lexically_normal();
-    const fs::path adapter_entrypoint =
-        verified_entrypoint(adapter, "adapter");
-    const fs::path node_entrypoint = verified_entrypoint(node, "node");
-
-    std::vector<std::string> arguments{
-        adapter_entrypoint.string(),
-        "startup",
-    };
+    const BotProviderContext provider =
+        bot_provider_context(manager_data_root);
+    const fs::path runtime_directory =
+        bot_runtime_directory(provider.adapter);
     std::optional<std::string> account_name;
+    const std::string provider_operation =
+        action == "enable_startup" ? "startup_install"
+        : action == "disable_startup" ? "startup_uninstall"
+                                      : "startup_status";
+    std::vector<std::string> arguments = provider_operation_arguments(
+        provider.contract,
+        provider_operation,
+        action == "enable_startup" ? "external_file_path_only" : "forbidden");
     if (action == "enable_startup") {
         if (discover_bot(manager_data_root).at("candidates").at(0).at("state") !=
             "ready_to_probe") {
@@ -1766,7 +2078,7 @@ json ServiceCatalog::control_bot(
         const json probe = probe_bot(manager_data_root, command_runner);
         account_name = probe.at("account_name").get<std::string>();
         const std::string configuration_path =
-            adapter.receipt.value("configuration_path", "");
+            provider.adapter.receipt.value("configuration_path", "");
         const fs::path token_path =
             saved_locator_reference(manager_data_root, "lichess_token_path")
                 .value_or(fs::path{});
@@ -1777,7 +2089,6 @@ json ServiceCatalog::control_bot(
         arguments.insert(
             arguments.end(),
             {
-                "install",
                 "--config",
                 configuration_path,
                 "--token-file",
@@ -1787,19 +2098,15 @@ json ServiceCatalog::control_bot(
                 "--runtime-dir",
                 runtime_directory.string(),
             });
-    } else {
-        arguments.push_back(
-            action == "disable_startup" ? "uninstall" : "status");
-        if (action == "disable_startup") {
-            arguments.insert(
-                arguments.end(),
-                {"--runtime-dir", runtime_directory.string()});
-        }
+    } else if (action == "disable_startup") {
+        arguments.insert(
+            arguments.end(),
+            {"--runtime-dir", runtime_directory.string()});
     }
 
     const json result = command_runner(
-        node_entrypoint,
-        adapter.active_root,
+        provider.contract.executable,
+        provider.adapter.active_root,
         arguments,
         action == "enable_startup"
             ? std::chrono::minutes(5)
@@ -1822,13 +2129,28 @@ json ServiceCatalog::control_bot(
         throw std::runtime_error(
             "the provider did not remove BOT startup");
     }
-    const std::string provider_active =
-        startup.value("active", std::string{});
-    const std::string task_status =
-        startup.value("taskStatus", std::string{});
-    const bool active =
-        provider_active == "active" ||
-        task_status == "Running";
+    std::vector<std::string> status_arguments = provider_operation_arguments(
+        provider.contract, "provider_status", "forbidden");
+    status_arguments.insert(
+        status_arguments.end(),
+        {"--runtime-dir", runtime_directory.string()});
+    json provider_status;
+    try {
+        provider_status = project_bot_provider_status(command_runner(
+            provider.contract.executable,
+            provider.adapter.active_root,
+            status_arguments,
+            std::chrono::seconds(30)));
+    } catch (const std::exception&) {
+        provider_status = {
+            {"provider_state", "unavailable"},
+            {"provider_active", false},
+            {"provider_ready", false},
+            {"stream_connected", false},
+            {"blockers", json::array({"provider_status_unavailable"})},
+        };
+    }
+    const bool active = provider_status.at("provider_active").get<bool>();
     json response{
         {"schema", "arena_bot_control_result_v1"},
         {"schema_version", 1},
@@ -1836,6 +2158,7 @@ json ServiceCatalog::control_bot(
         {"installed", installed},
         {"active", active},
     };
+    response.update(provider_status);
     if (account_name.has_value()) {
         response["account_name"] = *account_name;
     }
@@ -1862,16 +2185,15 @@ json ServiceCatalog::bot_options(
     const BotCommandRunner& command_runner) {
     const BotProviderContext provider =
         bot_provider_context(manager_data_root);
+    std::vector<std::string> arguments = provider_operation_arguments(
+        provider.contract, "config_get", "forbidden");
+    arguments.insert(
+        arguments.end(),
+        {"--config", provider.configuration_path.string()});
     const json result = command_runner(
-        provider.node_entrypoint,
+        provider.contract.executable,
         provider.adapter.active_root,
-        {
-            provider.adapter_entrypoint.string(),
-            "config",
-            "get",
-            "--config",
-            provider.configuration_path.string(),
-        },
+        arguments,
         std::chrono::seconds(30));
     return project_bot_options(result);
 }
@@ -1923,15 +2245,16 @@ json ServiceCatalog::update_bot_options(
     }
     const BotProviderContext provider =
         bot_provider_context(manager_data_root);
-    std::vector<std::string> arguments{
-        provider.adapter_entrypoint.string(),
-        "config",
-        "update",
-        "--config",
-        provider.configuration_path.string(),
-        "--settings",
-        settings.dump(),
-    };
+    std::vector<std::string> arguments = provider_operation_arguments(
+        provider.contract, "config_update", "forbidden");
+    arguments.insert(
+        arguments.end(),
+        {
+            "--config",
+            provider.configuration_path.string(),
+            "--settings",
+            settings.dump(),
+        });
     if (confirm_rated) {
         arguments.insert(
             arguments.end(),
@@ -1944,7 +2267,7 @@ json ServiceCatalog::update_bot_options(
              "I_ACCEPT_AUTOMATIC_OUTBOUND_CHALLENGES"});
     }
     const json result = command_runner(
-        provider.node_entrypoint,
+        provider.contract.executable,
         provider.adapter.active_root,
         arguments,
         std::chrono::seconds(30));
@@ -1987,27 +2310,19 @@ json ServiceCatalog::control_bot_account(
     std::vector<std::string> arguments;
     if (action == "owner_list") {
         require_parameter_keys(parameters, {});
-        arguments = {"owner", "list"};
     } else if (action == "owner_add" || action == "owner_remove") {
         require_parameter_keys(parameters, {"username"});
         arguments = {
-            "owner",
-            action == "owner_add" ? "add" : "remove",
             "--username",
             account_parameter(parameters, "username"),
         };
     } else if (action == "reservation_status" ||
                action == "reservation_cancel") {
         require_parameter_keys(parameters, {});
-        arguments = {
-            "reservation",
-            action == "reservation_status" ? "status" : "cancel",
-        };
     } else if (action == "reservation_create") {
         require_parameter_keys(
             parameters, {"opponent", "games", "minutes"});
         arguments = {
-            "reserve",
             "--opponent",
             account_parameter(parameters, "opponent"),
             "--games",
@@ -2019,22 +2334,19 @@ json ServiceCatalog::control_bot_account(
         };
     } else {
         require_parameter_keys(parameters, {});
-        arguments = {
-            "scheduler",
-            action == "scheduler_status"
-                ? "status"
-                : action == "scheduler_pause" ? "pause" : "resume",
-        };
     }
 
     const BotProviderContext provider =
         bot_provider_context(manager_data_root);
-    arguments.insert(arguments.begin(), provider.adapter_entrypoint.string());
+    std::vector<std::string> invocation = provider_operation_arguments(
+        provider.contract, action, "forbidden");
+    invocation.insert(invocation.end(), arguments.begin(), arguments.end());
+    arguments = std::move(invocation);
     arguments.insert(
         arguments.end(),
         {"--runtime-dir", bot_runtime_directory(provider.adapter).string()});
     const json result = command_runner(
-        provider.node_entrypoint,
+        provider.contract.executable,
         provider.adapter.active_root,
         arguments,
         std::chrono::seconds(30));

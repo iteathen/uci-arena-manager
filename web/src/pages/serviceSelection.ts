@@ -16,12 +16,26 @@ export function selectPreferredService(
 }
 
 export function canEnqueueEvidenceCampaign(service: ManagedServiceData) {
+  return evidenceCampaignBlocker(service) === null
+}
+
+export function evidenceCampaignBlocker(service: ManagedServiceData) {
   if (service.integration_state !== 'available' || !service.orchestration_projection) {
-    return false
+    return 'Evidence orchestration is not currently available.'
   }
-  return !(
+  if (needsEvidenceTarget(service)) {
+    return 'Start or register an exact compatible engine deployment first.'
+  }
+  if (service.orchestration_projection.jobs.length > 0) {
+    return 'The first campaign already has jobs; use their job controls.'
+  }
+  return null
+}
+
+export function needsEvidenceTarget(service: ManagedServiceData) {
+  return (
     service.status_projection?.collection?.state === 'waiting_for_target' &&
-    service.orchestration_projection.targets.length === 0
+    (service.orchestration_projection?.targets.length ?? 0) === 0
   )
 }
 

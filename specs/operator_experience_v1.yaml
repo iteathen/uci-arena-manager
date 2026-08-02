@@ -59,6 +59,10 @@ interaction_feedback:
     - The page hash is a durable deep link. Direct hash navigation, browser
       back/forward, and a newly delivered pairing hash update the rendered
       surface without reauthenticating ordinary page changes.
+    - A direct same-origin tab that inherits a valid HttpOnly session cookie
+      resynchronizes the existing session's per-tab CSRF value before it is
+      presented as mutation-ready. Read success with a missing CSRF value must
+      not produce an apparently authenticated UI whose controls all fail.
     - The durable-event resource filter enumerates every public resource kind
       defined by the shared domain contract; it must not silently hide game,
       report, artifact, health, operation, host, secret-reference, or log-source
@@ -293,6 +297,8 @@ tournament_experience:
       not expose invalid lifecycle actions.
     - Progress shows completed, active, queued, and total games, a percentage,
       the current round or game when available, and the last durable update.
+      Cancelled, failed, and unplayed counts are shown when nonzero so a
+      terminal competition never presents abandoned work as still queued.
     - Start, pause, resume, and cancel use backend-authoritative commands and
       durable events. React state never fabricates lifecycle or progress.
     - If a lifecycle command collides with a concurrent backend progress
@@ -338,8 +344,17 @@ evidence_service_experience:
     - The first-campaign action is disabled while provider state explicitly
       reports waiting for a target and no provider-issued target is present;
       the UI does not invite a command that is already known to be invalid.
+    - The first-campaign action is also disabled after any campaign job exists.
+      Subsequent work uses provider-owned job controls or a future explicitly
+      specified campaign surface; the bootstrap control cannot duplicate a
+      campaign accidentally.
     - Eligible failed or cancelled jobs expose Retry; queued or waiting jobs
       expose Cancel. Invalid provider lifecycle actions are not rendered.
+    - Reports bound long provider dataset projections inside a scrollable
+      region so retained evidence cannot make the rest of the control plane
+      unreachable. Missing-provider and selected-profile guidance links
+      directly to Services or Configuration instead of naming a dead-end
+      prerequisite.
     - All campaign and job controls call the typed service API through Manager,
       report success or failure visibly, and never fabricate progress in React.
 

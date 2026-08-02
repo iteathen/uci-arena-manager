@@ -142,6 +142,8 @@ TEST_CASE("verified UCI Arena receipt is recommended without turning its model i
     const fs::path active_root = root / "components" / "uci_arena.engine" / "1.2.3";
     const fs::path executable = executable_path(active_root / "bin", "uci-arena");
     write_executable(executable);
+    const fs::path model_root = active_root / "models" / "default";
+    fs::create_directories(model_root);
     fs::create_directories(data_root / "receipts");
     std::ofstream(active_root / "arena-component.json")
         << json{
@@ -154,7 +156,8 @@ TEST_CASE("verified UCI Arena receipt is recommended without turning its model i
                {"default_model",
                 {{"model_id", "example_model_v1"},
                  {"display_name", "Example Model"},
-                 {"input_adapter_id", "example_dense_planes_v1"}}},
+                 {"input_adapter_id", "example_dense_planes_v1"},
+                 {"root", "models/default"}}},
                {"files", json::array()},
            }
                .dump(2);
@@ -177,6 +180,9 @@ TEST_CASE("verified UCI Arena receipt is recommended without turning its model i
     REQUIRE(candidate.at("display_name") == "UCI Arena Engine");
     REQUIRE(candidate.at("default_model").at("display_name") == "Example Model");
     REQUIRE(candidate.at("display_name") != candidate.at("default_model").at("display_name"));
+    REQUIRE(
+        fs::path(candidate.at("uci_options").at("ModelRoot").get<std::string>()) ==
+        fs::weakly_canonical(model_root));
     fs::remove_all(root);
 }
 

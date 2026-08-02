@@ -3,6 +3,7 @@
 #include "arena/application/control_plane.hpp"
 #include "arena/application/service_catalog.hpp"
 #include "arena/domain/uuid.hpp"
+#include <sodium.h>
 #ifdef _WIN32
 #include "arena/platform/windows_install_scope.hpp"
 #endif
@@ -14,6 +15,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <vector>
 
 namespace {
@@ -31,6 +33,18 @@ json read_json(const fs::path& path) {
     json value;
     input >> value;
     return value;
+}
+
+std::string sha256_text(const std::string& value) {
+    std::array<unsigned char, crypto_hash_sha256_BYTES> digest{};
+    crypto_hash_sha256(
+        digest.data(),
+        reinterpret_cast<const unsigned char*>(value.data()),
+        static_cast<unsigned long long>(value.size()));
+    std::array<char, crypto_hash_sha256_BYTES * 2 + 1> encoded{};
+    sodium_bin2hex(
+        encoded.data(), encoded.size(), digest.data(), digest.size());
+    return encoded.data();
 }
 
 json manager_service_api() {
@@ -95,9 +109,186 @@ void write_installed_component(
         });
 }
 
+void attach_bot_provider_contract(
+    const fs::path& data_root,
+    const bool direct_invocation = false,
+    const bool alternate_operation_prefixes = false,
+    const std::string& contract_version = "1.0") {
+    const fs::path receipt_path =
+        data_root / "receipts" / "lichess.adapter.json";
+    json receipt = read_json(receipt_path);
+    const fs::path active_root =
+        receipt.at("active_root").get<std::string>();
+    const fs::path manifest_path = active_root / "arena-component.json";
+    json manifest = read_json(manifest_path);
+    const std::string entrypoint =
+        manifest.at("entrypoints").at("adapter").get<std::string>();
+    manifest["entrypoints"]["cli"] = entrypoint;
+    manifest["contract_manifest"] = "contracts/service-contract.json";
+    manifest["dependencies"] = direct_invocation
+        ? json::array()
+        : json::array({"node_runtime.private"});
+
+    const json operations{
+        {"schema", "fixture_provider_manager_api_v1"},
+        {"version", contract_version},
+        {"transport",
+         {{"kind", "cli_json"},
+          {"entrypoint", entrypoint},
+          {"stdout", "one_bounded_json_document"},
+          {"stderr", "sanitized_diagnostics"},
+          {"shell", false}}},
+        {"operations",
+          {{"account_probe",
+           {{"arguments",
+             alternate_operation_prefixes
+                 ? json::array({"identity", "check"})
+                 : json::array({"probe"})},
+            {"mutates", false},
+            {"credential", "external_file_path_only"}}},
+          {"config_get",
+           {{"arguments",
+             alternate_operation_prefixes
+                 ? json::array({"settings", "show"})
+                 : json::array({"config", "get"})},
+            {"mutates", false},
+            {"credential", "forbidden"}}},
+          {"config_update",
+           {{"arguments", json::array({"config", "update"})},
+            {"mutates", true},
+            {"credential", "forbidden"}}},
+          {"owner_list",
+           {{"arguments", json::array({"owner", "list"})},
+            {"mutates", false}, {"credential", "forbidden"}}},
+          {"owner_add",
+           {{"arguments", json::array({"owner", "add"})},
+            {"mutates", true}, {"credential", "forbidden"}}},
+          {"owner_remove",
+           {{"arguments", json::array({"owner", "remove"})},
+            {"mutates", true}, {"credential", "forbidden"}}},
+          {"provider_status",
+           {{"arguments",
+             alternate_operation_prefixes
+                 ? json::array({"provider", "observe"})
+                 : json::array({"status"})},
+            {"mutates", false}, {"credential", "forbidden"}}},
+          {"reservation_cancel",
+           {{"arguments", json::array({"reservation", "cancel"})},
+            {"mutates", true}, {"credential", "forbidden"}}},
+          {"reservation_create",
+           {{"arguments", json::array({"reserve"})},
+            {"mutates", true}, {"credential", "forbidden"}}},
+          {"reservation_status",
+           {{"arguments", json::array({"reservation", "status"})},
+            {"mutates", false}, {"credential", "forbidden"}}},
+          {"scheduler_pause",
+           {{"arguments", json::array({"scheduler", "pause"})},
+            {"mutates", true}, {"credential", "forbidden"}}},
+          {"scheduler_resume",
+           {{"arguments", json::array({"scheduler", "resume"})},
+            {"mutates", true}, {"credential", "forbidden"}}},
+          {"scheduler_status",
+           {{"arguments", json::array({"scheduler", "status"})},
+            {"mutates", false}, {"credential", "forbidden"}}},
+          {"startup_install",
+           {{"arguments", json::array({"startup", "install"})},
+            {"mutates", true},
+            {"credential", "external_file_path_only"}}},
+          {"startup_status",
+           {{"arguments", json::array({"startup", "status"})},
+            {"mutates", false}, {"credential", "forbidden"}}},
+          {"startup_uninstall",
+           {{"arguments", json::array({"startup", "uninstall"})},
+            {"mutates", true}, {"credential", "forbidden"}}}}},
+    };
+    const json service_contract{
+        {"schema", "uci_arena_service_contract_v1"},
+        {"service",
+         {{"component_id", "lichess.adapter"},
+          {"component_version", "1.0.0"},
+          {"product_id", "fixture.provider"},
+          {"contract_version", contract_version},
+          {"transport", "cli_json"},
+          {"entrypoint", entrypoint}}},
+        {"invocation",
+         direct_invocation
+             ? json{{"kind", "direct"}}
+             : json{{"kind", "dependency_runtime"},
+                    {"runtime_component_id", "node_runtime.private"},
+                    {"runtime_entrypoint", "node"}}},
+        {"provided_capabilities", json::array({"fixture.status"})},
+        {"required_capabilities", json::array({"fixture.runtime"})},
+        {"credential_contract",
+         {{"input", "external_absolute_file_path"},
+          {"contents_visible_to", "provider_transport_only"},
+          {"manager_projection", "path_and_redacted_status_only"},
+          {"installer_behavior", "never_package_copy_or_inspect"}}},
+        {"startup",
+         {{"windows", "per_user_task_scheduler"},
+          {"linux", "per_user_systemd"},
+          {"credential_gated", true}}},
+        {"persistence",
+         {{"upgrade", "preserve_and_migrate"},
+          {"repair", "preserve"},
+          {"uninstall_default", "preserve"}}},
+        {"manager_operations", "contracts/manager-operations.json"},
+        {"configuration_schema", "contracts/configuration-schema.json"},
+        {"configuration_update_schema",
+         "contracts/configuration-update-schema.json"},
+        {"status_schema", "contracts/status-schema.json"},
+        {"error_contract",
+         {{"format", "bounded_typed_json"},
+          {"secrets", "redacted"},
+          {"unknown_operation", "fail_closed"},
+          {"unknown_major_version", "incompatible"}}},
+    };
+    const std::vector<std::pair<std::string, json>> documents{
+        {"contracts/service-contract.json", service_contract},
+        {"contracts/manager-operations.json", operations},
+        {"contracts/configuration-schema.json", json{{"schema", "fixture"}}},
+        {"contracts/configuration-update-schema.json", json{{"schema", "fixture"}}},
+        {"contracts/status-schema.json", json{{"schema", "fixture"}}},
+    };
+    std::map<std::string, std::string> digests;
+    for (const auto& [relative, document] : documents) {
+        const std::string contents = document.dump(2) + '\n';
+        fs::create_directories((active_root / relative).parent_path());
+        std::ofstream(active_root / relative, std::ios::binary) << contents;
+        const std::string digest = sha256_text(contents);
+        digests[relative] = digest;
+        manifest["files"].push_back(
+            {{"path", relative},
+             {"sha256", digest},
+             {"size_bytes", contents.size()}});
+    }
+    write_json(manifest_path, manifest);
+    receipt["service_contract"] = {
+        {"schema", "uci_arena_service_contract_v1"},
+        {"path", "contracts/service-contract.json"},
+        {"sha256", digests.at("contracts/service-contract.json")},
+        {"configuration_schema_path", "contracts/configuration-schema.json"},
+        {"configuration_schema_sha256",
+         digests.at("contracts/configuration-schema.json")},
+        {"configuration_update_schema_path",
+         "contracts/configuration-update-schema.json"},
+        {"configuration_update_schema_sha256",
+         digests.at("contracts/configuration-update-schema.json")},
+        {"status_schema_path", "contracts/status-schema.json"},
+        {"status_schema_sha256", digests.at("contracts/status-schema.json")},
+        {"manager_operations_path", "contracts/manager-operations.json"},
+        {"manager_operations_sha256",
+         digests.at("contracts/manager-operations.json")},
+        {"credential_gated_startup", true},
+    };
+    write_json(receipt_path, receipt);
+}
+
 void write_ready_bot_fixture(
     const fs::path& root,
-    const std::string& node_entrypoint_name = "node") {
+    const std::string& node_entrypoint_name = "node",
+    const bool direct_invocation = false,
+    const bool alternate_operation_prefixes = false,
+    const std::string& contract_version = "1.0") {
     const fs::path data = root / "data";
     const fs::path install = root / "install";
     write_installed_component(
@@ -140,6 +331,9 @@ void write_ready_bot_fixture(
         "adapter",
         "app/adapter.mjs",
         {root / "workspaces" / "lichess-adapter"});
+    attach_bot_provider_contract(
+        data, direct_invocation, alternate_operation_prefixes,
+        contract_version);
 
     const std::array<std::pair<std::string, fs::path>, 5> locators{{
         {"timing_profile", root / "uci_time_profile_v3.json"},
@@ -611,6 +805,7 @@ TEST_CASE("Lichess bot discovery projects every missing readiness dimension") {
     write_installed_component(
         data, install, "lichess.adapter", "adapter", "app/adapter.mjs",
         {root / "workspaces" / "lichess-adapter"});
+    attach_bot_provider_contract(data);
     const fs::path configuration =
         root / "workspaces" / "lichess-adapter" / "manager-config.json";
     write_json(
@@ -709,6 +904,7 @@ TEST_CASE("Lichess bot discovery becomes probe-ready only with exact visible pre
         "adapter",
         "app/adapter.mjs",
         {root / "workspaces" / "lichess-adapter"});
+    attach_bot_provider_contract(data);
 
     const fs::path timing = root / "uci_time_profile_v3.json";
     const fs::path single = root / "uci_arena_single_game_profile_v1.json";
@@ -787,6 +983,24 @@ TEST_CASE("Lichess bot discovery becomes probe-ready only with exact visible pre
     fs::remove_all(root);
 }
 
+TEST_CASE("Lichess bot discovery exposes an incompatible provider contract major") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-bot-contract-major-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(root, "node", false, false, "2.0");
+
+    const json candidate =
+        arena::application::ServiceCatalog::discover_bot(root / "data")
+            .at("candidates")
+            .at(0);
+    REQUIRE(candidate.at("package_state") == "installed");
+    REQUIRE(candidate.at("integration_state") == "incompatible");
+    REQUIRE(candidate.at("readiness").at("verified_adapter") == "missing");
+    REQUIRE(candidate.at("issues").dump().find("bot_adapter_incompatible") !=
+            std::string::npos);
+    fs::remove_all(root);
+}
+
 TEST_CASE("Lichess BOT control re-probes identity and returns only sanitized startup state") {
     const fs::path root =
         fs::temp_directory_path() /
@@ -810,6 +1024,16 @@ TEST_CASE("Lichess BOT control re-probes identity and returns only sanitized sta
                     {"token_path", "MUST_NOT_ESCAPE"},
                 };
             }
+            if (arguments.size() > 1 && arguments.at(1) == "status") {
+                return json{
+                    {"schema", "uci_arena_lichess_status_v3"},
+                    {"active", true},
+                    {"ready", true},
+                    {"stream_connected", true},
+                    {"blockers", json::array()},
+                    {"token", "MUST_NOT_ESCAPE"},
+                };
+            }
             return json{
                 {"status", "ready"},
                 {"startup",
@@ -829,10 +1053,13 @@ TEST_CASE("Lichess BOT control re-probes identity and returns only sanitized sta
     REQUIRE(result.at("state") == "active");
     REQUIRE(result.at("account_name") == "VerifiedArenaBot");
     REQUIRE(result.dump().find("MUST_NOT_ESCAPE") == std::string::npos);
-    REQUIRE(calls.size() == 2);
+    REQUIRE(result.at("provider_state") == "ready");
+    REQUIRE(result.at("provider_ready") == true);
+    REQUIRE(calls.size() == 3);
     REQUIRE(calls.at(0).at(1) == "probe");
     REQUIRE(calls.at(1).at(1) == "startup");
     REQUIRE(calls.at(1).at(2) == "install");
+    REQUIRE(calls.at(2).at(1) == "status");
     REQUIRE(
         std::find(
             calls.at(1).begin(),
@@ -854,6 +1081,15 @@ TEST_CASE("Lichess BOT status and disable never require credential arguments") {
             const std::vector<std::string>& arguments,
             const std::chrono::milliseconds) {
             calls.push_back(arguments);
+            if (arguments.size() > 1 && arguments.at(1) == "status") {
+                return json{
+                    {"schema", "uci_arena_lichess_status_v3"},
+                    {"active", false},
+                    {"ready", false},
+                    {"stream_connected", false},
+                    {"blockers", json::array({"provider_process_inactive"})},
+                };
+            }
             const bool uninstall =
                 arguments.size() > 2 && arguments.at(2) == "uninstall";
             return json{
@@ -873,7 +1109,9 @@ TEST_CASE("Lichess BOT status and disable never require credential arguments") {
     REQUIRE(status.at("state") == "enabled");
     REQUIRE(status.at("active") == false);
     REQUIRE(disabled.at("state") == "disabled");
-    REQUIRE(calls.size() == 2);
+    REQUIRE(status.at("provider_state") == "inactive");
+    REQUIRE(disabled.at("provider_state") == "inactive");
+    REQUIRE(calls.size() == 4);
     for (const auto& arguments : calls) {
         REQUIRE(
             std::find(arguments.begin(), arguments.end(), "--token-file") ==
@@ -965,6 +1203,63 @@ TEST_CASE("Lichess BOT options use only verified provider entrypoints and bounde
     REQUIRE(calls.at(0).at(1) == "config");
     REQUIRE(calls.at(0).at(2) == "get");
     REQUIRE(calls.at(0).at(3) == "--config");
+    fs::remove_all(root);
+}
+
+TEST_CASE("conforming direct provider substitutes its declared operation prefixes") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-bot-provider-substitution-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(root, "node", true, true);
+    fs::path observed_executable;
+    std::vector<std::string> observed_arguments;
+    const json result = arena::application::ServiceCatalog::bot_options(
+        root / "data",
+        [&observed_executable, &observed_arguments](
+            const fs::path& executable,
+            const fs::path&,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds) {
+            observed_executable = executable;
+            observed_arguments = arguments;
+            return json{
+                {"status", "ready"},
+                {"editable",
+                 {{"schema", "uci_arena_lichess_manager_options_v1"},
+                  {"capacity",
+                   {{"total_slots", 1},
+                    {"startup_parallelism", 1},
+                    {"human", {{"slots", 1}, {"allow_borrowing", false},
+                               {"accept_public", true}}},
+                    {"bot", {{"slots", 0}, {"target_active", 0}}},
+                    {"evidence", {{"status", "unqualified"},
+                                  {"qualified", false},
+                                  {"maximum_concurrency", nullptr}}}}},
+                  {"inbound_challenges",
+                   {{"accept_bots", true}, {"min_base", 60},
+                    {"max_base", 1800}, {"min_increment", 0},
+                    {"max_increment", 10}, {"speeds", {"rapid"}},
+                    {"modes", {"casual"}}}},
+                  {"outbound_challenge",
+                   {{"rated", false}, {"color", "random"},
+                    {"clock_limit", 600}, {"clock_increment", 2}}},
+                  {"scheduler",
+                   {{"enabled", false}, {"discovery_interval_seconds", 60},
+                    {"challenge_interval_seconds", 5},
+                    {"reservation_retry_seconds", 30},
+                    {"challenge_timeout_seconds", 25}}},
+                  {"opponent_selection",
+                   {{"max_games_per_opponent_per_day", 1},
+                    {"timeout_cooldown_minutes", 30},
+                    {"decline_cooldown_minutes", 360},
+                    {"rating_target", 2200}, {"rating_spread", 600}}}}},
+            };
+        });
+    REQUIRE(result.at("schema") == "uci_arena_lichess_manager_options_v1");
+    REQUIRE(observed_executable.filename() == "adapter.mjs");
+    REQUIRE(observed_arguments.at(0) == "settings");
+    REQUIRE(observed_arguments.at(1) == "show");
+    REQUIRE(observed_arguments.at(2) == "--config");
     fs::remove_all(root);
 }
 

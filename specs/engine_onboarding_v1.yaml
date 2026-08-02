@@ -35,6 +35,13 @@ probe:
       detail and never creates a resource.
     - A probe returns the UCI-reported display name and separately reported
       model-package metadata so manual setup needs only an executable selection.
+    - A receipt candidate whose verified manifest declares a safe
+      component-relative default_model.root projects the resolved model
+      directory through the candidate's canonical uci_options.ModelRoot field.
+      The model label and component name never select this behavior.
+    - Probe and registration validate that every requested UCI option was
+      advertised by the engine, apply the options before readyok and the legal
+      bestmove check, and retain the same normalized values for later games.
 
 registration:
   confirmation: explicit_only
@@ -46,6 +53,15 @@ registration:
     - Existing raw launch-spec registration remains compatible for automation.
     - Dashboard registration binds to a successful short-lived probe id,
       repeats the probe, and retains verified installed-component provenance.
+    - The public uci_options request field is persisted as option_overrides;
+      the legacy option_overrides spelling remains input-compatible for
+      existing automation but cannot conflict with uci_options.
+    - Registrations retained from an earlier Manager version may lack the
+      receipt-derived ModelRoot override. When such a resource still carries
+      verified install_receipt provenance and a safe default_model.root,
+      tournament and Evidence launches derive the same exact component-local
+      option without mutating the resource; each game records the effective
+      option set it actually launched.
 
 recommendation:
   component_id: uci_arena.engine
@@ -72,3 +88,7 @@ acceptance:
     during probe with no persisted engine resource.
   - Selecting one external executable automatically derives its display name
     and working directory before the single explicit Add engine confirmation.
+  - A receipt-installed engine with a packaged default model is probed and
+    registered with the exact packaged model root, emits its typed runtime
+    model identity, and reuses that same option during tournament and Evidence
+    Service launches.

@@ -62,12 +62,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export async function exchangePairingToken(): Promise<boolean> {
   const parameters = new URLSearchParams(window.location.hash.replace(/^#/, ''))
   const pairToken = parameters.get('pair')
-  if (!pairToken?.match(/^[a-f0-9]{64}$/)) return false
-  const paired = await request<{ csrf_token: string }>('/api/v1/auth/pair', {
-    method: 'POST',
-    body: JSON.stringify({ token: pairToken }),
-  })
+  const paired = pairToken?.match(/^[a-f0-9]{64}$/)
+    ? await request<{ csrf_token: string }>('/api/v1/auth/pair', {
+        method: 'POST',
+        body: JSON.stringify({ token: pairToken }),
+      })
+    : await request<{ csrf_token: string }>('/api/v1/auth/session')
   sessionStorage.setItem(csrfKey, paired.csrf_token)
+  if (!pairToken) return false
   const pickerPort = parameters.get('picker_port')
   const pickerToken = parameters.get('picker_token')
   if (

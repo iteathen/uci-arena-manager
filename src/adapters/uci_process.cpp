@@ -244,6 +244,15 @@ UciProbeResult UciProcess::probe(
         process.write_line("uci");
         await_token(process, "uciok", deadline, result, true);
         for (const auto& [name, value] : option_overrides) {
+            const bool advertised = std::ranges::any_of(
+                result.options,
+                [&name](const domain::UciOption& option) {
+                    return option.name == name;
+                });
+            if (!advertised) {
+                throw std::runtime_error(
+                    "requested UCI option is not advertised: " + name);
+            }
             process.write_line("setoption name " + name + " value " + value);
         }
         process.write_line("isready");

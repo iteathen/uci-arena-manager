@@ -145,6 +145,10 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
               <Code>{candidate?.configuration_state ?? 'checking'}</Code>
             </Group>
             <Group justify="space-between">
+              <Text size="sm">Provider contract</Text>
+              <Code>{candidate?.integration_state ?? 'checking'}</Code>
+            </Group>
+            <Group justify="space-between">
               <Text size="sm">Token-file reference</Text>
               <Code>{candidate?.token_reference_available ? 'available' : 'missing'}</Code>
             </Group>
@@ -178,6 +182,28 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
                       : 'checking')}
               </Code>
             </Group>
+            <Group justify="space-between">
+              <Text size="sm">Provider activity</Text>
+              <Code>
+                {observedStartup?.provider_state ??
+                  (startup.isError ? 'helper unavailable' : 'checking')}
+              </Code>
+            </Group>
+            <Group justify="space-between">
+              <Text size="sm">Lichess event stream</Text>
+              <Code>
+                {observedStartup
+                  ? observedStartup.stream_connected
+                    ? 'connected'
+                    : 'disconnected'
+                  : 'checking'}
+              </Code>
+            </Group>
+            {observedStartup?.blockers.map((blocker) => (
+              <Alert key={blocker} color="blue" title="Provider status">
+                {blocker.replaceAll('_', ' ')}
+              </Alert>
+            ))}
             {candidate?.issues.map((issue) => (
               <Alert key={issue.code} color="orange" title={issue.code}>
                 <Group justify="space-between" align="flex-end">

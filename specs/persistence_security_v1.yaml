@@ -47,6 +47,18 @@ secrets:
 local_security:
   bind: loopback_only
   browser_session: one_time_pairing_to_http_only_same_site_strict_cookie
+  browser_session_resume:
+    authority: existing_unexpired_http_only_session_cookie
+    behavior: same_origin_read_only_csrf_resynchronization
+    rules:
+      - A dashboard tab that inherits a valid session cookie but has no
+        per-tab CSRF value may recover that existing session's CSRF value from
+        the authenticated loopback origin.
+      - Session resume never creates or extends a session, consumes a pairing
+        token, accepts a bearer substitute, or weakens mutation origin and
+        CSRF validation.
+      - Same-origin policy, SameSite Strict cookies, and no-store responses
+        prevent a cross-origin caller from reading the recovered value.
   cli_bearer_key:
     authority: manager_data_root_client_key_file
     rotation: >

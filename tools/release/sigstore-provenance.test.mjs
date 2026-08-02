@@ -18,6 +18,7 @@ import {
   SIGSTORE_BUNDLE_MEDIA_TYPE,
   buildExpectedManagedStatement,
   buildExpectedProviderStatement,
+  prepareProviderProvenance,
   prepareManagedProvenance,
   prepareManagerProvenance,
   verifyBundlePayload,
@@ -109,6 +110,38 @@ test("provider verification pins every certificate claim and exact predicate", (
       arguments_.some((argument) => /ignore|check-claims=false/u.test(argument)),
       false,
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Manager provider preparation binds one exact Installer-owned candidate", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "arena-manager-provider-prepare-"));
+  try {
+    const artifactPath = path.join(root, "manager.core-0.3.7-windows-x86_64.tar.gz");
+    const artifact = Buffer.from("manager component", "utf8");
+    writeFileSync(artifactPath, artifact);
+    const result = {
+      schema: "arena_provider_release_result_v1",
+      component_id: "manager.core",
+      artifact_name: path.basename(artifactPath),
+      artifact_sha256: sha256(artifact),
+      source_repository: "iteathen/uci-arena-manager",
+      source_commit: "2".repeat(40),
+      release_authority: "provider_component_only",
+      suite_installer_authority: "iteathen/uci-arena-installer",
+    };
+    const resultPath = path.join(root, "manager.provider-result.json");
+    writeFileSync(resultPath, `${JSON.stringify(result)}\n`);
+    const prepared = prepareProviderProvenance({
+      artifactPath,
+      providerResultPath: resultPath,
+      statementDirectory: path.join(root, "statements"),
+    });
+    assert.equal(prepared.artifactPath, artifactPath);
+    assert.equal(prepared.predicateType, PROVIDER_PREDICATE_TYPE);
+    assert.deepEqual(prepared.statement, buildExpectedProviderStatement(result));
+    assert.equal(prepared.bundlePath, `${artifactPath}.sigstore.json`);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

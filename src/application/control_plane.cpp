@@ -765,7 +765,24 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
         throw CommandFailure("working_directory_not_found", "working directory is invalid", 422);
     }
     const auto arguments = string_array(parameters, "arguments");
-    const auto probe = adapters::UciProcess::probe(executable, working_directory, arguments);
+    if (parameters.contains("uci_options") &&
+        parameters.contains("option_overrides") &&
+        parameters.at("uci_options") != parameters.at("option_overrides")) {
+        throw CommandFailure(
+            "invalid_engine_options",
+            "uci_options and option_overrides cannot conflict",
+            422);
+    }
+    const json raw_options = parameters.contains("uci_options")
+        ? parameters.at("uci_options")
+        : parameters.value("option_overrides", json::object());
+    const auto option_overrides = uci_option_overrides(raw_options);
+    const auto probe = adapters::UciProcess::probe(
+        executable,
+        working_directory,
+        arguments,
+        std::chrono::seconds(10),
+        option_overrides);
     if (!probe.ok) {
         throw CommandFailure("uci_probe_failed", probe.error, 422);
     }
@@ -784,7 +801,7 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
         {"executable", std::filesystem::absolute(executable).string()},
         {"working_directory", std::filesystem::absolute(working_directory).string()},
         {"arguments", arguments},
-        {"option_overrides", parameters.value("option_overrides", json::object())},
+        {"option_overrides", raw_options},
         {"discovered_options", options},
         {"engine_name", probe.engine_name},
         {"engine_author", probe.engine_author},
@@ -1062,6 +1079,9 @@ json ControlPlane::plan_match(const json& request, const std::string& actor) {
              {"queued_games", planned_total_games},
              {"active_games", 0},
              {"completed_games", 0},
+             {"cancelled_games", 0},
+             {"failed_games", 0},
+             {"unplayed_games", 0},
              {"percentage", 0.0},
              {"current_round", nullptr},
              {"updated_at", domain::utc_now()},
@@ -1152,7 +1172,22 @@ json ControlPlane::manage_competition(
     json progress = data.value("progress", json::object());
     progress["updated_at"] = domain::utc_now();
     if (next == "cancelled") {
+        const std::size_t total = progress.value(
+            "total_games", data.value("planned_total_games", 0U));
+        const std::size_t resolved =
+            progress.value("completed_games", 0U) +
+            progress.value("cancelled_games", 0U) +
+            progress.value("failed_games", 0U);
+        const std::size_t active = progress.value("active_games", 0U);
         progress["queued_games"] = 0;
+        progress["unplayed_games"] = total > resolved + active
+            ? total - resolved - active
+            : 0;
+        const std::size_t dispositioned =
+            resolved + progress.at("unplayed_games").get<std::size_t>();
+        progress["percentage"] = total == 0 ? 0.0 :
+            (100.0 * static_cast<double>(dispositioned) /
+             static_cast<double>(total));
     }
     data["progress"] = std::move(progress);
     ports::ResourceRecord updated = *existing;
@@ -1826,7 +1861,28 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
             }
             const json raw_options =
                 engine_data.value("option_overrides", json::object());
-            const auto typed_options = uci_option_overrides(raw_options);
+            auto typed_options = uci_option_overrides(raw_options);
+            const auto model_root_option =
+                typed_options.find("ModelRoot");
+            if (model_root_option == typed_options.end()) {
+                typed_options.emplace("ModelRoot", model_root.string());
+            } else {
+                const std::filesystem::path configured_model_root =
+                    std::filesystem::path(model_root_option->second).is_absolute()
+                        ? std::filesystem::path(model_root_option->second)
+                        : working_directory / model_root_option->second;
+                std::error_code equivalent_error;
+                if (!std::filesystem::equivalent(
+                        configured_model_root,
+                        model_root,
+                        equivalent_error) ||
+                    equivalent_error) {
+                    throw CommandFailure(
+                        "evidence_model_root_mismatch",
+                        "the registered engine ModelRoot does not match its verified default deployment",
+                        422);
+                }
+            }
             const auto probe = adapters::UciProcess::probe(
                 executable,
                 working_directory,
@@ -1846,6 +1902,10 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
             std::string label = model.value("display_name", model_id);
             if (label.size() > 240) label.resize(240);
             label += " deployment";
+            json effective_options = json::object();
+            for (const auto& [name, value] : typed_options) {
+                effective_options[name] = value;
+            }
             operation_arguments = {
                 "target", "register",
                 "--label", label,
@@ -1854,7 +1914,7 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                 "--model-fingerprint", probe.runtime_model_fingerprint,
                 "--engine", std::filesystem::absolute(executable).string(),
                 "--provider", probe.runtime_provider,
-                "--uci-options-json", raw_options.dump(),
+                "--uci-options-json", effective_options.dump(),
             };
             if (!probe.runtime_provider_fingerprint.empty()) {
                 operation_arguments.insert(
@@ -1866,18 +1926,49 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
         } else if (action == "service.evidence_campaign_enqueue") {
             operation_arguments = {"campaign", "enqueue"};
             operation = "campaign_enqueue";
+            if (parameters.size() > 1 ||
+                (parameters.size() == 1 && !parameters.contains("target_id"))) {
+                throw CommandFailure(
+                    "invalid_evidence_campaign_request",
+                    "Evidence campaign enqueue accepts only target_id",
+                    400);
+            }
+            std::optional<std::string> selected_target;
+            const json& projected_targets =
+                data.value("orchestration_projection", json::object())
+                    .value("targets", json::array());
+            if (!projected_targets.is_array() || projected_targets.size() > 1'000) {
+                throw CommandFailure(
+                    "service_api_incompatible",
+                    "Evidence target projection is malformed",
+                    409);
+            }
             if (parameters.contains("target_id") &&
                 !parameters.at("target_id").is_null()) {
-                const std::string target_id =
-                    required_string(parameters, "target_id");
-                if (!uuid_v4(target_id)) {
+                const std::string target_id = required_string(parameters, "target_id");
+                if (!uuid_v4(target_id) ||
+                    std::ranges::none_of(projected_targets, [&](const json& target) {
+                        return target.is_object() && target.value("id", "") == target_id;
+                    })) {
                     throw CommandFailure(
-                        "invalid_target_id",
-                        "Evidence target_id must be a service-issued UUID",
-                        400);
+                        "evidence_target_not_projected",
+                        "Evidence target_id must be present in the current provider projection",
+                        422);
                 }
+                selected_target = target_id;
+            } else if (projected_targets.size() == 1 &&
+                       projected_targets.front().is_object() &&
+                       uuid_v4(projected_targets.front().value("id", ""))) {
+                selected_target = projected_targets.front().at("id").get<std::string>();
+            } else if (projected_targets.size() > 1) {
+                throw CommandFailure(
+                    "evidence_target_selection_required",
+                    "Evidence campaign enqueue requires one projected target selection",
+                    422);
+            }
+            if (selected_target.has_value()) {
                 operation_arguments.insert(
-                    operation_arguments.end(), {"--target", target_id});
+                    operation_arguments.end(), {"--target", *selected_target});
             }
         } else {
             const std::string job_id = required_string(parameters, "job_id");

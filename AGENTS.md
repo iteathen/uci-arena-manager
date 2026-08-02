@@ -24,6 +24,11 @@ Read every returned spec. If behavior changes, update the governing spec first.
 
 ## Architecture invariants
 
+The canonical complete-suite target is
+[`UCI_ARENA_COMPLETE_LEGO_ARCHITECTURE.md`](https://github.com/iteathen/uci-arena-installer/blob/main/docs/architecture/UCI_ARENA_COMPLETE_LEGO_ARCHITECTURE.md).
+Read `specs/suite_lego_boundaries_v1.yaml` before repository-boundary,
+provider-registration, broker, packaging, or cross-project contract work.
+
 - Domain code has no platform, SQL, HTTP, UI, or process dependencies.
 - The service is the only runtime state authority.
 - CLI, dashboard, scripts, and automations use the same control contract.

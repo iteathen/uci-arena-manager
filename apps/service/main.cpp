@@ -188,6 +188,22 @@ int run_control_plane(const Options& options) {
             {drogon::Post});
 
         app.registerHandler(
+            "/api/v1/auth/session",
+            [auth](const HttpRequestPtr& request,
+                   std::function<void(const HttpResponsePtr&)>&& callback) {
+                const auto session =
+                    auth->resume_browser_session(request->getCookie("arena_session"));
+                if (!session) {
+                    callback(response(
+                        {{"code", "authentication_required"}},
+                        drogon::k401Unauthorized));
+                    return;
+                }
+                callback(response({{"csrf_token", session->csrf_token}}));
+            },
+            {drogon::Get});
+
+        app.registerHandler(
             "/api/v1/system/status",
             [control_plane, auth](
                 const HttpRequestPtr& request,

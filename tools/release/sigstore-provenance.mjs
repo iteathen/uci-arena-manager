@@ -136,6 +136,43 @@ export function buildExpectedManagedStatement(managedResult) {
   };
 }
 
+export function prepareProviderProvenance({
+  artifactPath,
+  providerResultPath,
+  statementDirectory,
+}) {
+  const artifact = path.resolve(artifactPath);
+  const resultPath = path.resolve(providerResultPath);
+  const providerResult = readJson(resultPath);
+  if (providerResult.schema !== "arena_provider_release_result_v1"
+      || providerResult.source_repository !== MANAGER_REPOSITORY
+      || providerResult.component_id !== "manager.core"
+      || providerResult.release_authority !== "provider_component_only"
+      || providerResult.suite_installer_authority
+        !== "iteathen/uci-arena-installer"
+      || !COMMIT_PATTERN.test(providerResult.source_commit ?? "")
+      || path.basename(artifact) !== providerResult.artifact_name
+      || sha256File(artifact) !== providerResult.artifact_sha256) {
+    throw new Error("provider result does not bind the exact Manager artifact");
+  }
+  const statement = buildExpectedProviderStatement(providerResult);
+  const statementRoot = path.resolve(statementDirectory);
+  mkdirSync(statementRoot, { recursive: true });
+  const bundlePath = `${artifact}.sigstore.json`;
+  const statementPath = path.join(
+    statementRoot,
+    `${providerResult.artifact_name}.intoto.json`,
+  );
+  writeFileSync(statementPath, canonicalJson(statement), { flag: "wx" });
+  return {
+    artifactPath: artifact,
+    bundlePath,
+    predicateType: PROVIDER_PREDICATE_TYPE,
+    statement,
+    statementPath,
+  };
+}
+
 export function prepareManagedProvenance({
   artifactPath,
   managedResultPath,
@@ -460,6 +497,24 @@ function main(argv) {
     }
     return;
   }
+  if (command === "prepare-provider") {
+    const prepared = prepareProviderProvenance({
+      artifactPath: args.artifact,
+      providerResultPath: args.result,
+      statementDirectory: args["statement-directory"],
+    });
+    if (args["github-output"]) {
+      writeGitHubOutputs(args["github-output"], {
+        artifact_path: prepared.artifactPath,
+        bundle_path: prepared.bundlePath,
+        predicate_type: prepared.predicateType,
+        statement_path: prepared.statementPath,
+      });
+    } else {
+      process.stdout.write(canonicalJson(prepared));
+    }
+    return;
+  }
   if (command === "verify-bundle") {
     verifyBundlePayload(args.bundle, args.statement);
     process.stdout.write("sigstore-provenance: bundle payload verified\n");
@@ -467,7 +522,7 @@ function main(argv) {
   }
   throw new Error(
     "usage: sigstore-provenance.mjs "
-    + "<prepare-managed|prepare-manager|verify-bundle> [options]",
+    + "<prepare-provider|prepare-managed|prepare-manager|verify-bundle> [options]",
   );
 }
 
