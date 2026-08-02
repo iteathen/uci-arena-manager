@@ -81,6 +81,21 @@ x-interactive-helper-contract:
       registration from provider activity, readiness, stream connectivity,
       and bounded blockers.
 paths:
+  /auth/server-proof:
+    post:
+      operationId: proveManagerServerIdentity
+      description: >
+        Return a keyed proof for one fresh 32-byte lowercase hexadecimal
+        challenge. The proof is domain-separated and bound to the service's own
+        configured numeric loopback origin, which is returned as the audience;
+        the caller cannot select that audience. This endpoint accepts no bearer
+        credential and exists so a local client can authenticate the exact
+        Manager endpoint before disclosing its bearer key.
+      responses:
+        "200":
+          description: Bounded keyed Manager identity proof
+        "400":
+          $ref: "#/components/responses/Problem"
   /auth/pair-token:
     post:
       operationId: issuePairingToken

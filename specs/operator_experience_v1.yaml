@@ -132,6 +132,10 @@ managed_service_experience:
       Pause/Resume controls and a startup-owned status hint; do not show
       process Start, Stop, or Restart controls that would create a duplicate
       daemon.
+    - Render Pause only for an observed active or degraded provider and Resume
+      only for an observed paused provider. Unknown, stopped, failed, or
+      unavailable provider state keeps Probe available without presenting an
+      already-invalid lifecycle action.
     - Do not show an unconfigured optional service as an unhealthy manager resource.
     - Show Installed/Missing, Configured/Not configured, and current runtime
       activity as separate states on the catalog card.
@@ -193,8 +197,10 @@ desktop_launcher:
     - The shell identifies the connection as an authenticated local session
       and never labels it administrator, elevated, or privileged unless that
       exact authority is supplied by a typed backend contract.
-    - Verifies the local service, obtains a one-use pairing URL, and hosts the
-      packaged React dashboard inside a thin native desktop window.
+    - Verifies the local service with a fresh keyed challenge bound to the
+      service's own configured loopback origin before sending bearer
+      authority, obtains a one-use pairing URL, and hosts the packaged
+      React dashboard inside a thin native desktop window.
     - The Manager service remains the sole runtime and persistence authority;
       the native host owns only window lifecycle, pairing, native dialogs, and
       typed setup handoff.
@@ -314,7 +320,9 @@ tournament_experience:
     - The planner exposes rounds for Swiss, the even maximum game count plus
       Elo hypotheses and alpha/beta for SPRT, moves-to-go, opening-suite path,
       maximum-ply and optional draw/win adjudication controls, and all supported
-      variants. Controls hidden by format are omitted from the command.
+      variants. The opening-suite path supports the native file picker when the
+      desktop helper is present while retaining manual entry. Controls hidden
+      by format are omitted from the command.
     - The schedule preview labels Swiss capacity as games per round, never as color pairs. Other formats report complete color-reversed sets and disclose any odd unpaired game instead of rounding it into a fictitious pair.
     - Competition cards show a terminal SPRT verdict and likelihood ratio,
       Swiss round/bye progress, and direct links to the planner, Engines, and

@@ -45,6 +45,18 @@ common_contract:
         malformed envelopes, oversized projections, and output path escape
         evidence mark the integration incompatible.
       - Additive fields and compatible minor versions may be ignored.
+    transport_limits:
+      maximum_machine_output_bytes: 1048576
+      maximum_transport_line_bytes: 1048576
+      maximum_queued_transport_bytes: 8388608
+      rules:
+        - Provider output is byte-bounded before JSON parsing; a process cannot
+          consume unbounded Manager memory by omitting newlines or streaming
+          an oversized response.
+        - A bounded-output or malformed-output violation is incompatible
+          contract evidence. A launch failure or timeout is temporary
+          unavailability and preserves the last validated output projection as
+          stale.
   required_fields:
     - profile_id
     - display_name

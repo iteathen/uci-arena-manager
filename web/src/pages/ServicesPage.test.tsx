@@ -6,6 +6,7 @@ import {
   needsEvidenceTarget,
   selectPreferredService,
   serviceCardStates,
+  serviceLifecycleActions,
   serviceLocatorMode,
 } from './serviceSelection'
 
@@ -128,5 +129,29 @@ describe('managed-service catalog selection', () => {
         'uci_arena_evidence.service',
       )?.id,
     ).toBe('manual')
+  })
+
+  it('does not offer invalid lifecycle controls for provider-owned startup', () => {
+    const provider = service('provider', 'book_forge', 'book_forge.service')
+    provider.data.startup_control = 'provider_owned_per_user'
+    provider.data.observed_state = 'stopped'
+    expect(serviceLifecycleActions(provider.data)).toEqual([])
+    provider.data.observed_state = 'running'
+    expect(serviceLifecycleActions(provider.data)).toEqual(['pause'])
+    provider.data.observed_state = 'degraded'
+    expect(serviceLifecycleActions(provider.data)).toEqual(['pause'])
+    provider.data.observed_state = 'paused'
+    expect(serviceLifecycleActions(provider.data)).toEqual(['resume'])
+  })
+
+  it('keeps Manager-owned process controls aligned with observed state', () => {
+    const managed = service('managed', 'book_forge')
+    expect(serviceLifecycleActions(managed.data)).toEqual(['pause', 'stop'])
+    managed.data.observed_state = 'starting'
+    expect(serviceLifecycleActions(managed.data)).toEqual(['stop'])
+    managed.data.observed_state = 'stopped'
+    expect(serviceLifecycleActions(managed.data)).toEqual(['start'])
+    managed.data.integration_state = 'incompatible'
+    expect(serviceLifecycleActions(managed.data)).toEqual([])
   })
 })

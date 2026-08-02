@@ -71,6 +71,8 @@ void close_handle(HANDLE& handle) {
 
 struct NativeProcess::Impl {
     static constexpr std::size_t max_lines = 8192;
+    static constexpr std::size_t max_line_bytes = 1024 * 1024;
+    static constexpr std::size_t max_queued_bytes = 8 * 1024 * 1024;
 
     HANDLE process{nullptr};
     HANDLE thread{nullptr};
@@ -81,6 +83,7 @@ struct NativeProcess::Impl {
     mutable std::mutex mutex;
     std::condition_variable condition;
     std::deque<std::string> lines;
+    std::size_t queued_bytes{};
     std::uint64_t process_id{};
     std::uint64_t dropped{};
     bool reader_finished{true};
@@ -102,7 +105,12 @@ struct NativeProcess::Impl {
         if (!line.empty() && line.back() == '\r') {
             line.pop_back();
         }
-        if (lines.size() >= max_lines) {
+        if (line.size() > max_line_bytes) {
+            ++dropped;
+            return;
+        }
+        while (lines.size() >= max_lines ||
+               queued_bytes + line.size() > max_queued_bytes) {
             if (line.starts_with("info ")) {
                 ++dropped;
                 return;
@@ -112,30 +120,60 @@ struct NativeProcess::Impl {
                     return queued.starts_with("info ");
                 });
             if (observational != lines.end()) {
+                queued_bytes -= observational->size();
                 lines.erase(observational);
                 ++dropped;
             } else {
+                queued_bytes -= lines.front().size();
                 lines.pop_front();
                 ++dropped;
             }
         }
+        queued_bytes += line.size();
         lines.push_back(std::move(line));
         condition.notify_one();
     }
 
+    void record_dropped_line() {
+        std::scoped_lock lock(mutex);
+        ++dropped;
+    }
+
     void read_output() {
         std::string pending;
+        bool discard_until_newline = false;
         char buffer[4096];
         DWORD read = 0;
         while (ReadFile(stdout_read, buffer, sizeof(buffer), &read, nullptr) && read != 0) {
-            pending.append(buffer, read);
-            std::size_t newline = 0;
-            while ((newline = pending.find('\n')) != std::string::npos) {
-                enqueue(pending.substr(0, newline));
-                pending.erase(0, newline + 1);
+            std::size_t offset = 0;
+            while (offset < read) {
+                const std::string_view chunk(buffer + offset, read - offset);
+                const std::size_t newline = chunk.find('\n');
+                const std::size_t count = newline == std::string_view::npos
+                    ? chunk.size()
+                    : newline;
+                if (!discard_until_newline) {
+                    if (pending.size() + count <= max_line_bytes) {
+                        pending.append(chunk.data(), count);
+                    } else {
+                        pending.clear();
+                        discard_until_newline = true;
+                        record_dropped_line();
+                    }
+                }
+                offset += count;
+                if (newline == std::string_view::npos) {
+                    break;
+                }
+                if (!discard_until_newline) {
+                    enqueue(std::move(pending));
+                }
+                pending.clear();
+                discard_until_newline = false;
+                ++offset;
             }
         }
-        if (!pending.empty()) {
+        if (!discard_until_newline && !pending.empty()) {
             enqueue(std::move(pending));
         }
         {
@@ -243,6 +281,7 @@ void NativeProcess::start(
     {
         std::scoped_lock lock(impl_->mutex);
         impl_->lines.clear();
+        impl_->queued_bytes = 0;
         impl_->dropped = 0;
         impl_->reader_finished = false;
     }
@@ -276,6 +315,7 @@ std::optional<std::string> NativeProcess::read_line(std::chrono::milliseconds ti
         return std::nullopt;
     }
     std::string line = std::move(impl_->lines.front());
+    impl_->queued_bytes -= line.size();
     impl_->lines.pop_front();
     return line;
 }

@@ -20,9 +20,29 @@ TEST_CASE("pairing tokens are one-time and browser sessions require CSRF") {
     input.close();
     REQUIRE(auth.authenticate_bearer("Bearer " + key));
     REQUIRE_FALSE(auth.authenticate_bearer("Bearer wrong"));
+    const std::string challenge(64, 'a');
+    const std::string audience = "http://127.0.0.1:47831";
+    const std::string proof = auth.server_proof(challenge, audience);
+    REQUIRE(proof.size() == 64);
+    REQUIRE(
+        proof == arena::application::LocalAuth::compute_server_proof(
+                     key, challenge, audience));
+    REQUIRE(
+        proof != arena::application::LocalAuth::compute_server_proof(
+                     key, challenge, "http://127.0.0.1:47832"));
+    REQUIRE_THROWS_AS(
+        auth.server_proof("not-a-challenge", audience),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        auth.server_proof(challenge, "http://localhost:47831"),
+        std::invalid_argument);
     const std::string rotated_key(64, 'a');
     std::ofstream(auth.client_key_path(), std::ios::binary | std::ios::trunc)
         << rotated_key << '\n';
+    REQUIRE(
+        auth.server_proof(challenge, audience) ==
+        arena::application::LocalAuth::compute_server_proof(
+            rotated_key, challenge, audience));
     REQUIRE(auth.authenticate_bearer("Bearer " + rotated_key));
     REQUIRE_FALSE(auth.authenticate_bearer("Bearer " + key));
 

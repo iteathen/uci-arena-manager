@@ -165,6 +165,13 @@ local_match_planner:
     - Engine-specific overrides do not mutate catalog defaults.
     - Plans are deterministic for the same normalized inputs and seed.
     - Every scheduled game records both engine fingerprints and options.
+    - Before admitting the first game, Manager repeats the complete UCI probe
+      for every distinct participant with that competition's effective option
+      set and verifies the executable fingerprint still equals the registered
+      identity. Failure terminates the competition before creating a game.
+    - Competition-specific option overrides must name options advertised by
+      the registered engine and satisfy their declared type and bounds before
+      the plan is persisted.
     - Color-paired formats schedule reversed colors together.
   opening_suite:
     schema: arena_opening_suite_v1
