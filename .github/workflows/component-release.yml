@@ -1,0 +1,197 @@
+name: Manager component candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact Manager component version
+        type: string
+        required: true
+      target:
+        description: Target platform
+        type: choice
+        required: true
+        options:
+          - windows-x86_64
+          - linux-x86_64
+
+permissions:
+  contents: read
+
+concurrency:
+  group: manager-component-${{ inputs.version }}-${{ inputs.target }}-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  build-sign-verify:
+    runs-on: ${{ inputs.target == 'windows-x86_64' && 'windows-2025' || 'ubuntu-24.04' }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_TARGET: ${{ inputs.target }}
+      RELEASE_WORKFLOW_IDENTITY: ${{ github.workflow_ref }}#${{ github.run_id }}.${{ github.run_attempt }}
+    steps:
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: git config --global core.longpaths true
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.15.0
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Validate immutable inputs
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_VERSION -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:[-.][A-Za-z0-9.-]+)?$') {
+            throw 'version must be immutable semver text'
+          }
+          if ($env:RELEASE_TARGET -notmatch '^(windows-x86_64|linux-x86_64)$') {
+            throw 'unsupported target'
+          }
+      - name: Install exact dashboard dependency closure
+        run: npm ci
+        working-directory: web
+      - uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57
+        if: runner.os == 'Windows'
+      - name: Install pinned CMake packaging toolchain
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = '4.3.4'
+          $expected = '86e5fcafb38bdf58346a78b187c7b6b4f252ae5242cffe24c463a92bbd2e77d1'
+          $archive = Join-Path $env:RUNNER_TEMP "cmake-$version-windows-x86_64.zip"
+          $destination = Join-Path $env:RUNNER_TEMP "cmake-$version"
+          Invoke-WebRequest `
+            -Uri "https://github.com/Kitware/CMake/releases/download/v$version/cmake-$version-windows-x86_64.zip" `
+            -OutFile $archive
+          $observed = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          if ($observed -ne $expected) { throw 'pinned CMake archive digest mismatch' }
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination
+          Add-Content -LiteralPath $env:GITHUB_PATH `
+            -Value (Join-Path $destination "cmake-$version-windows-x86_64/bin")
+      - name: Install Linux native build prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes acl autoconf autoconf-archive automake libtool ninja-build lintian rpm rpmlint libwebkit2gtk-4.1-dev
+      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
+        with:
+          vcpkgGitCommitId: cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3
+      - name: Install pinned WiX toolset
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 6.0.2
+          wix extension add -g WixToolset.UI.wixext/6.0.2
+          wix extension add -g WixToolset.BootstrapperApplications.wixext/6.0.2
+      - name: Build and verify exact Manager source
+        shell: pwsh
+        run: |
+          node tools/release/clean-build.mjs `
+            --manager-only `
+            --platform $env:RELEASE_TARGET `
+            --version $env:RELEASE_VERSION
+      - name: Build deterministic Manager component
+        shell: pwsh
+        run: |
+          $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-release' } else { 'linux-release' }
+          cmake --install "build/$preset" --config Release --prefix provider_stage/manager-install
+          if ($LASTEXITCODE -ne 0) { throw 'Manager install-tree staging failed' }
+          $epoch = git show -s --format=%ct HEAD
+          node tools/release/build-manager-component.mjs `
+            --install-tree provider_stage/manager-install `
+            --definition release/components/manager-core.json `
+            --version $env:RELEASE_VERSION `
+            --target $env:RELEASE_TARGET `
+            --output "dist/provider/manager.core-$env:RELEASE_VERSION-$env:RELEASE_TARGET.tar.gz" `
+            --source-date-epoch $epoch `
+            --workflow-identity $env:RELEASE_WORKFLOW_IDENTITY `
+            --passed-test manager_spec_web_release_checks `
+            --passed-test manager_native_tests `
+            --passed-test manager_component_install_tree
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v3.0.6
+      - name: Prepare exact provider statement
+        id: attestation
+        shell: pwsh
+        env:
+          STATEMENT_DIRECTORY: ${{ runner.temp }}/provider-attestation
+        run: |
+          $artifact = @(Get-ChildItem dist/provider -Filter '*.tar.gz')
+          $result = @(Get-ChildItem dist/provider -Filter '*.provider-result.json')
+          if ($artifact.Count -ne 1 -or $result.Count -ne 1) {
+            throw 'expected one Manager artifact and one provider result'
+          }
+          node tools/release/sigstore-provenance.mjs prepare-provider `
+            --artifact $artifact[0].FullName `
+            --result $result[0].FullName `
+            --statement-directory $env:STATEMENT_DIRECTORY `
+            --github-output $env:GITHUB_OUTPUT
+      - name: Sign and verify exact provenance
+        shell: pwsh
+        env:
+          ARTIFACT_PATH: ${{ steps.attestation.outputs.artifact_path }}
+          BUNDLE_PATH: ${{ steps.attestation.outputs.bundle_path }}
+          CERTIFICATE_IDENTITY: https://github.com/${{ github.workflow_ref }}
+          PREDICATE_TYPE: ${{ steps.attestation.outputs.predicate_type }}
+          STATEMENT_PATH: ${{ steps.attestation.outputs.statement_path }}
+        run: |
+          cosign attest-blob --yes `
+            --statement $env:STATEMENT_PATH `
+            --bundle $env:BUNDLE_PATH
+          if ($LASTEXITCODE -ne 0) { throw 'Sigstore attestation failed' }
+          cosign verify-blob-attestation `
+            --bundle $env:BUNDLE_PATH `
+            --certificate-identity $env:CERTIFICATE_IDENTITY `
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com `
+            --certificate-github-workflow-repository $env:GITHUB_REPOSITORY `
+            --certificate-github-workflow-sha $env:GITHUB_SHA `
+            --certificate-github-workflow-name $env:GITHUB_WORKFLOW `
+            --certificate-github-workflow-ref $env:GITHUB_REF `
+            --certificate-github-workflow-trigger $env:GITHUB_EVENT_NAME `
+            --type $env:PREDICATE_TYPE `
+            $env:ARTIFACT_PATH
+          if ($LASTEXITCODE -ne 0) { throw 'Sigstore verification failed' }
+          node tools/release/sigstore-provenance.mjs verify-bundle `
+            --bundle $env:BUNDLE_PATH `
+            --statement $env:STATEMENT_PATH
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: manager-core-${{ inputs.version }}-${{ inputs.target }}
+          path: |
+            dist/provider/*.tar.gz
+            dist/provider/*.provider-result.json
+            dist/provider/*.sigstore.json
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    needs: build-sign-verify
+    runs-on: ubuntu-24.04
+    environment: component-candidate
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: manager-core-${{ inputs.version }}-${{ inputs.target }}
+          path: dist/provider
+      - name: Publish immutable private candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_TARGET: ${{ inputs.target }}
+        run: |
+          tag="component/manager-core/v${RELEASE_VERSION}/${RELEASE_TARGET}"
+          gh release create "${tag}" dist/provider/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --prerelease \
+            --title "manager.core ${RELEASE_VERSION} ${RELEASE_TARGET}" \
+            --notes "Immutable private Manager component candidate; uci-arena-installer retains suite composition and promotion authority."

@@ -11,7 +11,7 @@
     "source_tree_sha256", "clean_tree", "release_authority",
     "suite_installer_authority", "workflow_identity",
     "toolchain_identity", "dependency_lock_identities", "build_flags",
-    "sbom_sha256", "licenses_sha256", "tests"
+    "sbom_sha256", "licenses_sha256", "test_receipt_sha256", "tests"
   ],
   "properties": {
     "schema": {"const": "arena_provider_release_result_v1"},
@@ -34,13 +34,14 @@
     "source_tree_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "clean_tree": {"const": true},
     "release_authority": {"const": "provider_component_only"},
-    "suite_installer_authority": {"const": "iteathen/uci-arena-manager"},
+    "suite_installer_authority": {"const": "iteathen/uci-arena-installer"},
     "workflow_identity": {"type": "string"},
     "toolchain_identity": {"type": "object"},
     "dependency_lock_identities": {"type": "object"},
     "build_flags": {"type": "array", "items": {"type": "string"}},
     "sbom_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "licenses_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "test_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "tests": {"type": "array", "minItems": 1, "items": {"type": "object"}},
     "validation_evidence": {
       "type": "object",

@@ -1,8 +1,9 @@
 # Suite release authority
 
-`iteathen/uci-arena-manager` is the sole composition, installer, signing-request,
-channel, and suite-publication authority. `iteathen/UCI_Arena` may publish only
-immutable component candidates and their provider results.
+`iteathen/uci-arena-manager` owns only the `manager.core` component candidate.
+`iteathen/uci-arena-installer` owns composition, installer signing requests,
+channels, and suite publication. Every product repository publishes only its
+immutable component candidates and provider results.
 
 Windows suite bundles expose Engine, Book Forge, Evidence Service, and Lichess
 adapter as persisted default-on feature variables. The custom WiX options page

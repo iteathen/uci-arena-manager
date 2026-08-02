@@ -5,9 +5,11 @@ meta:
   owner: release_engineering
 
 authority:
-  suite_release_repository: iteathen/uci-arena-manager
-  component_candidate_repository: iteathen/UCI_Arena
+  suite_release_repository: iteathen/uci-arena-installer
   component_candidate_repositories:
+    manager:
+      repository: iteathen/uci-arena-manager
+      components: [manager.core]
     uci_arena:
       repository: iteathen/UCI_Arena
       components:
@@ -23,8 +25,8 @@ authority:
       repository: iteathen/uci-arena-evidence-service
       components: [uci_arena_evidence.service]
   release_steward: "@iteathen"
-  official_builder: explicitly_dispatched_protected_manager_release_workflow
-  stable_publisher: explicitly_dispatched_manager_release_after_production_environment_approval
+  official_builder: explicitly_dispatched_protected_installer_release_workflow
+  stable_publisher: explicitly_dispatched_installer_release_after_production_environment_approval
   forbidden_release_authorities:
     - manager_runtime_service
     - manager_broker

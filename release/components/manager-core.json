@@ -1,0 +1,43 @@
+{
+  "schema": "arena_manager_component_definition_v1",
+  "component_id": "manager.core",
+  "source_repository": "iteathen/uci-arena-manager",
+  "entrypoints_by_target": {
+    "windows-x86_64": {
+      "service": "bin/arena-service.exe",
+      "cli": "bin/arena.exe",
+      "broker": "bin/arena-broker.exe",
+      "desktop": "bin/uci-arena-manager.exe"
+    },
+    "linux-x86_64": {
+      "service": "bin/arena-service",
+      "cli": "bin/arena",
+      "broker": "bin/arena-broker",
+      "desktop": "bin/uci-arena-manager"
+    }
+  },
+  "dependencies": [],
+  "exclude_by_target": {
+    "windows-x86_64": ["bin/arena-setup.exe"],
+    "linux-x86_64": ["bin/arena-setup"]
+  },
+  "capabilities": ["control_plane", "broker", "desktop_host"],
+  "startup": {
+    "windows": "windows_service",
+    "linux": "systemd_service"
+  },
+  "data_paths": ["manager_state"],
+  "dependency_lock_identities": {
+    "vcpkg": "vcpkg.json",
+    "web_npm": "web/package-lock.json"
+  },
+  "build_flags_by_target": {
+    "windows-x86_64": ["CMAKE_PRESET=windows-release", "CMAKE_BUILD_TYPE=Release"],
+    "linux-x86_64": ["CMAKE_PRESET=linux-release", "CMAKE_BUILD_TYPE=Release"]
+  },
+  "tests": [
+    "manager_spec_web_release_checks",
+    "manager_native_tests",
+    "manager_component_install_tree"
+  ]
+}
