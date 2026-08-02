@@ -48,6 +48,34 @@ test("Manager source and component definition contain no Installer engine", () =
     existsSync(path.join(repositoryRoot, "src", "application", "installer", "setup.cpp")),
     false,
   );
+  assert.equal(
+    existsSync(path.join(repositoryRoot, "specs", "installation_contract_v1.yaml")),
+    false,
+  );
+  for (const name of [
+    "install-catalog.schema.json",
+    "install-component.schema.json",
+    "install-plan.schema.json",
+    "install-receipt.schema.json",
+    "install-transaction.schema.json",
+    "saved-locator.schema.json",
+    "setup-discovery.schema.json",
+    "setup-import-result.schema.json",
+  ]) {
+    assert.equal(
+      existsSync(path.join(repositoryRoot, "specs", "schemas", name)),
+      false,
+      `Installer-owned schema must not be copied into Manager: ${name}`,
+    );
+  }
+  assert.equal(
+    existsSync(path.join(
+      repositoryRoot,
+      "specs",
+      "manager_component_release_v1.yaml",
+    )),
+    true,
+  );
 });
 
 test("Manager component workflow uses the manifest's exact vcpkg baseline", () => {

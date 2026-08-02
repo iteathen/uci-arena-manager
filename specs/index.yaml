@@ -55,15 +55,11 @@ specs:
       - apps/broker
       - src/platform
       - packaging
-  - spec_id: arena_installation_contract_v1
-    path: specs/installation_contract_v1.yaml
-    owner: release_engineering
+  - spec_id: arena_manager_component_release_v1
+    path: specs/manager_component_release_v1.yaml
+    owner: manager_release_engineering
     applies_to:
-      - apps/setup
-      - include/arena/application/installer
-      - src/application/installer
       - release
-      - packaging
       - .github/workflows/component-release.yml
       - release/components
       - tools/release/build-manager-component.mjs

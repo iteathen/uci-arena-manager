@@ -291,8 +291,9 @@ rollback-protection state, content cache, and transaction evidence. Managed
 component roots, startup registrations, receipt documents, the Windows
 service, and MSI-owned program files are removed. The exact retention contract
 and reversible clean-install test procedure are owned by
-`uci-arena-installer`; Manager's consumed boundary is documented in
-`specs/installation_contract_v1.yaml` and `release/README.md`.
+`uci-arena-installer`; Manager's read-only consumption and component
+publication boundary is documented in
+`specs/manager_component_release_v1.yaml` and `release/README.md`.
 
 ## License
 
