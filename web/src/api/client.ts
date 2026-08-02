@@ -96,6 +96,9 @@ export async function exchangePairingToken(): Promise<boolean> {
 
 export type LocalSetupRequest =
   | {
+      operation: 'discover'
+    }
+  | {
       operation: 'import'
       asset_kind:
         | 'opening_book'
@@ -134,7 +137,35 @@ export interface LocalSetupResult {
   manager_service_restart?: boolean
   disk_impact_bytes?: number | null
   actions?: Array<Record<string, unknown>>
+  discovery?: Record<string, LocalAssetDiscovery>
   [key: string]: unknown
+}
+
+export interface LocalAssetCandidate {
+  source: string
+  state: string
+  path: string
+  details?: Record<string, unknown>
+}
+
+export interface LocalIndexedSearch {
+  attempted?: boolean
+  adapter?: string
+  state?: string
+  detail_code?: string
+  maximum_results?: number
+  returned_candidates?: number
+  total_returned_candidates?: number
+  accepted_candidates?: number
+  rejected_candidates?: number
+  elapsed_ms?: number
+  truncated?: boolean
+}
+
+export interface LocalAssetDiscovery {
+  selection?: LocalAssetCandidate | null
+  candidates?: LocalAssetCandidate[]
+  indexed_search?: LocalIndexedSearch
 }
 
 export function localSetupAvailable() {
@@ -192,6 +223,10 @@ export function planLocalSetup(request: LocalSetupRequest) {
     schema: 'arena_ui_setup_request_v1',
     ...request,
   })
+}
+
+export function discoverLocalAssets() {
+  return planLocalSetup({ operation: 'discover' })
 }
 
 export function applyLocalSetup(request: LocalSetupRequest) {

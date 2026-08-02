@@ -173,7 +173,7 @@ export default function App() {
       case 'reports':
         return <ReportsPage />
       case 'configuration':
-        return <ConfigurationPage />
+        return <ConfigurationPage navigate={navigate} />
       case 'audit':
         return <AuditPage />
       default:

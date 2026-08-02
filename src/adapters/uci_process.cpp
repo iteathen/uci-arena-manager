@@ -5,12 +5,12 @@
 #include <sodium.h>
 
 #include <array>
+#include <algorithm>
 #include <cctype>
 #include <charconv>
 #include <chrono>
 #include <fstream>
 #include <iomanip>
-#include <ranges>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -119,7 +119,7 @@ std::string value_after(const std::string& line, const std::string_view prefix) 
 
 bool safe_token(const std::string_view value, const std::size_t maximum) {
     return !value.empty() && value.size() <= maximum &&
-           std::ranges::all_of(value, [](const unsigned char character) {
+           std::all_of(value.begin(), value.end(), [](const unsigned char character) {
                return std::isalnum(character) != 0 || character == '_' ||
                       character == '-' || character == '.';
            });
@@ -127,7 +127,7 @@ bool safe_token(const std::string_view value, const std::size_t maximum) {
 
 bool decimal_fingerprint(const std::string_view value) {
     return !value.empty() && value.size() <= 20 &&
-           std::ranges::all_of(value, [](const unsigned char character) {
+           std::all_of(value.begin(), value.end(), [](const unsigned char character) {
                return std::isdigit(character) != 0;
            });
 }
@@ -244,8 +244,8 @@ UciProbeResult UciProcess::probe(
         process.write_line("uci");
         await_token(process, "uciok", deadline, result, true);
         for (const auto& [name, value] : option_overrides) {
-            const bool advertised = std::ranges::any_of(
-                result.options,
+            const bool advertised = std::any_of(
+                result.options.begin(), result.options.end(),
                 [&name](const domain::UciOption& option) {
                     return option.name == name;
                 });

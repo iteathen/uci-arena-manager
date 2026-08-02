@@ -729,6 +729,41 @@ discovery:
     - standard_install_roots
     - provider_manifests
     - user_selected_roots
+    - operating_system_file_index
+  indexed_asset_search:
+    owner: installer_platform_adapter
+    manager_contract: typed_read_only_discover_operation
+    kinds: [opening_book, syzygy, timing_profile]
+    windows_adapter: windows_search_system_index
+    linux_adapter: plocate_or_locate_database
+    maximum_results: 256
+    timeout_milliseconds: 2000
+    ownership: external_dependency
+    registration_after_detection: explicit_import_only
+    failure_behavior: visible_non_blocking_result_with_manual_fallback
+    classification:
+      opening_book: >
+        Candidate books remain discoverable when optional sidecars or
+        publication metadata are absent; the consumer uses only capabilities
+        supported by the selected files.
+      syzygy: >
+        Any non-empty flat WDL or DTZ subset remains discoverable and reports
+        its actual coverage. WDL and DTZ do not require each other merely to
+        be catalogued or selected for their available capability.
+      timing_profile: >
+        Parseable legacy, incomplete, or runtime-mismatched timing evidence
+        remains catalogued with its observed schema and qualification state.
+        Exact runtime identity is required only for activation and a protected
+        live safety claim.
+    rules:
+      - The Manager native helper invokes only the adjacent Installer-owned
+        arena-setup inventory operation and cannot provide executable, argv,
+        install-root, catalog, or shell authority from React.
+      - Discovery never creates a locator, copies an asset, or mutates package
+        or component state.
+      - Version mismatch cannot block discovery, installation of unrelated
+        components, or operation of capabilities that do not consume the
+        mismatched asset.
   user_selected_root_behavior:
     maximum_directory_depth: 1
     multiple_explicit_roots: supported
