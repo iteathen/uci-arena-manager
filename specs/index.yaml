@@ -25,6 +25,14 @@ specs:
       - src/domain
       - src/application
       - tests
+  - spec_id: arena_engine_onboarding_v1
+    path: specs/engine_onboarding_v1.yaml
+    owner: engine_onboarding
+    applies_to:
+      - include/arena/application/engine_onboarding.hpp
+      - src/application/engine_onboarding.cpp
+      - tests/unit/engine_onboarding_tests.cpp
+      - web/src/pages/EnginesPage.tsx
   - spec_id: arena_control_api_v1
     path: specs/openapi.yaml
     owner: control_api

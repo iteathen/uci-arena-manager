@@ -42,6 +42,7 @@ repository_role:
 mandatory_boundaries:
   - "The Manager is one product repository because service, CLI, desktop host, web dashboard, broker, persistence, and projections share one control-plane domain model and evolve atomically."
   - "The Manager consumes installed component manifests and fixed typed provider operations; it never imports provider source, opens provider-private storage, or executes arbitrary provider shell commands."
+  - "Component discovery roles are declared by the producing component manifest; Manager resolves and verifies those declarations without inferring roles from component ids, capabilities, entrypoint keys, filenames, or model names."
   - "Providers remain authoritative for configuration validation, lifecycle constraints, credential access, persistent provider state, and their domain operations."
   - "Manager may project and request allowed provider options but must not duplicate provider validation or policy."
   - "Adding a provider changes its published service contract plus Manager registration/composition and provider-specific projection only; Manager core domain behavior remains unchanged."
