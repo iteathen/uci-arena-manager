@@ -130,6 +130,17 @@ std::optional<BrowserSession> LocalAuth::exchange_pairing_token(const std::strin
     return session;
 }
 
+std::optional<BrowserSession> LocalAuth::resume_browser_session(
+    const std::string& session_id) const {
+    std::scoped_lock lock(mutex_);
+    const auto session = sessions_.find(session_id);
+    if (session == sessions_.end() ||
+        session->second.expires_at <= std::chrono::steady_clock::now()) {
+        return std::nullopt;
+    }
+    return BrowserSession{session_id, session->second.value};
+}
+
 bool LocalAuth::authenticate_session(const std::string& session_id) const {
     std::scoped_lock lock(mutex_);
     const auto session = sessions_.find(session_id);

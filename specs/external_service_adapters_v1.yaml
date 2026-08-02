@@ -349,6 +349,9 @@ profiles:
           bounded returned summary and refreshed orchestration projection.
         - Manager may enqueue only the provider-defined first campaign against
           the active deployment or an existing service-issued target UUID.
+          A sole projected target is selected automatically; any explicit
+          target must be a member of the current provider projection, and the
+          resulting jobs retain that target id.
         - Manager may cancel or retry only a service-issued job UUID; arbitrary
           adapter commands, flags, paths, and raw catalog access are forbidden.
         - Target and job projections are bounded, omit provider-owned paths and

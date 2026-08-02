@@ -1926,18 +1926,49 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
         } else if (action == "service.evidence_campaign_enqueue") {
             operation_arguments = {"campaign", "enqueue"};
             operation = "campaign_enqueue";
+            if (parameters.size() > 1 ||
+                (parameters.size() == 1 && !parameters.contains("target_id"))) {
+                throw CommandFailure(
+                    "invalid_evidence_campaign_request",
+                    "Evidence campaign enqueue accepts only target_id",
+                    400);
+            }
+            std::optional<std::string> selected_target;
+            const json& projected_targets =
+                data.value("orchestration_projection", json::object())
+                    .value("targets", json::array());
+            if (!projected_targets.is_array() || projected_targets.size() > 1'000) {
+                throw CommandFailure(
+                    "service_api_incompatible",
+                    "Evidence target projection is malformed",
+                    409);
+            }
             if (parameters.contains("target_id") &&
                 !parameters.at("target_id").is_null()) {
-                const std::string target_id =
-                    required_string(parameters, "target_id");
-                if (!uuid_v4(target_id)) {
+                const std::string target_id = required_string(parameters, "target_id");
+                if (!uuid_v4(target_id) ||
+                    std::ranges::none_of(projected_targets, [&](const json& target) {
+                        return target.is_object() && target.value("id", "") == target_id;
+                    })) {
                     throw CommandFailure(
-                        "invalid_target_id",
-                        "Evidence target_id must be a service-issued UUID",
-                        400);
+                        "evidence_target_not_projected",
+                        "Evidence target_id must be present in the current provider projection",
+                        422);
                 }
+                selected_target = target_id;
+            } else if (projected_targets.size() == 1 &&
+                       projected_targets.front().is_object() &&
+                       uuid_v4(projected_targets.front().value("id", ""))) {
+                selected_target = projected_targets.front().at("id").get<std::string>();
+            } else if (projected_targets.size() > 1) {
+                throw CommandFailure(
+                    "evidence_target_selection_required",
+                    "Evidence campaign enqueue requires one projected target selection",
+                    422);
+            }
+            if (selected_target.has_value()) {
                 operation_arguments.insert(
-                    operation_arguments.end(), {"--target", target_id});
+                    operation_arguments.end(), {"--target", *selected_target});
             }
         } else {
             const std::string job_id = required_string(parameters, "job_id");

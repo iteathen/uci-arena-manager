@@ -70,8 +70,12 @@ int main(int argc, char** argv) {
     }
     if (evidence && operation == "campaign" && argc > 4 &&
         std::string(argv[4]) == "enqueue") {
+        if (argc < 7 || std::string(argv[5]) != "--target" ||
+            std::string(argv[6]) != "123e4567-e89b-42d3-a456-426614174001") {
+            return 5;
+        }
         std::cout
-            << R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"uci_arena_evidence.service","component_version":"0.3.0","operation":"campaign_enqueue","ok":true,"payload":{"schema":"uci_arena_evidence_campaign_enqueue_v1","campaign":"time_control_curve_v1","target_id":null,"jobs":[]}})"
+            << R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"uci_arena_evidence.service","component_version":"0.3.0","operation":"campaign_enqueue","ok":true,"payload":{"schema":"uci_arena_evidence_campaign_enqueue_v1","campaign":"time_control_curve_v1","target_id":"123e4567-e89b-42d3-a456-426614174001","jobs":[]}})"
             << '\n';
         return 0;
     }

@@ -28,6 +28,22 @@ describe('command envelope', () => {
 })
 
 describe('interactive-user path picker', () => {
+  it('resynchronizes CSRF for an inherited valid browser session', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ csrf_token: 'resumed-csrf' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+
+    await expect(exchangePairingToken()).resolves.toBe(false)
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/auth/session',
+      expect.objectContaining({ credentials: 'same-origin' }),
+    )
+    expect(sessionStorage.getItem('arena.csrf')).toBe('resumed-csrf')
+  })
+
   it('retains a valid picker session from the pairing fragment', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response(JSON.stringify({ csrf_token: 'csrf' }), {

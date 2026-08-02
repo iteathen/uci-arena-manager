@@ -301,8 +301,12 @@ managed_service_contract:
         only component-declared typed API operations and stores bounded
         projections for the dashboard.
       - The built-in first campaign may target the active deployment or an
-        existing service-issued target UUID. Arbitrary adapter execution is
-        outside the Manager contract.
+        existing service-issued target UUID. When exactly one provider-issued
+        target exists, Manager binds the first campaign to that target instead
+        of falling back to an unrelated active-model pointer. An explicit
+        target id is accepted only when it is present in the current bounded
+        provider projection. Arbitrary adapter execution is outside the
+        Manager contract.
       - Evidence target registration accepts only a Manager-owned registered
         engine UUID. Manager repeats the generic UCI probe, combines its typed
         runtime identity with receipt-derived default-model metadata, and

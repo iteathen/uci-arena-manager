@@ -415,6 +415,10 @@ TEST_CASE("Book Forge and Evidence outputs cross only validated public contracts
             campaign.at("resource").at("data")
                 .at("last_control_result").at("campaign") ==
             "time_control_curve_v1");
+        REQUIRE(
+            campaign.at("resource").at("data")
+                .at("last_control_result").at("target_id") ==
+            "123e4567-e89b-42d3-a456-426614174001");
         const json cancelled = control_plane.submit(
             command(
                 "service.evidence_job_cancel",

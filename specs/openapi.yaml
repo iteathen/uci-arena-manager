@@ -93,6 +93,17 @@ paths:
       responses:
         "200":
           description: HttpOnly local session and CSRF token
+  /auth/session:
+    get:
+      operationId: resumeBrowserSession
+      description: >
+        Return the CSRF value for the existing unexpired HttpOnly browser
+        session. This does not create or extend a session.
+      responses:
+        "200":
+          description: Existing browser session CSRF token
+        "401":
+          $ref: "#/components/responses/Problem"
   /system/status:
     get:
       operationId: getSystemStatus

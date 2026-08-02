@@ -24,6 +24,8 @@ class LocalAuth final {
     [[nodiscard]] std::string issue_pairing_token();
     [[nodiscard]] std::optional<BrowserSession> exchange_pairing_token(
         const std::string& token);
+    [[nodiscard]] std::optional<BrowserSession> resume_browser_session(
+        const std::string& session_id) const;
     [[nodiscard]] bool authenticate_session(const std::string& session_id) const;
     [[nodiscard]] bool validate_csrf(
         const std::string& session_id,

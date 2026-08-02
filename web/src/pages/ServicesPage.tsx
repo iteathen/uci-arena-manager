@@ -36,6 +36,8 @@ import { PathPickerInput } from '../components/PathPickerInput'
 import { StatusPill } from '../components/StatusPill'
 import {
   canEnqueueEvidenceCampaign,
+  evidenceCampaignBlocker,
+  needsEvidenceTarget,
   selectPreferredService,
   serviceCardStates,
   serviceLocatorMode,
@@ -629,9 +631,8 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                         evidenceControl.variables.action === 'campaign_enqueue'
                       }
                       title={
-                        canEnqueueEvidenceCampaign(service.data)
-                          ? 'Enqueue the provider-defined first evidence campaign.'
-                          : 'Start or register an exact compatible engine deployment first.'
+                        evidenceCampaignBlocker(service.data) ??
+                        'Enqueue the provider-defined first evidence campaign.'
                       }
                       disabled={
                         evidenceControl.isPending ||
@@ -644,12 +645,11 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                       Run first evidence campaign
                     </Button>
                   </Group>
-                  {service.data.status_projection?.collection?.state ===
-                    'waiting_for_target' && (
+                  {needsEvidenceTarget(service.data) && (
                     <Alert color="yellow" mt="sm">
                       <Group justify="space-between" align="center">
                         <Text size="sm">
-                          {service.data.status_projection.collection.reason ??
+                          {service.data.status_projection?.collection?.reason ??
                             'No exact compatible model deployment target is available yet.'}
                         </Text>
                         {engines.isLoading ? (
