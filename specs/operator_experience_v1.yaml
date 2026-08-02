@@ -350,6 +350,11 @@ evidence_service_experience:
       campaign accidentally.
     - Eligible failed or cancelled jobs expose Retry; queued or waiting jobs
       expose Cancel. Invalid provider lifecycle actions are not rendered.
+    - Reports bound long provider dataset projections inside a scrollable
+      region so retained evidence cannot make the rest of the control plane
+      unreachable. Missing-provider and selected-profile guidance links
+      directly to Services or Configuration instead of naming a dead-end
+      prerequisite.
     - All campaign and job controls call the typed service API through Manager,
       report success or failure visibly, and never fabricate progress in React.
 

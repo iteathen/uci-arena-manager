@@ -7,6 +7,7 @@ import {
 } from '@tabler/icons-react'
 import {
   Alert,
+  Anchor,
   Badge,
   Button,
   Code,
@@ -14,6 +15,7 @@ import {
   Paper,
   Select,
   SimpleGrid,
+  ScrollArea,
   Stack,
   Table,
   Text,
@@ -147,7 +149,7 @@ export function ReportsPage() {
           </Group>
           {!book ? (
             <Alert color="gray" mt="lg">
-              Book Forge is not configured. Install or detect it from Services.
+              Book Forge is not configured. <Anchor href="#page=services">Install or detect it from Services.</Anchor>
             </Alert>
           ) : book.data.integration_state !== 'available' ? (
             <Alert color="orange" mt="lg">
@@ -206,7 +208,8 @@ export function ReportsPage() {
           </Group>
           {!evidence ? (
             <Alert color="gray" mt="lg">
-              Evidence Service is not configured. Install or detect it from Services.
+              Evidence Service is not configured.{' '}
+              <Anchor href="#page=services">Install or detect it from Services.</Anchor>
             </Alert>
           ) : evidence.data.integration_state !== 'available' ? (
             <Alert color="orange" mt="lg">
@@ -241,28 +244,31 @@ export function ReportsPage() {
               {selectedProfile && (
                 <Alert color="teal" title="Selected timing profile">
                   {selectedProfile.profile_schema} · {selectedProfile.source} ·{' '}
-                  <Code>{shortHash(selectedProfile.sha256)}</Code>
+                  <Code>{shortHash(selectedProfile.sha256)}</Code>{' '}
+                  <Anchor href="#page=configuration">Review configuration</Anchor>
                 </Alert>
               )}
               {datasets.length > 0 && (
-                <Table>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Campaign</Table.Th>
-                      <Table.Th>State</Table.Th>
-                      <Table.Th>Observations</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {datasets.map((dataset) => (
-                      <Table.Tr key={dataset.id}>
-                        <Table.Td>{dataset.campaign || 'unspecified'}</Table.Td>
-                        <Table.Td><StatusPill value={dataset.state} /></Table.Td>
-                        <Table.Td>{dataset.observation_count.toLocaleString()}</Table.Td>
+                <ScrollArea h={320} type="auto" offsetScrollbars>
+                  <Table stickyHeader>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>Campaign</Table.Th>
+                        <Table.Th>State</Table.Th>
+                        <Table.Th>Observations</Table.Th>
                       </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {datasets.map((dataset) => (
+                        <Table.Tr key={dataset.id}>
+                          <Table.Td>{dataset.campaign || 'unspecified'}</Table.Td>
+                          <Table.Td><StatusPill value={dataset.state} /></Table.Td>
+                          <Table.Td>{dataset.observation_count.toLocaleString()}</Table.Td>
+                        </Table.Tr>
+                      ))}
+                    </Table.Tbody>
+                  </Table>
+                </ScrollArea>
               )}
             </Stack>
           )}
