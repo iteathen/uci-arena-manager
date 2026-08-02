@@ -100,7 +100,7 @@ test("Lintian exceptions are exact, reviewed, and cannot mask new tags", () => {
   assert.deepEqual(activeLines, expected);
   assert.doesNotMatch(override, /embedded-library\s*$/mu);
 
-  const releaseWorkflow = repositoryFile(".github/workflows/release.yml");
+  const releaseWorkflow = repositoryFile(".github/workflows/component-release.yml");
   assert.match(
     releaseWorkflow,
     /lintian dist\/linux\/\*\.deb\s+rpmlint dist\/linux\/\*\.rpm/u,

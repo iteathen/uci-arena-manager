@@ -96,6 +96,13 @@ jobs:
             --manager-only `
             --platform $env:RELEASE_TARGET `
             --version $env:RELEASE_VERSION
+      - name: Validate Linux diagnostic packages
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          lintian dist/linux/*.deb
+          rpmlint dist/linux/*.rpm
       - name: Build deterministic Manager component
         shell: pwsh
         run: |

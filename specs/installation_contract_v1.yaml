@@ -15,9 +15,11 @@ authority:
       components:
         - uci_arena.engine
         - uci_arena_evidence.runtime
-        - lichess.adapter
         - syzygy.wdl.3-4-5
         - syzygy.dtz.3-4-5
+    lichess_bot:
+      repository: iteathen/uci-arena-lichess-bot
+      components: [lichess.adapter]
     book_forge:
       repository: iteathen/uci-arena-book-forge
       components: [book_forge.service, opening_book.standard]
@@ -34,6 +36,10 @@ authority:
     - book_forge_runtime
     - evidence_service_runtime
   rules:
+    - The Manager repository publishes only manager.core candidates. It must
+      not retain an executable suite-release workflow, suite release lock,
+      provider mirror command, managed external-dependency release workflow,
+      or complete-suite bundle assembler; those are Installer-owned bricks.
     - Provider automation may publish only immutable, attested component candidates.
     - A provider source fix is not delivered suite behavior until every
       supported target has a new immutable component version and the reviewed
@@ -41,7 +47,7 @@ authority:
       claim behavior that exists only on the provider's branch or main branch.
     - Suite composition pins exact provider, commit, manifest, provenance, and artifact digests.
     - A release steward mirrors only the exact lock-pinned provider artifact,
-      result, and Sigstore bundle bytes into a private Manager prerelease.
+      result, and Sigstore bundle bytes into a private Installer prerelease.
       The mirror is transport-only, requires no GitHub App key, and never
       replaces original-provider identity or attestation verification.
     - Stable promotion republishes the exact tested candidate bytes and never rebuilds.
@@ -103,25 +109,25 @@ signed_provenance:
       - The signed provider result workflow_identity must name the trusted
         workflow at the lock-pinned ref and one exact run id and attempt.
   private_provider_asset_mirror:
-    repository: iteathen/uci-arena-manager
+    repository: iteathen/uci-arena-installer
     release_tag: provider-mirror/v<suite_version>
     authority: digest_pinned_transport_only
-    creation: node tools/release/mirror-provider-assets.mjs release/catalog.lock.json
+    creation_authority: iteathen/uci-arena-installer tools/release/mirror-provider-assets.mjs
     rules:
       - The release remains private and prerelease.
       - Every provider artifact, result, and Sigstore bundle name is globally
         unique within the lock and appears exactly once in the mirror.
       - Mirroring verifies the exact source-release bytes against the reviewed
         lock before upload and never alters, resigns, or repackages them.
-      - Suite composition needs only github.token for the Manager repository;
+      - Suite composition needs only github.token for the Installer repository;
         no cross-repository token, long-lived PAT, App private key, or public
         repository visibility is permitted.
       - A missing, substituted, or mutable mirror asset fails the same digest
         and original-provider provenance gates as direct provider transport.
   managed_candidates:
     predicate_type: https://uci-arena.example/attestations/managed-component-release-result/v1
-    trusted_repository: iteathen/uci-arena-manager
-    trusted_workflow: .github/workflows/managed-component-release.yml
+    trusted_repository: iteathen/uci-arena-installer
+    trusted_workflow: iteathen/uci-arena-installer/.github/workflows/managed-component-release.yml
     trusted_workflow_name: Managed component candidate
     lock_fields:
       - managed_release_tag
@@ -138,10 +144,10 @@ signed_provenance:
       - Managed Node.js and Stockfish payloads are private immutable prerelease
         candidates and are never accepted from mutable public download URLs.
       - Download the exact lock-pinned archive, managed result, and Sigstore
-        bundle from the same immutable private Manager release.
+        bundle from the same immutable private Installer release.
       - Verify all three asset SHA-256 values before interpreting them.
       - Cosign verification pins the exact certificate identity, OIDC issuer,
-        Manager repository, source commit, workflow name, workflow ref,
+        Installer repository, source commit, workflow name, workflow ref,
         workflow trigger, predicate type, and artifact bytes.
       - Official suite locks accept only the trusted managed-component workflow
         from refs/heads/main with workflow_dispatch.
@@ -161,18 +167,14 @@ signed_provenance:
         accept two- or three-part numeric versions; Stockfish 15.1 must not be
         relabeled as 15.1.0.
   manager_artifacts:
-    predicate_type: https://uci-arena.example/attestations/manager-release/v1
+    predicate_type: https://uci-arena.example/attestations/provider-release-result/v1
     statement_type: https://in-toto.io/Statement/v1
-    workflow: .github/workflows/release.yml
+    workflow: .github/workflows/component-release.yml
     rules:
-      - Official Manager provenance is issued only by release.yml at
-        refs/heads/main through workflow_dispatch.
-      - Each platform Manager build signs one exact multi-subject statement
-        covering the Manager archive and every native package emitted for that
-        target before the build artifact is uploaded.
-      - Final publication signs one exact multi-subject statement covering
-        every accepted installer, payload, catalog, TUF metadata file, and
-        detached signature before GitHub release creation.
+      - Manager publishes one independently versioned manager.core component
+        candidate per target; it never publishes a suite installer or catalog.
+      - The component workflow signs one exact single-subject statement binding
+        the immutable Manager artifact to its provider result.
       - The signing workflow immediately verifies its certificate identity,
         issuer, repository, commit, workflow name, ref, trigger, predicate
         type, one exact subject, and the complete signed statement payload.
@@ -193,7 +195,7 @@ interfaces:
   plan: arena_install_plan_v1
   receipt: arena_install_receipt_v1
   transaction: arena_install_transaction_v1
-  release_lock: [arena_suite_release_lock_v1, arena_suite_release_lock_v2]
+  release_lock_authority: external_uci_arena_installer
   schema_compatibility: reject_unknown_major_accept_additive_minor
   manager_service_api: uci_arena_manager_service_api_v1
   service_output: uci_arena_service_output_v1
@@ -313,11 +315,9 @@ packaging:
   windows_outputs: dist/windows
   linux_outputs: dist/linux
   clean_build:
-    authority: iteathen/uci-arena-manager
-    suite_command: protected .github/workflows/release.yml workflow_dispatch
-    local_complete_candidate_command: >
-      node tools/release/clean-build.mjs --complete-development
-      --platform <target>
+    authority: manager_core_candidate_only
+    suite_authority: iteathen/uci-arena-installer
+    suite_command_in_manager_repository: forbidden
     manager_component_command: >
       node tools/release/clean-build.mjs --manager-only --platform <target>
     output_manifest:

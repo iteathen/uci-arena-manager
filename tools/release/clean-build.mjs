@@ -15,7 +15,6 @@ import {
 import path from "node:path";
 import process from "node:process";
 import { resolveCMakeTool } from "./cmake-toolchain.mjs";
-import { completeDevelopmentBuild } from "./complete-development-build.mjs";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "../..");
 const manifestName = "clean-build-result.json";
@@ -98,7 +97,6 @@ function parseArguments(argv) {
     tufRootSha256: "",
     verifyOnly: false,
     managerOnly: false,
-    completeDevelopment: false,
     developmentSameVersionUpgrade: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -109,10 +107,6 @@ function parseArguments(argv) {
     }
     if (argument === "--manager-only") {
       parsed.managerOnly = true;
-      continue;
-    }
-    if (argument === "--complete-development") {
-      parsed.completeDevelopment = true;
       continue;
     }
     if (argument === "--development-same-version-upgrade") {
@@ -132,13 +126,12 @@ function parseArguments(argv) {
   return parsed;
 }
 
-function suiteVersion(explicitVersion) {
-  const version = explicitVersion ?? JSON.parse(readFileSync(
-    path.join(repositoryRoot, "release", "catalog.lock.json"),
-    "utf8",
-  )).suite_version;
+function managerVersion(explicitVersion) {
+  const cmake = readFileSync(path.join(repositoryRoot, "CMakeLists.txt"), "utf8");
+  const version = explicitVersion
+    ?? cmake.match(/set\(ARENA_VERSION\s+"([0-9]+\.[0-9]+\.[0-9]+)"/u)?.[1];
   if (!/^[0-9]+\.[0-9]+\.[0-9]+$/u.test(version)) {
-    fail(`suite version must be a three-field semantic version, received ${version}`);
+    fail(`Manager version must be a three-field semantic version, received ${version}`);
   }
   return version;
 }
@@ -397,17 +390,8 @@ export function cleanBuild({
 
 function main() {
   const args = parseArguments(process.argv.slice(2));
-  const version = suiteVersion(args.version);
-  if (args.managerOnly === args.completeDevelopment) {
-    fail("choose exactly one scope: --manager-only or --complete-development");
-  }
-  const result = args.completeDevelopment
-    ? completeDevelopmentBuild({
-        platform: args.platform,
-        version,
-        cosignExecutable: process.env.COSIGN_EXECUTABLE ?? "cosign",
-      })
-    : cleanBuild({ ...args, version });
+  const version = managerVersion(args.version);
+  const result = cleanBuild({ ...args, version });
   process.stdout.write(
     `clean build: verified ${result.artifacts.length} ${result.target_platform} installers at ${result.source_commit}\n`,
   );

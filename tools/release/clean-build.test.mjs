@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -16,82 +15,6 @@ import {
   verifyInstallerSet,
   writeCleanBuildResult,
 } from "./clean-build.mjs";
-
-test("Complete acceptance uses the current MCGS timing experiment contract", () => {
-  const acceptance = readFileSync(new URL(
-    "../../tests/e2e/windows-complete-suite.ps1",
-    import.meta.url,
-  ), "utf8");
-  assert.match(
-    acceptance,
-    /candidateOptions = @\([\s\S]*?"SearchCore=mcgs"[\s\S]*?"McgsTimePolicy=RelativeClockTemporalV1"[\s\S]*?"McgsTemporalWeightProfile=AdaptiveCurveV1"[\s\S]*?\)/u,
-  );
-  assert.match(
-    acceptance,
-    /controlOptions = @\([\s\S]*?"SearchCore=mcgs"[\s\S]*?"McgsTimePolicy=RelativeClockTemporalV1"[\s\S]*?"McgsTemporalWeightProfile=EarlyCurrent"[\s\S]*?\)/u,
-  );
-  assert.doesNotMatch(acceptance, /TimePolicy=RelativeClockV3/u);
-});
-
-test("Complete acceptance limits the managed entrypoint alias to Node", () => {
-  const acceptance = readFileSync(new URL(
-    "../../tests/e2e/windows-complete-suite.ps1",
-    import.meta.url,
-  ), "utf8");
-  assert.match(
-    acceptance,
-    /\$ComponentId -eq "node_runtime\.private" -and\s+\$Name -eq "node"/u,
-  );
-  assert.equal(
-    acceptance.match(/\$manifest\.entrypoints\.executable/gu)?.length,
-    1,
-    "the legacy executable alias must not become a generic entrypoint fallback",
-  );
-});
-
-test("Complete acceptance uses the installed engine model contract", () => {
-  const acceptance = readFileSync(new URL(
-    "../../tests/e2e/windows-complete-suite.ps1",
-    import.meta.url,
-  ), "utf8");
-  assert.match(
-    acceptance,
-    /\$declaredModelRoot = \[string\]\$uciManifest\.default_model\.root/u,
-  );
-  assert.match(
-    acceptance,
-    /\$start\.EnvironmentVariables\["UCI_ARENA_MODEL_ROOT"\] = \$ModelRoot/u,
-  );
-  assert.doesNotMatch(
-    acceptance,
-    /EnvironmentVariables\.Remove\("UCI_ARENA_MODEL_ROOT"\)/u,
-  );
-  assert.doesNotMatch(
-    acceptance,
-    /Get-ChildItem[^\n]+model\.onnx/u,
-    "acceptance must use the provider contract instead of guessing by filename",
-  );
-});
-
-test("Complete acceptance inspects each packaged service output by named id", () => {
-  const acceptance = readFileSync(new URL(
-    "../../tests/e2e/windows-complete-suite.ps1",
-    import.meta.url,
-  ), "utf8");
-  assert.match(
-    acceptance,
-    /\$bookCli, "api", "outputs", "inspect", "--id", \$bookApiOutput\.output_id/u,
-  );
-  assert.match(
-    acceptance,
-    /\$evidenceCli, "api", "outputs", "inspect", "--id", \$evidenceOutputId/u,
-  );
-  assert.equal(
-    acceptance.match(/operation -ne "outputs_inspect"/gu)?.length,
-    4,
-    "both positive and negative package checks must preserve the typed operation",
-  );
-});
 
 test("clean build requires an explicit Manager-Core scope locally", () => {
   assert.throws(
@@ -195,68 +118,10 @@ test("installer verification rejects missing, empty, and stale outputs", () => {
   }
 });
 
-test("manual release delegates platform packaging to the canonical clean build", () => {
-  const repositoryRoot = path.resolve(import.meta.dirname, "../..");
-  const releaseWorkflow = readFileSync(
-    path.join(repositoryRoot, ".github", "workflows", "release.yml"),
-    "utf8",
-  );
-  const managerJob = releaseWorkflow.match(
-    /^  build-manager:[\s\S]*?(?=^  compose-candidate:)/mu,
-  )?.[0] ?? "";
-  assert.match(
-    managerJob,
-    /'tools\/release\/clean-build\.mjs'[\s\S]*'--manager-only'[\s\S]*'--platform', '\$\{\{ matrix\.target \}\}'/,
-  );
-  assert.match(
-    managerJob,
-    /'\$\{\{ inputs\.publish \}\}' -eq 'true'[\s\S]*TUF_ROOT_SHA256/u,
-  );
-  assert.match(
-    managerJob,
-    /if \(\$rootSha256 -match '\^\[0-9a-f\]\{64\}\$'\)[\s\S]*--tuf-root-sha256/u,
-  );
-  assert.match(
-    managerJob,
-    /sudo apt-get install --yes acl autoconf autoconf-archive automake libtool ninja-build lintian rpm rpmlint libwebkit2gtk-4\.1-dev/u,
-  );
-  assert.match(
-    managerJob,
-    /WixToolset\.BootstrapperApplications\.wixext\/6\.0\.2/u,
-  );
-  assert.ok(
-    managerJob.indexOf(
-      "name: Install Linux native build prerequisites and package validators",
-    ) < managerJob.indexOf("uses: lukka/run-vcpkg@"),
-    "Linux native prerequisites must be installed before vcpkg bootstrap",
-  );
-  assert.doesNotMatch(managerJob, /^\s+cpack /mu);
-
-  assert.equal(
-    existsSync(path.join(repositoryRoot, ".github", "workflows", "ci.yml")),
-    false,
-    "automatic CI workflow must remain absent",
-  );
-  assert.match(releaseWorkflow, /^on:\s+workflow_dispatch:/mu);
-  assert.doesNotMatch(
-    releaseWorkflow,
-    /^ {2}(?:pull_request|push|merge_group|schedule):/mu,
-  );
-});
-
 test("same-version replacement is explicit and development-only", () => {
   const repositoryRoot = path.resolve(import.meta.dirname, "../..");
   const cleanBuild = readFileSync(
     path.join(repositoryRoot, "tools", "release", "clean-build.mjs"),
-    "utf8",
-  );
-  const completeBuild = readFileSync(
-    path.join(
-      repositoryRoot,
-      "tools",
-      "release",
-      "complete-development-build.mjs",
-    ),
     "utf8",
   );
   const cmake = readFileSync(path.join(repositoryRoot, "CMakeLists.txt"), "utf8");
@@ -264,24 +129,6 @@ test("same-version replacement is explicit and development-only", () => {
     path.join(repositoryRoot, "packaging", "windows", "Package.wxs.in"),
     "utf8",
   );
-  assert.match(completeBuild, /--development-same-version-upgrade/u);
-  assert.match(
-    completeBuild,
-    /const setupArguments = \[\s*"upgrade",[\s\S]*"complete_arena"/u,
-  );
-  for (const suffix of [
-    "user-online",
-    "user-offline",
-    "machine-online",
-    "machine-offline",
-  ]) {
-    assert.match(
-      completeBuild,
-      new RegExp(`windows-x64-${suffix}\\.exe`),
-    );
-  }
-  assert.match(completeBuild, /packaging\/windows\/Bundle\.User\.wxs/u);
-  assert.match(completeBuild, /packaging\/windows\/Bundle\.wxs/u);
   assert.match(
     cleanBuild,
     /ARENA_DEVELOPMENT_SAME_VERSION_UPGRADES=\$\{/u,
