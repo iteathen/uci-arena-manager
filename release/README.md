@@ -17,23 +17,7 @@ and suite publication. Manager does not carry a fallback suite workflow or
 release lock. This repository must never make another repository public or
 weaken provenance to publish `manager.core`.
 
-Local Manager package diagnostics remain available through:
-
-```powershell
-node tools/release/clean-build.mjs --manager-only --platform windows-x86_64
-node tools/release/clean-build.mjs --manager-only --platform linux-x86_64
-```
-
-Those commands produce Manager-Core diagnostic packages only. They do not
-assemble Complete Arena, acquire provider artifacts, publish a channel, or
-claim that an Installer-owned suite lifecycle has passed.
-
-For a local diagnostic MSI, use
-`tools/release/windows-installer-cycle.ps1` to prepare one exact candidate,
-perform a single MSI invocation, and run repeatable non-installing smoke checks against that
-same installation. The runner preserves pre-existing data by same-volume
-rename; `-CandidateSourceCommit` binds an adopted MSI to its real source, and
-the explicit `restore -ConfirmRestore` action returns quarantined state without
-deleting either tree. The runner never records credential contents. It remains a Manager-package
-diagnostic until the equivalent Installer-owned full-suite cycle has passed;
-it is not suite release authority.
+Local validation stops at the same scope-neutral Manager component tree and
+component-artifact contract. MSI, DEB, RPM, portable launcher, scope selection,
+install-cycle, and suite acceptance tooling live only in the Installer
+repository and consume the immutable candidate rather than this source tree.

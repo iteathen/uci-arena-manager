@@ -59,7 +59,6 @@ specs:
       - .github/workflows/component-release.yml
       - release/components
       - tools/release/build-manager-component.mjs
-      - tools/release/clean-build.mjs
   - spec_id: arena_operator_experience_v1
     path: specs/operator_experience_v1.yaml
     owner: operator_surface

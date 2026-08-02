@@ -34,7 +34,14 @@ test("Manager source and component definition contain no Installer engine", () =
   assert.doesNotMatch(cmake, /add_executable\(arena-setup/u);
   assert.doesNotMatch(cmake, /application\/installer\/setup\.cpp/u);
   assert.match(cmake, /RUNTIME_DEPENDENCIES/u);
-  assert.doesNotMatch(cmake, /VCPKG_INSTALLED_DIR[^\n]*\/bin/u);
+  assert.match(cmake, /ARENA_MANAGER_RUNTIME_SEARCH_DIRECTORIES/u);
+  assert.doesNotMatch(cmake, /\bCPACK_/u);
+  assert.doesNotMatch(cmake, /include\(CPack\)/u);
+  assert.doesNotMatch(cmake, /ARENA_WINDOWS_PER_USER_INSTALL/u);
+  assert.doesNotMatch(cmake, /install-scope\.txt/u);
+  assert.doesNotMatch(cmake, /packaging\/linux\/uci-arena-manager\.service/u);
+  assert.doesNotMatch(cmake, /CMAKE_INSTALL_UCRT_LIBRARIES\s+TRUE/u);
+  assert.equal(existsSync(path.join(repositoryRoot, "packaging", "windows")), false);
   assert.equal(definition.exclude_by_target, undefined);
   assert.equal(existsSync(path.join(repositoryRoot, "apps", "setup", "main.cpp")), false);
   assert.equal(

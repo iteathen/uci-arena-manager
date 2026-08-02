@@ -310,27 +310,26 @@ setup:
         complete.
 
 packaging:
-  windows_sources: packaging/windows
-  linux_sources: packaging/linux
-  windows_outputs: dist/windows
-  linux_outputs: dist/linux
+  platform_package_owner: iteathen/uci-arena-installer
+  platform_package_sources: external_installer_repository
+  platform_package_outputs: external_installer_repository
   clean_build:
     authority: manager_core_candidate_only
     suite_authority: iteathen/uci-arena-installer
     suite_command_in_manager_repository: forbidden
     manager_component_command: >
-      node tools/release/clean-build.mjs --manager-only --platform <target>
+      explicitly dispatch .github/workflows/component-release.yml for <target>
     output_manifest:
-      schema: arena_clean_build_result_v1
-      filename: clean-build-result.json
+      schema: arena_provider_release_result_v1
+      filename: manager.core-<version>-<target>.provider-result.json
       binds:
-        - suite_version
+        - component_version
         - source_commit
-        - target_platform
-        - build_preset
-        - exact_artifact_names
-        - artifact_sizes
-        - artifact_sha256_digests
+        - target_triple
+        - artifact_name
+        - artifact_size_bytes
+        - artifact_sha256
+        - test_receipt_sha256
     source_requirement: clean_tracked_worktree
     behavior:
       - Run specification and model/product naming gates before compilation.
@@ -343,13 +342,11 @@ packaging:
         explicit operator request, and are never configured as automatically
         required pull-request status checks.
       - Build the dashboard, configure the native release preset, clean native
-        outputs before rebuilding, run native tests once for the shared Windows
-        binary set, and invoke the existing CPack deployment generators for
-        each fixed package scope.
-      - The Windows clean-build entrypoint resolves CMake, CPack, and CTest as
-        one toolchain: an explicit ARENA_CMAKE_EXECUTABLE wins, followed by the
-        newest supported repository-local portable CMake, followed by PATH.
-        Per-user packaging still fails closed below CMake 4.3.
+        outputs before rebuilding, run native tests, stage one scope-neutral
+        component tree, and publish one manifest-bound manager.core archive.
+      - Manager release automation resolves only its compilation and test
+        toolchain. CPack, WiX, distro package generation, scope selection, and
+        suite installer verification are Installer-owned and forbidden here.
       - Complete development composition resolves the pinned Cosign verifier
         from an explicit COSIGN_EXECUTABLE, then the exact repository-local
         build/tooling/cosign-3.0.6 payload, then PATH. Missing verification
@@ -370,13 +367,9 @@ packaging:
         public manual page for a named internal service, broker, or desktop
         launcher. Broad tag suppression and validator failure masking are
         forbidden.
-      - A successful build emits a digest-bound
-        arena_clean_build_result_v1 manifest and cannot succeed when any
-        required installer is missing, empty, ambiguously named, or accompanied
-        by stale installer output.
-      - Local and CI Manager-Core builds use the same explicit --manager-only
-        command and artifact verifier. Omitting that scope fails closed rather
-        than claiming native Manager packages are Complete Arena media.
+      - A successful build emits one digest-bound
+        arena_provider_release_result_v1 plus one reproducible component
+        archive and cannot claim an MSI, distro package, or suite installer.
       - The explicit --complete-development path composes only the
         release-ready digest-pinned lock and its verified provider Sigstore
         bundles. It may emit an unsigned development bootstrapper, but it
@@ -425,29 +418,19 @@ packaging:
         compilation; an empty or synthetic production trust root is forbidden.
     required_outputs:
       windows-x86_64:
-        - UCI-Arena-Setup-<version>-windows-x64-user-online.exe
-        - UCI-Arena-Setup-<version>-windows-x64-user-offline.exe
-        - UCI-Arena-Setup-<version>-windows-x64-machine-online.exe
-        - UCI-Arena-Setup-<version>-windows-x64-machine-offline.exe
-        - UCI-Arena-Manager-<version>-windows-x64-user.msi
-        - UCI-Arena-Manager-<version>-windows-x64-machine.msi
+        - manager.core-<version>-windows-x86_64.tar.gz
+        - manager.core-<version>-windows-x86_64.provider-result.json
       linux-x86_64:
-        - uci-arena-setup-<version>-linux-x86_64-online.run
-        - uci-arena-setup-<version>-linux-x86_64-offline.run
-        - uci-arena-manager_<version>_amd64.deb
-        - uci-arena-manager-<version>-1.x86_64.rpm
-        - uci-arena-manager-<version>-linux-x86_64.tar.gz
+        - manager.core-<version>-linux-x86_64.tar.gz
+        - manager.core-<version>-linux-x86_64.provider-result.json
     manager_component_outputs:
       windows-x86_64:
-        - UCI-Arena-Manager-<version>-windows-x64-user.msi
-        - UCI-Arena-Manager-<version>-windows-x64-machine.msi
-        - UCI-Arena-Manager-<version>-windows-x64.zip
+        - manager.core-<version>-windows-x86_64.tar.gz
       linux-x86_64:
-        - uci-arena-manager_<version>_amd64.deb
-        - uci-arena-manager-<version>-1.x86_64.rpm
-        - uci-arena-manager-<version>-linux-x86_64.tar.gz
+        - manager.core-<version>-linux-x86_64.tar.gz
   windows_manager_msi:
-    payload_source: complete_cmake_install_tree
+    owner: external_uci_arena_installer
+    payload_source: immutable_manager_component_artifact
     scopes:
       per_user:
         recommended: true
@@ -463,7 +446,7 @@ packaging:
         data_root: ProgramData/UCI Arena Manager
         path: machine_msi_owned
         manager_lifecycle: LocalService_windows_service
-    service_registration: per_machine_cpack_wix_component_patch_only
+    service_registration: installer_owned_declarative_wix_integration_policy
     required_payloads:
       - manager_binaries
       - native_runtime_dependencies
@@ -474,12 +457,16 @@ packaging:
         its declared entrypoints and never copies an entire package-manager
         binary directory. Unused Installer or provider libraries cannot enter
         manager.core merely because they share a build toolchain.
+      - Windows component staging includes the redistributable Visual C++
+        runtime required by Manager and its validated private dependency
+        closure. It excludes operating-system API-set forwarders, ucrtbase, and
+        other Windows-owned system libraries.
       - Per-user and per-machine MSIs package one tested native binary set and
         install an MSI-owned share/uci-arena/install-scope.txt marker containing
         exactly per-user or per-machine. Native entry points fail safely to
         per-machine semantics when the marker is absent or invalid; scope is
         never inferred from a React value or an untrusted catalog.
-      - Per-user MSI generation uses a pinned CMake/CPack version with native
+      - Installer-owned per-user MSI generation uses pinned WiX with native
         per-user component-key support. Every component installed beneath the
         user profile has an MSI-owned HKCU registry key path, and ICE38 is a
         blocking validation rather than a suppressed warning.
@@ -517,7 +504,7 @@ packaging:
         cross-scope installation before two Manager authorities can compete;
         maintenance of an already-installed scope remains available so the
         operator can uninstall it before changing scope.
-      - The local installer-cycle runner validates an MSI's fixed-scope
+      - The Installer-owned Manager-MSI cycle runner validates an MSI's fixed-scope
         artifact name for both prepare and adopt, verifies the installed
         MSI-owned scope marker, and proves the running Manager executable
         belongs to the requested install root before recording an adopted
@@ -573,17 +560,10 @@ packaging:
         OneDrive. Existing receipt-owned workspaces remain authoritative on
         upgrade regardless of that default.
   artifact_names:
-    - UCI-Arena-Setup-<version>-windows-x64-user-online.exe
-    - UCI-Arena-Setup-<version>-windows-x64-user-offline.exe
-    - UCI-Arena-Setup-<version>-windows-x64-machine-online.exe
-    - UCI-Arena-Setup-<version>-windows-x64-machine-offline.exe
-    - UCI-Arena-Manager-<version>-windows-x64-user.msi
-    - UCI-Arena-Manager-<version>-windows-x64-machine.msi
-    - uci-arena-manager_<version>_amd64.deb
-    - uci-arena-manager-<version>-1.x86_64.rpm
-    - uci-arena-setup-<version>-linux-x86_64-online.run
-    - uci-arena-setup-<version>-linux-x86_64-offline.run
+    - manager.core-<version>-windows-x86_64.tar.gz
+    - manager.core-<version>-linux-x86_64.tar.gz
   suite_media:
+    owner: external_uci_arena_installer
     source: accepted_immutable_candidate_plus_signed_tuf_metadata
     windows_chain: manager_msi_then_arena_setup_complete_with_transactional_rollback
     online_behavior: >
@@ -875,7 +855,7 @@ local_import:
 
 vm_mounts:
   protected_runner_provisioning:
-    implementation: tools/release/provision-hyperv-runner.ps1
+    implementation: external_uci_arena_installer/tools/release/provision-hyperv-runner.ps1
     physical_host_registration: forbidden
     runner_registration: repository_scoped_ephemeral
     runner_update: disabled_and_version_pinned

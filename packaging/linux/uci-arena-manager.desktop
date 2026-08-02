@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=UCI Arena Manager
-Comment=Open the local UCI Arena control plane
-Exec=uci-arena-manager
-Icon=uci-arena-manager
-Terminal=false
-Categories=Game;Utility;
-StartupNotify=true
