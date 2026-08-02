@@ -2,15 +2,18 @@ import {
   IconCopy,
   IconDatabaseImport,
   IconDownload,
+  IconSearch,
   IconShieldLock,
 } from '@tabler/icons-react'
 import {
   Alert,
+  Badge,
   Button,
   Code,
   Group,
   Modal,
   Paper,
+  ScrollArea,
   SimpleGrid,
   Stack,
   Text,
@@ -19,8 +22,11 @@ import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
   applyLocalSetup,
+  discoverLocalAssets,
   localSetupAvailable,
   planLocalSetup,
+  type LocalAssetCandidate,
+  type LocalAssetDiscovery,
   type LocalSetupRequest,
   type LocalSetupResult,
 } from '../api/client'
@@ -28,7 +34,27 @@ import { managerEndpointLabel } from '../components/configurationModel'
 import { PageHeader } from '../components/PageHeader'
 import { PathPickerInput } from '../components/PathPickerInput'
 
-export function ConfigurationPage() {
+type DiscoverableAssetKind = 'opening_book' | 'syzygy' | 'timing_profile'
+
+const discoverableAssets: Array<{
+  kind: DiscoverableAssetKind
+  label: string
+}> = [
+  { kind: 'opening_book', label: 'Opening books' },
+  { kind: 'syzygy', label: 'Syzygy tablebases' },
+  { kind: 'timing_profile', label: 'Timing evidence' },
+]
+
+function candidateClassification(candidate: LocalAssetCandidate) {
+  const validation = candidate.details?.validation
+  if (!validation || typeof validation !== 'object') return 'extension and path candidate'
+  const fields = validation as Record<string, unknown>
+  if (typeof fields.classification === 'string') return fields.classification
+  if (typeof fields.validation === 'string') return fields.validation
+  return 'validated candidate'
+}
+
+export function ConfigurationPage({ navigate }: { navigate: (page: string) => void }) {
   const [bookPath, setBookPath] = useState('')
   const [bookFolderPath, setBookFolderPath] = useState('')
   const [syzygyPath, setSyzygyPath] = useState('')
@@ -45,6 +71,7 @@ export function ConfigurationPage() {
   } | null>(null)
   const [setupPlan, setSetupPlan] = useState<LocalSetupResult | null>(null)
   const [setupResult, setSetupResult] = useState('')
+  const [assetInventory, setAssetInventory] = useState<LocalSetupResult | null>(null)
   const nativeSetup = localSetupAvailable()
   const planSetup = useMutation({
     mutationFn: (pending: NonNullable<typeof pendingSetup>) =>
@@ -64,6 +91,10 @@ export function ConfigurationPage() {
         `${pending.label} completed: ${String(result.state ?? 'validated and committed')}.`,
       )
     },
+  })
+  const discoverAssets = useMutation({
+    mutationFn: discoverLocalAssets,
+    onSuccess: setAssetInventory,
   })
   const copy = async (label: string, command: string) => {
     await navigator.clipboard.writeText(command)
@@ -135,6 +166,29 @@ export function ConfigurationPage() {
           : 'Copy download command'}
     </Button>
   )
+  const reviewDiscovered = (
+    kind: DiscoverableAssetKind,
+    label: string,
+    candidate: LocalAssetCandidate,
+  ) => {
+    if (kind === 'opening_book') setBookPath(candidate.path)
+    if (kind === 'syzygy') setSyzygyPath(candidate.path)
+    if (kind === 'timing_profile') setTimingProfilePath(candidate.path)
+    const pending = {
+      key: `discovered-${kind}-${candidate.path}`,
+      label: `Import ${label}`,
+      request: {
+        operation: 'import' as const,
+        asset_kind: kind,
+        path: candidate.path,
+      },
+    }
+    if (nativeSetup) {
+      planSetup.mutate(pending)
+    } else {
+      void copy(pending.key, importCommand(kind, candidate.path))
+    }
+  }
   const setupActions = setupPlan?.actions ?? []
   const blockers = Array.isArray(setupPlan?.blockers) ? setupPlan.blockers : []
   const space =
@@ -156,6 +210,7 @@ export function ConfigurationPage() {
         {setupResult && <Alert color="green">{setupResult}</Alert>}
         {planSetup.error && <Alert color="red">{planSetup.error.message}</Alert>}
         {applySetup.error && <Alert color="red">{applySetup.error.message}</Alert>}
+        {discoverAssets.error && <Alert color="red">{discoverAssets.error.message}</Alert>}
         <Paper withBorder className="panel">
           <Text fw={700}>Network</Text>
           <Group justify="space-between" mt="md">
@@ -180,6 +235,122 @@ export function ConfigurationPage() {
             </div>
             <IconDatabaseImport size={22} />
           </Group>
+          <Paper withBorder p="md" mb="lg">
+            <Group justify="space-between" align="flex-start">
+              <div>
+                <Text fw={700}>Find large assets already on this computer</Text>
+                <Text size="sm" c="dimmed" maw={760}>
+                  Uses the operating-system file index for a bounded read-only lookup. It does
+                  not crawl drives, copy files, register candidates, or require matching release
+                  versions merely to show what exists.
+                </Text>
+              </div>
+              <Button
+                variant="light"
+                leftSection={<IconSearch size={16} />}
+                loading={discoverAssets.isPending}
+                onClick={() => {
+                  if (nativeSetup) {
+                    discoverAssets.mutate()
+                  } else {
+                    void copy('detect-assets', 'arena-setup --json inventory')
+                  }
+                }}
+              >
+                {nativeSetup
+                  ? 'Auto-detect large assets'
+                  : copied === 'detect-assets'
+                    ? 'Detection command copied'
+                    : 'Copy detection command'}
+              </Button>
+            </Group>
+            {!nativeSetup && (
+              <Alert color="blue" mt="md">
+                Reopen UCI Arena Manager from its desktop launcher for one-click detection. Manual
+                browse and import remain available below.
+              </Alert>
+            )}
+            {assetInventory?.discovery && (
+              <Stack mt="md">
+                {discoverableAssets.map(({ kind, label }) => {
+                  const row = assetInventory.discovery?.[kind] as
+                    | LocalAssetDiscovery
+                    | undefined
+                  const search = row?.indexed_search
+                  const candidates = row?.candidates ?? []
+                  return (
+                    <Paper withBorder p="sm" key={kind}>
+                      <Group justify="space-between" mb="xs">
+                        <Text fw={650}>{label}</Text>
+                        <Group gap="xs">
+                          <Badge variant="light">{search?.adapter ?? 'bounded inventory'}</Badge>
+                          <Badge
+                            color={search?.state === 'complete' ? 'teal' : 'yellow'}
+                            variant="light"
+                          >
+                            {search?.state ?? 'not requested'}
+                          </Badge>
+                        </Group>
+                      </Group>
+                      <Text size="xs" c="dimmed" mb="sm">
+                        {candidates.length} catalogued candidate{candidates.length === 1 ? '' : 's'} ·{' '}
+                        {Number(search?.rejected_candidates ?? 0)} rejected path{Number(search?.rejected_candidates ?? 0) === 1 ? '' : 's'} ·{' '}
+                        {Number(search?.elapsed_ms ?? 0)} ms
+                        {search?.truncated ? ' · result budget reached' : ''}
+                      </Text>
+                      {candidates.length === 0 ? (
+                        <Text size="sm" c="dimmed">
+                          No indexed candidate was found. This does not block manual selection or
+                          signed download.
+                        </Text>
+                      ) : (
+                        <ScrollArea.Autosize mah={320} type="auto">
+                          <Stack gap="xs">
+                            {candidates.map((candidate) => (
+                              <Paper
+                                withBorder
+                                p="xs"
+                                key={`${candidate.source}-${candidate.path}`}
+                              >
+                                <Group justify="space-between" align="flex-start" wrap="nowrap">
+                                  <Stack gap={4} style={{ minWidth: 0, flex: 1 }}>
+                                    <Group gap="xs">
+                                      <Badge size="xs" variant="outline">
+                                        {candidate.source}
+                                      </Badge>
+                                      <Text size="xs" c="dimmed">
+                                        {candidateClassification(candidate)}
+                                      </Text>
+                                    </Group>
+                                    <Code block>{candidate.path}</Code>
+                                  </Stack>
+                                  <Button
+                                    size="xs"
+                                    variant="default"
+                                    onClick={() => reviewDiscovered(kind, label, candidate)}
+                                  >
+                                    {nativeSetup ? 'Review import' : 'Copy import command'}
+                                  </Button>
+                                </Group>
+                              </Paper>
+                            ))}
+                          </Stack>
+                        </ScrollArea.Autosize>
+                      )}
+                    </Paper>
+                  )
+                })}
+                <Group>
+                  <Button variant="subtle" onClick={() => navigate('services')}>
+                    Open Book Forge and Evidence services
+                  </Button>
+                  <Button variant="subtle" onClick={() => navigate('reports')}>
+                    View published evidence and timing reports
+                  </Button>
+                </Group>
+              </Stack>
+            )}
+          </Paper>
           <SimpleGrid cols={{ base: 1, lg: 2 }}>
             <Stack>
               <PathPickerInput

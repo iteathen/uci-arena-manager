@@ -195,6 +195,13 @@ adjacent verified `arena-setup` and shows dependencies and disk impact. The
 recommended per-user package commits in user-owned storage without UAC; the
 all-users package asks for administrator confirmation for machine changes. External-browser sessions
 copy commands instead and never claim that copying performed installation.
+Configuration also offers one bounded **Auto-detect large assets** operation.
+The adjacent Installer-owned setup tool queries Windows Search or the Linux
+locate database for existing opening books, Syzygy tables, and timing evidence;
+it never recursively walks a drive or registers a result. Partial tablebase
+coverage and legacy or mismatched timing evidence remain visible with their
+observed classification. Exact identity is required only when an operator
+reviews activation for a runtime or relies on a protected-live safety claim.
 On Windows, reopen **UCI Arena Suite Setup (per-user)** or **UCI Arena Suite
 Setup (all users)** from Apps and Features and choose
 **Modify**, then **Choose Components**, to add or remove them. Feature choices

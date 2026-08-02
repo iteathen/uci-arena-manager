@@ -149,6 +149,13 @@ SetupRequest parse_setup_request(const drogon::HttpRequestPtr& request) {
     }
     SetupRequest result;
     result.operation = input.value("operation", "");
+    if (result.operation == "discover") {
+        if (input.size() != 2) {
+            throw std::invalid_argument(
+                "discover setup accepts no additional fields");
+        }
+        return result;
+    }
     if (result.operation == "component") {
         static const std::set<std::string, std::less<>> allowed{
             "uci_arena.engine",
@@ -178,7 +185,7 @@ SetupRequest parse_setup_request(const drogon::HttpRequestPtr& request) {
     }
     if (result.operation != "import") {
         throw std::invalid_argument(
-            "setup operation must be component or import");
+            "setup operation must be discover, component, or import");
     }
     static const std::set<std::string, std::less<>> allowed{
         "opening_book",
@@ -416,6 +423,10 @@ json run_setup(
                    {"asset_kind", request.asset_kind}}})},
         };
     }
+    if (apply && request.operation == "discover") {
+        throw std::invalid_argument(
+            "discover is a read-only setup-plan operation");
+    }
 
     const std::filesystem::path result_path =
         create_setup_result_path();
@@ -438,7 +449,9 @@ json run_setup(
         "--result-file",
         result_path.string(),
     };
-    if (request.operation == "component") {
+    if (request.operation == "discover") {
+        arguments.push_back("inventory");
+    } else if (request.operation == "component") {
         if (apply && !per_user_install) {
             arguments.push_back("--restart-manager-service");
         }
@@ -516,6 +529,8 @@ json run_setup(
             result["operation"] = "component";
             result["elevation_required"] = !per_user_install;
             result["manager_service_restart"] = !per_user_install;
+        } else if (request.operation == "discover") {
+            result["operation"] = "discover";
         }
         return result;
     } catch (const std::exception&) {

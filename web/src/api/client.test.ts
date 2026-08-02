@@ -282,4 +282,48 @@ describe('native desktop typed setup', () => {
     })
     fetchMock.mockRestore()
   })
+
+  it('requests bounded local asset discovery without mutation authority', async () => {
+    history.replaceState(
+      null,
+      '',
+      '/#pair=' +
+        'a'.repeat(64) +
+        '&picker_port=47832&picker_token=' +
+        'b'.repeat(64) +
+        '&setup=1',
+    )
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ csrf_token: 'csrf' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            schema: 'arena_install_inventory_v1',
+            operation: 'discover',
+            discovery: {},
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
+      )
+
+    await exchangePairingToken()
+    const { discoverLocalAssets } = await import('./client')
+    await discoverLocalAssets()
+
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('http://127.0.0.1:47832/v1/setup-plan')
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      schema: 'arena_ui_setup_request_v1',
+      operation: 'discover',
+    })
+    fetchMock.mockRestore()
+  })
 })

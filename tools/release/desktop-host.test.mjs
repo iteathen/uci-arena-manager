@@ -32,6 +32,9 @@ test("native host setup authority is narrow, typed, and unavailable to normal br
   assert.match(helper, /component id is not available to desktop setup/);
   assert.match(helper, /\/v1\/setup-plan/);
   assert.match(helper, /\/v1\/setup-apply/);
+  assert.match(helper, /request\.operation == "discover"/);
+  assert.match(helper, /arguments\.push_back\("inventory"\)/);
+  assert.match(helper, /discover is a read-only setup-plan operation/);
   assert.match(helper, /runas/);
   assert.doesNotMatch(helper, /input\.at\("executable"\)/);
   assert.doesNotMatch(helper, /input\.at\("argv"\)/);
