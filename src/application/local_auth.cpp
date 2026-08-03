@@ -27,7 +27,8 @@ std::string read_client_key(const std::filesystem::path& filename) {
     const auto status = std::filesystem::symlink_status(filename, status_error);
     if (status_error || !std::filesystem::is_regular_file(status) ||
         std::filesystem::is_symlink(status)) {
-        throw std::runtime_error("client authentication key must be a regular non-symlink file");
+        throw std::runtime_error(
+            "client authentication key must be a regular non-symlink file");
     }
 
     std::ifstream input(filename, std::ios::binary);
@@ -58,6 +59,14 @@ void require_secure_state_directory(const std::filesystem::path& directory) {
     }
 }
 
+void restrict_key_permissions(const std::filesystem::path& filename) {
+    std::filesystem::permissions(
+        filename,
+        std::filesystem::perms::owner_read |
+            std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace);
+}
+
 } // namespace
 
 LocalAuth::LocalAuth(std::filesystem::path state_directory)
@@ -80,6 +89,9 @@ void LocalAuth::initialize() {
     if (initialized_) {
         return;
     }
+    if (sodium_init() < 0) {
+        throw std::runtime_error("libsodium initialization failed");
+    }
 
     std::filesystem::create_directories(state_directory_);
     require_secure_state_directory(state_directory_);
@@ -87,38 +99,41 @@ void LocalAuth::initialize() {
     std::error_code key_status_error;
     const auto key_status =
         std::filesystem::symlink_status(client_key_path_, key_status_error);
-    if (!key_status_error && key_status.type() != std::filesystem::file_type::not_found) {
-        client_key_ = read_client_key(client_key_path_);
+    if (!key_status_error &&
+        key_status.type() != std::filesystem::file_type::not_found) {
+        const std::string persisted_key = read_client_key(client_key_path_);
+        restrict_key_permissions(client_key_path_);
+        client_key_ = persisted_key;
         initialized_ = true;
         return;
     }
     if (key_status_error &&
         key_status_error != std::errc::no_such_file_or_directory) {
-        throw std::runtime_error("client authentication key state cannot be inspected");
+        throw std::runtime_error(
+            "client authentication key state cannot be inspected");
     }
 
     const std::string generated_key = random_token();
     const auto temporary = std::filesystem::path(
         client_key_path_.string() + "." + random_token() + ".tmp");
+    std::string selected_key;
     try {
         {
             std::ofstream output(
                 temporary,
                 std::ios::binary | std::ios::trunc);
             if (!output) {
-                throw std::runtime_error("cannot create client authentication key");
+                throw std::runtime_error(
+                    "cannot create client authentication key");
             }
             output << generated_key << '\n';
             output.flush();
             if (!output) {
-                throw std::runtime_error("cannot persist client authentication key");
+                throw std::runtime_error(
+                    "cannot persist client authentication key");
             }
         }
-        std::filesystem::permissions(
-            temporary,
-            std::filesystem::perms::owner_read |
-                std::filesystem::perms::owner_write,
-            std::filesystem::perm_options::replace);
+        restrict_key_permissions(temporary);
 
         std::error_code publish_error;
         std::filesystem::create_hard_link(
@@ -130,26 +145,31 @@ void LocalAuth::initialize() {
             const auto destination_status = std::filesystem::symlink_status(
                 client_key_path_, destination_error);
             if (destination_error ||
-                destination_status.type() == std::filesystem::file_type::not_found) {
+                destination_status.type() ==
+                    std::filesystem::file_type::not_found) {
                 throw std::runtime_error(
                     "cannot publish client authentication key: " +
                     publish_error.message());
             }
         }
-        client_key_ = read_client_key(client_key_path_);
-        initialized_ = true;
+        selected_key = read_client_key(client_key_path_);
+        restrict_key_permissions(client_key_path_);
+
+        std::error_code cleanup_error;
+        std::filesystem::remove(temporary, cleanup_error);
+        if (cleanup_error) {
+            throw std::runtime_error(
+                "cannot remove temporary client authentication key: " +
+                cleanup_error.message());
+        }
     } catch (...) {
         std::error_code ignored;
         std::filesystem::remove(temporary, ignored);
         throw;
     }
-    std::error_code cleanup_error;
-    std::filesystem::remove(temporary, cleanup_error);
-    if (cleanup_error) {
-        throw std::runtime_error(
-            "cannot remove temporary client authentication key: " +
-            cleanup_error.message());
-    }
+
+    client_key_ = std::move(selected_key);
+    initialized_ = true;
 }
 
 const std::filesystem::path& LocalAuth::client_key_path() const {
@@ -171,7 +191,8 @@ bool LocalAuth::authenticate_bearer(const std::string& authorization) const {
 
     const auto matches = [&presented](const std::string& key) {
         return valid_key_text(key) &&
-               sodium_memcmp(presented.data(), key.data(), key.size()) == 0;
+               sodium_memcmp(
+                   presented.data(), key.data(), key.size()) == 0;
     };
 
     std::scoped_lock lock(mutex_);
@@ -203,13 +224,18 @@ void LocalAuth::prune_expired() {
 std::string LocalAuth::issue_pairing_token() {
     std::scoped_lock lock(mutex_);
     if (!initialized_) {
-        throw std::runtime_error("local authentication is not initialized");
+        throw std::runtime_error(
+            "local authentication is not initialized");
     }
     prune_expired();
     const std::string token = random_token();
     pairing_tokens_.emplace(
         token,
-        ExpiringValue{"", std::chrono::steady_clock::now() + std::chrono::seconds(60)});
+        ExpiringValue{
+            "",
+            std::chrono::steady_clock::now() +
+                std::chrono::seconds(60),
+        });
     return token;
 }
 
@@ -230,7 +256,8 @@ std::optional<BrowserSession> LocalAuth::exchange_pairing_token(
         session.id,
         ExpiringValue{
             session.csrf_token,
-            std::chrono::steady_clock::now() + std::chrono::hours(12),
+            std::chrono::steady_clock::now() +
+                std::chrono::hours(12),
         });
     return session;
 }
@@ -243,20 +270,23 @@ std::optional<BrowserSession> LocalAuth::resume_browser_session(
     }
     const auto session = sessions_.find(session_id);
     if (session == sessions_.end() ||
-        session->second.expires_at <= std::chrono::steady_clock::now()) {
+        session->second.expires_at <=
+            std::chrono::steady_clock::now()) {
         return std::nullopt;
     }
     return BrowserSession{session_id, session->second.value};
 }
 
-bool LocalAuth::authenticate_session(const std::string& session_id) const {
+bool LocalAuth::authenticate_session(
+    const std::string& session_id) const {
     std::scoped_lock lock(mutex_);
     if (!initialized_) {
         return false;
     }
     const auto session = sessions_.find(session_id);
     return session != sessions_.end() &&
-           session->second.expires_at > std::chrono::steady_clock::now();
+           session->second.expires_at >
+               std::chrono::steady_clock::now();
 }
 
 bool LocalAuth::validate_csrf(
@@ -268,10 +298,13 @@ bool LocalAuth::validate_csrf(
     }
     const auto session = sessions_.find(session_id);
     return session != sessions_.end() &&
-           session->second.expires_at > std::chrono::steady_clock::now() &&
+           session->second.expires_at >
+               std::chrono::steady_clock::now() &&
            session->second.value.size() == csrf_token.size() &&
            sodium_memcmp(
-               session->second.value.data(), csrf_token.data(), csrf_token.size()) == 0;
+               session->second.value.data(),
+               csrf_token.data(),
+               csrf_token.size()) == 0;
 }
 
 }  // namespace arena::application
