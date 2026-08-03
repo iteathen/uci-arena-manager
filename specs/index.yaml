@@ -25,6 +25,14 @@ specs:
       - src/domain
       - src/application
       - tests
+  - spec_id: arena_match_plan_bounds_v1
+    path: specs/match_plan_bounds_v1.yaml
+    owner: domain
+    applies_to:
+      - include/arena/domain/types.hpp
+      - include/arena/domain/match_planner.hpp
+      - src/domain/match_planner.cpp
+      - tests/unit/match_planner_tests.cpp
   - spec_id: arena_control_api_v1
     path: specs/openapi.yaml
     owner: control_api
