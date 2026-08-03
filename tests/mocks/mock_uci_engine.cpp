@@ -58,7 +58,7 @@ int main(int argc, char** argv) {
                 std::cout << "option name Threads type spin default 2 min 1 max 32\n";
             }
             if (malformed_option) {
-                std::cout << "option name Broken type spin default 1 mystery 4\n";
+                std::cout << "option name Broken type spin mystery 4\n";
             }
             if (!required_model_root.empty()) {
                 std::cout << "option name ModelRoot type string default missing\n";
