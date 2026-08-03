@@ -1,0 +1,125 @@
+meta:
+  spec_id: arena_uci_option_contract_v1
+  version: 1
+  status: active
+  owner: manager_uci_metadata_contract
+  purpose: >
+    Admit complete bounded UCI identity and option metadata into one exact typed
+    Manager-owned representation and validate option overrides without process,
+    filesystem, launch, hashing, UI, or Installer ownership.
+
+authority:
+  parent_specs:
+    - specs/00_READ_FIRST.yaml
+    - specs/suite_lego_boundaries_v1.yaml
+    - specs/product_contract_v1.yaml
+    - specs/persistence_security_v1.yaml
+
+ownership:
+  public_header: include/arena/adapters/uci_option_contract.hpp
+  implementation: src/adapters/uci_option_contract.cpp
+  tests: tests/unit/uci_option_contract_tests.cpp
+  rules:
+    - The component receives already bounded complete UCI lines or line views.
+    - It owns UTF-8/scalar admission, identity cardinality, option grammar, option metadata bounds, case-folded uniqueness, and override validation/canonicalization.
+    - It returns domain::UciOption records and a canonical applied-option map.
+    - It does not launch subprocesses, inspect paths, hash executables, build command strings, access JSON, use locale conversion, or select product behavior.
+    - UciProcess integration and launch identity remain issue 70.
+
+bounds:
+  maximum_lines: 1024
+  maximum_line_bytes: 4096
+  maximum_identity_value_bytes: 256
+  maximum_identity_bytes: 512
+  maximum_options: 256
+  maximum_option_name_bytes: 256
+  maximum_option_value_bytes: 1024
+  maximum_option_variants: 256
+  maximum_option_metadata_bytes: 262144
+  maximum_overrides: 128
+  maximum_override_bytes: 65536
+
+text_admission:
+  requirements:
+    - strict_well_formed_utf8
+    - no_c0_controls
+    - no_del
+    - no_c1_controls
+    - no_unicode_line_separator
+    - no_unicode_paragraph_separator
+    - no_embedded_line_breaks
+  folding: ascii_case_only
+
+identity:
+  rules:
+    - Exactly one nonempty id name is required.
+    - At most one nonempty id author is allowed.
+    - Any duplicate identity line is rejected even when identical.
+    - Malformed id name or id author lines fail rather than being ignored.
+    - Unknown nonmetadata UCI lines may be ignored after line admission.
+
+options:
+  types: [button, check, combo, spin, string]
+  common:
+    - Names are nonempty bounded text and unique under ASCII case folding.
+    - Type is exact and lowercase.
+    - Unknown or repeated structural fields fail.
+    - Trailing ambiguous tokens fail.
+  button:
+    fields: []
+  check:
+    required_fields: [default]
+    default_values: [true, false]
+  spin:
+    required_fields: [default, min, max]
+    integer_syntax: strict_signed_decimal_int64
+    relation: min_le_default_le_max
+  combo:
+    required_fields: [default, var]
+    minimum_variants: 1
+    variants_unique: true
+    default_must_be_variant: true
+  string:
+    required_fields: [default]
+    empty_default_allowed: true
+
+overrides:
+  rules:
+    - Override names resolve case-insensitively to exactly one advertised option.
+    - Duplicate override names under ASCII folding fail.
+    - Canonical output uses the exact advertised option spelling.
+    - Button values cannot be persisted.
+    - Check values are exactly true or false.
+    - Spin values use strict signed decimal int64 and advertised bounds.
+    - Combo values exactly match one advertised variant.
+    - String values may be empty within the byte/text bound.
+    - No command strings are constructed.
+
+performance:
+  rules:
+    - one bounded parse pass per metadata line
+    - no regex
+    - no locale operations
+    - no istringstream
+    - no per_character_heap_allocation
+    - no global mutable state
+    - no assembly_or_intrinsics_without_measured_need
+
+validation:
+  required:
+    - every_valid_option_type
+    - missing_and_duplicate_identity
+    - identical_duplicate_identity
+    - malformed_and_oversized_identity
+    - invalid_utf8_and_all_forbidden_control_classes
+    - option_count_and_cumulative_bounds
+    - case_insensitive_option_duplicates
+    - repeated_unknown_and_wrong_type_fields
+    - int64_limits_and_overflow
+    - spin_relation
+    - empty_string_default
+    - combo_duplicate_empty_and_missing_default_variant
+    - override_count_and_cumulative_bounds
+    - override_case_canonicalization
+    - deterministic_canonical_output
+    - representative_256_option_allocation_measurement
