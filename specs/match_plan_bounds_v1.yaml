@@ -1,0 +1,100 @@
+meta:
+  spec_id: arena_match_plan_bounds_v1
+  version: 1
+  status: active
+  owner: domain
+  purpose: >
+    Define representation-safe and recovery-safe bounds for local competition
+    plans before input copying, deterministic pairing generation, persistence,
+    or engine-process admission.
+
+authority:
+  companion: specs/product_contract_v1.yaml
+  precedence: >
+    This specification narrows the local_match_planner contract with explicit
+    capacity and representation bounds. It does not change tournament format,
+    pairing, color, opening-selection, or lifecycle semantics.
+
+ownership:
+  owner: MatchPlanner
+  rules:
+    - MatchPlanner is the single admission and normalization authority.
+    - Persistence, process supervision, API, and UI do not duplicate these bounds.
+    - Complete schedule cardinality is proven before MatchPlanner allocates uniqueness structures, copies the admitted plan, or allocates pairings.
+    - normalize_and_schedule accepts the submitted plan by const reference so unvalidated pairings and metadata are not copied before admission.
+    - Submitted pairings are derived output and are never copied into the normalized plan.
+
+bounds:
+  maximum_scheduled_games: 10000
+  maximum_concurrency: 256
+  maximum_resource_id_bytes: 128
+  maximum_display_name_bytes: 256
+  maximum_engine_id_bytes: 128
+  maximum_overrides_per_engine: 128
+  maximum_total_overrides: 16384
+  maximum_option_name_bytes: 128
+  maximum_option_value_bytes: 512
+  maximum_labels: 64
+  maximum_label_name_bytes: 128
+  maximum_label_value_bytes: 512
+  maximum_opening_suite_path_units: 32767
+  clock_representation:
+    signed_chrono_milliseconds: required
+    deadline_reserve_ms: 2000
+    rule: >
+      initial_ms plus the maximum possible per-side increment accumulation
+      through max_plies must fit in signed 64-bit milliseconds with the runtime
+      deadline reserve. Validation uses checked arithmetic.
+
+schedule_capacity:
+  rules:
+    - Pairing-count calculation uses checked unsigned arithmetic.
+    - Head-to-head and SPRT complete cardinality is games_per_pair.
+    - Round-robin complete cardinality is engine_count times engine_count-minus-one divided by two, then multiplied by games_per_pair.
+    - Gauntlet complete cardinality is engine_count-minus-one times games_per_pair.
+    - Swiss complete cardinality is floor(engine_count divided by two) times rounds.
+    - Swiss immediate admission is only the first-round floor(engine_count divided by two) pairings.
+    - A complete schedule outside 1..10000 is rejected before dynamic validation allocation.
+    - Concurrency cannot exceed 256 or the immediately admittable game count.
+
+text_and_metadata:
+  rules:
+    - Bounded text is valid UTF-8 scalar text.
+    - NUL, C0 controls including tab and newline, DEL, C1 controls, and Unicode line or paragraph separators are rejected.
+    - The default display name is generated before display-name validation.
+    - Engine ids are non-empty, bounded, and distinct.
+    - Engine override owners must be engines in the admitted plan.
+    - Option names are non-empty; option values may be empty.
+    - Per-engine and aggregate override counts are both bounded.
+    - Plan ids, labels, and opening-suite path size are bounded before the admitted result is copied.
+
+numeric_and_identity:
+  rules:
+    - SPRT elo, alpha, and beta values must be finite before range comparison.
+    - Opening-index addition uses checked arithmetic and never wraps the seed.
+    - Existing time-control, adjudication, and SPRT policy bounds remain unchanged.
+    - Exact 10000-game plans remain admitted; 10001-game plans fail.
+
+normalization:
+  rules:
+    - Empty id receives one uuid_v7 after admission.
+    - Empty display_name receives Local plus the canonical format name before validation.
+    - Only admitted input fields are copied into the normalized result.
+    - Caller-supplied pairings are discarded and regenerated deterministically.
+    - Existing pairing order, reversed-color behavior, rounds, boards, and opening indices remain unchanged for valid non-overflowing inputs.
+
+validation:
+  required:
+    - exact_10000_game_boundary
+    - reject_10001_or_overflowing_schedule
+    - reject_concurrency_above_immediate_plan_or_256
+    - reject_duplicate_or_invalid_utf8_engine_ids
+    - reject_unknown_engine_override_owner
+    - reject_per_engine_and_aggregate_override_overflow
+    - reject_all_control_characters_in_bounded_text
+    - reject_nonfinite_sprt_values
+    - reject_clock_increment_overflow_at_max_plies
+    - reject_opening_index_overflow
+    - normalize_default_display_name_before_validation
+    - discard_submitted_pairings
+    - preserve_existing_deterministic_pairing_and_color_results
