@@ -1,5 +1,5 @@
-#include <iostream>
 #include <chrono>
+#include <iostream>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -9,6 +9,9 @@
 int main(int argc, char** argv) {
     unsigned delay_ms = 0;
     bool illegal = false;
+    bool duplicate_option = false;
+    bool conflicting_identity = false;
+    bool malformed_option = false;
     std::size_t illegal_after_ply = static_cast<std::size_t>(-1);
     bool require_chess960 = false;
     unsigned required_moves_to_go = 0;
@@ -19,6 +22,12 @@ int main(int argc, char** argv) {
             delay_ms = static_cast<unsigned>(std::stoul(argv[++index]));
         } else if (argument == "--illegal") {
             illegal = true;
+        } else if (argument == "--duplicate-option") {
+            duplicate_option = true;
+        } else if (argument == "--conflicting-identity") {
+            conflicting_identity = true;
+        } else if (argument == "--malformed-option") {
+            malformed_option = true;
         } else if (argument == "--illegal-after-ply" && index + 1 < argc) {
             illegal_after_ply =
                 static_cast<std::size_t>(std::stoull(argv[++index]));
@@ -38,10 +47,19 @@ int main(int argc, char** argv) {
         "e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "h5f7"};
     for (std::string line; std::getline(std::cin, line);) {
         if (line == "uci") {
-            std::cout << "id name Arena Mock Engine\n"
-                      << "id author UCI Arena Manager\n"
+            std::cout << "id name Arena Mock Engine\n";
+            if (conflicting_identity) {
+                std::cout << "id name Conflicting Mock Engine\n";
+            }
+            std::cout << "id author UCI Arena Manager\n"
                       << "option name Threads type spin default 1 min 1 max 16\n"
                       << "option name Style type combo default Normal var Solid var Normal var Risky\n";
+            if (duplicate_option) {
+                std::cout << "option name Threads type spin default 2 min 1 max 32\n";
+            }
+            if (malformed_option) {
+                std::cout << "option name Broken type spin default 1 mystery 4\n";
+            }
             if (!required_model_root.empty()) {
                 std::cout << "option name ModelRoot type string default missing\n";
             } else {
