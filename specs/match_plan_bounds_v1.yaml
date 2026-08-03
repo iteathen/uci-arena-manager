@@ -1,0 +1,57 @@
+meta:
+  spec_id: arena_match_plan_bounds_v1
+  version: 1
+  status: active
+  owner: domain
+  purpose: >
+    Define representation-safe and recovery-safe bounds for local competition
+    plans before deterministic pairing generation or engine-process admission.
+
+authority:
+  companion: specs/product_contract_v1.yaml
+  precedence: >
+    This specification narrows the local_match_planner contract with explicit
+    capacity and representation bounds. It does not change format semantics.
+
+bounds:
+  maximum_scheduled_games: 10000
+  rationale: >
+    Restart reconciliation currently indexes at most 10,000 durable game
+    resources for one competition. A larger plan would exceed its recovery
+    authority and could duplicate games after restart.
+  maximum_concurrency: 256
+  rationale: >
+    One local game owns two independent engine processes. A 256-game ceiling
+    preserves a generous future capacity envelope while bounding one plan to
+    at most 512 simultaneous engine children before more explicit distributed
+    admission exists.
+  maximum_display_name_bytes: 256
+  maximum_overrides_per_engine: 128
+  maximum_option_name_bytes: 128
+  maximum_option_value_bytes: 512
+  clock_representation:
+    signed_chrono_milliseconds: required
+    deadline_reserve_ms: 2000
+    rule: >
+      initial_ms plus the maximum possible per-side increment accumulation
+      through max_plies must fit in signed 64-bit milliseconds with the runtime
+      deadline reserve. Validation must use checked arithmetic.
+
+rules:
+  - Pairing-count calculation uses checked arithmetic before allocating.
+  - Concurrency cannot exceed either 256 or the complete scheduled-game count.
+  - Engine override keys must name engines in the plan.
+  - Override names and values are bounded scalar strings with no NUL, CR, LF,
+    or other control characters.
+  - Each engine has at most 128 overrides.
+  - Empty or oversized display names are rejected after default normalization.
+  - These bounds are domain admission rules and are enforced before persistence
+    or process creation.
+
+validation:
+  - exact_10000_game_boundary
+  - reject_10001_or_overflowing_schedule
+  - reject_concurrency_above_plan_or_256
+  - reject_unknown_engine_override_owner
+  - reject_oversized_or_control_character_override
+  - reject_clock_increment_overflow_at_max_plies
