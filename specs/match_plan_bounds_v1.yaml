@@ -18,25 +18,22 @@ authority:
 ownership:
   owner: MatchPlanner
   rules:
-    - MatchPlanner is the single admission and normalization authority.
+    - MatchPlanner is the single admission and normalization authority for planning inputs.
     - Persistence, process supervision, API, and UI do not duplicate these bounds.
     - Complete schedule cardinality is proven before MatchPlanner allocates uniqueness structures, copies the admitted plan, or allocates pairings.
-    - normalize_and_schedule accepts the submitted plan by const reference so unvalidated pairings and metadata are not copied before admission.
+    - normalize_and_schedule accepts the submitted plan by const reference so unvalidated pairings and planning metadata are not copied before admission.
     - Submitted pairings are derived output and are never copied into the normalized plan.
+    - Universal resource-label policy remains outside MatchPlanner and is not redefined here.
 
 bounds:
   maximum_scheduled_games: 10000
   maximum_concurrency: 256
-  maximum_resource_id_bytes: 128
   maximum_display_name_bytes: 256
   maximum_engine_id_bytes: 128
   maximum_overrides_per_engine: 128
   maximum_total_overrides: 16384
   maximum_option_name_bytes: 128
   maximum_option_value_bytes: 512
-  maximum_labels: 64
-  maximum_label_name_bytes: 128
-  maximum_label_value_bytes: 512
   maximum_opening_suite_path_units: 32767
   clock_representation:
     signed_chrono_milliseconds: required
@@ -66,7 +63,8 @@ text_and_metadata:
     - Engine override owners must be engines in the admitted plan.
     - Option names are non-empty; option values may be empty.
     - Per-engine and aggregate override counts are both bounded.
-    - Plan ids, labels, and opening-suite path size are bounded before the admitted result is copied.
+    - A supplied plan id must pass the existing UUID domain authority.
+    - Opening-suite path size and embedded NUL are checked before the admitted result is copied.
 
 numeric_and_identity:
   rules:
@@ -79,7 +77,7 @@ normalization:
   rules:
     - Empty id receives one uuid_v7 after admission.
     - Empty display_name receives Local plus the canonical format name before validation.
-    - Only admitted input fields are copied into the normalized result.
+    - Only admitted planning fields are copied into the normalized result.
     - Caller-supplied pairings are discarded and regenerated deterministically.
     - Existing pairing order, reversed-color behavior, rounds, boards, and opening indices remain unchanged for valid non-overflowing inputs.
 
@@ -95,6 +93,7 @@ validation:
     - reject_nonfinite_sprt_values
     - reject_clock_increment_overflow_at_max_plies
     - reject_opening_index_overflow
+    - reject_invalid_supplied_plan_uuid
     - normalize_default_display_name_before_validation
     - discard_submitted_pairings
     - preserve_existing_deterministic_pairing_and_color_results
