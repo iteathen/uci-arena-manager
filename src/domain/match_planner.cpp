@@ -113,6 +113,7 @@ constexpr std::uint64_t maximum_chrono_clock_ms =
 struct ScheduleCapacity {
     std::uint64_t complete_games{};
     std::uint64_t immediately_admittable_games{};
+    std::uint64_t maximum_opening_offset{};
 };
 
 [[nodiscard]] ScheduleCapacity schedule_capacity(const MatchPlan& plan) {
@@ -135,11 +136,13 @@ struct ScheduleCapacity {
 
     std::uint64_t complete = 0;
     std::uint64_t immediately_admittable = 0;
+    std::uint64_t maximum_opening_offset = 0;
     switch (plan.format) {
         case TournamentFormat::head_to_head:
         case TournamentFormat::sprt:
             complete = plan.games_per_pair;
             immediately_admittable = complete;
+            maximum_opening_offset = (complete - 1U) / 2U;
             break;
         case TournamentFormat::round_robin: {
             const auto pairs =
@@ -153,6 +156,7 @@ struct ScheduleCapacity {
                 plan.games_per_pair,
                 "round-robin schedule");
             immediately_admittable = complete;
+            maximum_opening_offset = (complete - 1U) / 2U;
             break;
         }
         case TournamentFormat::gauntlet:
@@ -161,6 +165,7 @@ struct ScheduleCapacity {
                 plan.games_per_pair,
                 "gauntlet schedule");
             immediately_admittable = complete;
+            maximum_opening_offset = (complete - 1U) / 2U;
             break;
         case TournamentFormat::swiss:
             immediately_admittable = engines / 2;
@@ -168,12 +173,17 @@ struct ScheduleCapacity {
                 immediately_admittable,
                 plan.rounds,
                 "Swiss schedule");
+            maximum_opening_offset = immediately_admittable - 1U;
             break;
     }
     if (complete == 0 || complete > maximum_scheduled_games) {
         throw PlanError("competition schedule must contain 1..10000 games");
     }
-    return {complete, immediately_admittable};
+    static_cast<void>(checked_add(
+        plan.seed,
+        maximum_opening_offset,
+        "opening index"));
+    return {complete, immediately_admittable, maximum_opening_offset};
 }
 
 void validate_clock_representation(const MatchPlan& plan) {
@@ -194,10 +204,10 @@ void validate_clock_representation(const MatchPlan& plan) {
 
 [[nodiscard]] MatchPlan admitted_plan_copy(
     const MatchPlan& plan,
-    std::string normalized_display_name) {
+    std::string_view normalized_display_name) {
     MatchPlan admitted;
     admitted.id = plan.id.empty() ? uuid_v7() : plan.id;
-    admitted.display_name = std::move(normalized_display_name);
+    admitted.display_name.assign(normalized_display_name);
     admitted.format = plan.format;
     admitted.variant = plan.variant;
     admitted.engine_ids = plan.engine_ids;
@@ -425,17 +435,18 @@ void MatchPlanner::validate(
 
 MatchPlan MatchPlanner::normalize_and_schedule(const MatchPlan& plan) {
     const ScheduleCapacity capacity = schedule_capacity(plan);
-    std::string normalized_display_name = plan.display_name.empty()
-        ? "Local " + to_string(plan.format)
-        : plan.display_name;
+    std::string generated_display_name;
+    const std::string_view normalized_display_name = plan.display_name.empty()
+        ? std::string_view(
+              generated_display_name = "Local " + to_string(plan.format))
+        : std::string_view(plan.display_name);
     validate(
         plan,
         normalized_display_name,
         capacity.complete_games,
         capacity.immediately_admittable_games);
 
-    MatchPlan scheduled =
-        admitted_plan_copy(plan, std::move(normalized_display_name));
+    MatchPlan scheduled = admitted_plan_copy(plan, normalized_display_name);
     scheduled.pairings.reserve(static_cast<std::size_t>(
         scheduled.format == TournamentFormat::swiss
             ? capacity.immediately_admittable_games
