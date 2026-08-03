@@ -13,16 +13,12 @@ namespace {
 
 constexpr std::uint64_t maximum_scheduled_games = 10'000;
 constexpr std::uint32_t maximum_concurrency = 256;
-constexpr std::size_t maximum_resource_id_bytes = 128;
 constexpr std::size_t maximum_display_name_bytes = 256;
 constexpr std::size_t maximum_engine_id_bytes = 128;
 constexpr std::size_t maximum_overrides_per_engine = 128;
 constexpr std::size_t maximum_total_overrides = 16'384;
 constexpr std::size_t maximum_option_name_bytes = 128;
 constexpr std::size_t maximum_option_value_bytes = 512;
-constexpr std::size_t maximum_labels = 64;
-constexpr std::size_t maximum_label_name_bytes = 128;
-constexpr std::size_t maximum_label_value_bytes = 512;
 constexpr std::size_t maximum_opening_suite_path_units = 32'767;
 constexpr std::uint64_t deadline_reserve_ms = 2'000;
 constexpr std::uint64_t maximum_chrono_clock_ms =
@@ -113,7 +109,6 @@ constexpr std::uint64_t maximum_chrono_clock_ms =
 struct ScheduleCapacity {
     std::uint64_t complete_games{};
     std::uint64_t immediately_admittable_games{};
-    std::uint64_t maximum_opening_offset{};
 };
 
 [[nodiscard]] ScheduleCapacity schedule_capacity(const MatchPlan& plan) {
@@ -183,7 +178,7 @@ struct ScheduleCapacity {
         plan.seed,
         maximum_opening_offset,
         "opening index"));
-    return {complete, immediately_admittable, maximum_opening_offset};
+    return {complete, immediately_admittable};
 }
 
 void validate_clock_representation(const MatchPlan& plan) {
@@ -285,8 +280,8 @@ void MatchPlanner::validate(
     const std::string_view normalized_display_name,
     const std::uint64_t scheduled_games,
     const std::uint64_t immediately_admittable_games) {
-    if (!valid_utf8_scalar(plan.id, maximum_resource_id_bytes, true)) {
-        throw PlanError("plan id must be bounded UTF-8 scalar text");
+    if (!plan.id.empty() && !is_uuid(plan.id)) {
+        throw PlanError("plan id must be a UUID");
     }
     if (!valid_utf8_scalar(
             normalized_display_name,
@@ -408,18 +403,6 @@ void MatchPlanner::validate(
         }
     }
 
-    if (plan.labels.size() > maximum_labels) {
-        throw PlanError("plan label count exceeds 64");
-    }
-    for (const auto& [name, value] : plan.labels) {
-        if (!valid_utf8_scalar(name, maximum_label_name_bytes) ||
-            !valid_utf8_scalar(
-                value,
-                maximum_label_value_bytes,
-                true)) {
-            throw PlanError("plan label is invalid or too large");
-        }
-    }
     if (plan.opening_suite) {
         const auto& native = plan.opening_suite->native();
         if (native.empty() ||
@@ -436,10 +419,11 @@ void MatchPlanner::validate(
 MatchPlan MatchPlanner::normalize_and_schedule(const MatchPlan& plan) {
     const ScheduleCapacity capacity = schedule_capacity(plan);
     std::string generated_display_name;
-    const std::string_view normalized_display_name = plan.display_name.empty()
-        ? std::string_view(
-              generated_display_name = "Local " + to_string(plan.format))
-        : std::string_view(plan.display_name);
+    std::string_view normalized_display_name = plan.display_name;
+    if (normalized_display_name.empty()) {
+        generated_display_name = "Local " + to_string(plan.format);
+        normalized_display_name = generated_display_name;
+    }
     validate(
         plan,
         normalized_display_name,
