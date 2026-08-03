@@ -9,6 +9,8 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <string>
+#include <vector>
 
 #ifndef ARENA_MOCK_UCI_PATH
 #error ARENA_MOCK_UCI_PATH must name the mock UCI engine
@@ -45,6 +47,93 @@ TEST_CASE("UCI probe rejects an option the engine did not advertise") {
     REQUIRE(
         result.error.find("requested UCI option is not advertised: ModelRoot") !=
         std::string::npos);
+}
+
+TEST_CASE("UCI probe rejects duplicate and malformed engine metadata") {
+    const std::filesystem::path executable = ARENA_MOCK_UCI_PATH;
+
+    const auto duplicate = arena::adapters::UciProcess::probe(
+        executable,
+        executable.parent_path(),
+        {"--duplicate-option"},
+        std::chrono::seconds(5));
+    REQUIRE_FALSE(duplicate.ok);
+    REQUIRE(duplicate.error.find("duplicate UCI option: Threads") !=
+            std::string::npos);
+
+    const auto conflicting = arena::adapters::UciProcess::probe(
+        executable,
+        executable.parent_path(),
+        {"--conflicting-identity"},
+        std::chrono::seconds(5));
+    REQUIRE_FALSE(conflicting.ok);
+    REQUIRE(conflicting.error.find("conflicting name") != std::string::npos);
+
+    const auto malformed = arena::adapters::UciProcess::probe(
+        executable,
+        executable.parent_path(),
+        {"--malformed-option"},
+        std::chrono::seconds(5));
+    REQUIRE_FALSE(malformed.ok);
+    REQUIRE(malformed.error.find("unknown field") != std::string::npos);
+}
+
+TEST_CASE("UCI probe enforces path argument and timeout admission") {
+    namespace fs = std::filesystem;
+    const fs::path executable = ARENA_MOCK_UCI_PATH;
+
+    const auto excessive_arguments = arena::adapters::UciProcess::probe(
+        executable,
+        executable.parent_path(),
+        std::vector<std::string>(65, "x"),
+        std::chrono::seconds(5));
+    REQUIRE_FALSE(excessive_arguments.ok);
+    REQUIRE(excessive_arguments.error.find("argument count exceeds 64") !=
+            std::string::npos);
+
+    const auto invalid_timeout = arena::adapters::UciProcess::probe(
+        executable,
+        executable.parent_path(),
+        {},
+        std::chrono::milliseconds(0));
+    REQUIRE_FALSE(invalid_timeout.ok);
+    REQUIRE(invalid_timeout.error.find("timeout must be") != std::string::npos);
+
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-uci-probe-symlink-" + arena::domain::uuid_v7());
+    fs::create_directories(root);
+    const fs::path executable_link = root / executable.filename();
+    std::error_code executable_link_error;
+    fs::create_symlink(executable, executable_link, executable_link_error);
+    if (!executable_link_error) {
+        const auto linked_executable = arena::adapters::UciProcess::probe(
+            executable_link,
+            executable.parent_path(),
+            {},
+            std::chrono::seconds(5));
+        REQUIRE_FALSE(linked_executable.ok);
+        REQUIRE(linked_executable.error.find("regular non-symlink file") !=
+                std::string::npos);
+    }
+
+    const fs::path directory_link = root / "working-directory";
+    std::error_code directory_link_error;
+    fs::create_directory_symlink(
+        executable.parent_path(),
+        directory_link,
+        directory_link_error);
+    if (!directory_link_error) {
+        const auto linked_directory = arena::adapters::UciProcess::probe(
+            executable,
+            directory_link,
+            {},
+            std::chrono::seconds(5));
+        REQUIRE_FALSE(linked_directory.ok);
+        REQUIRE(linked_directory.error.find("non-symlink directory") !=
+                std::string::npos);
+    }
+    fs::remove_all(root);
 }
 
 TEST_CASE("engine registration derives preferred metadata from the verified receipt") {
