@@ -9,7 +9,6 @@ import type {
   BotOptions,
   BotOptionsUpdate,
   BotProfile,
-  BotTokenReferenceResult,
   CommandEnvelope,
   ComponentInventory,
   EngineCandidates,
@@ -484,11 +483,6 @@ export const api = {
   components: () => request<ComponentInventory>('/api/v1/components'),
   botProfiles: () => request<BotProfile[]>('/api/v1/bot-profiles'),
   botCandidates: () => request<BotCandidates>('/api/v1/bot-candidates'),
-  saveBotTokenReference: (path: string) =>
-    request<BotTokenReferenceResult>('/api/v1/bot-token-reference', {
-      method: 'POST',
-      body: JSON.stringify({ path }),
-    }),
   discoverService: (profileId: ServiceProfile['profile_id']) =>
     request<ServiceDiscovery>(`/api/v1/service-profiles/${profileId}/discovery`),
   engineCandidates: (root = '') =>

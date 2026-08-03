@@ -72,6 +72,9 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
         ARENA_MOCK_UCI_PATH,
         executable,
         fs::copy_options::overwrite_existing);
+    const auto packaged_probe = arena::adapters::UciProcess::probe(
+        executable, active_root, {}, std::chrono::seconds(5));
+    REQUIRE(packaged_probe.ok);
 
     std::ofstream(active_root / "arena-component.json")
         << json{
@@ -83,12 +86,30 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                {"entrypoints",
                 {{"uci",
                   fs::relative(executable, active_root).generic_string()}}},
+               {"discovery",
+                json::array({
+                    {
+                        {"kind", "uci_engine"},
+                        {"locator",
+                         {{"source", "entrypoint"},
+                          {"entrypoint", "uci"}}},
+                    },
+                })},
                {"default_model",
                 {{"model_id", "example_model_v1"},
                  {"display_name", "Example Model"},
                  {"input_adapter_id", "dense_planes_v1"},
                  {"root", "models/default"}}},
-               {"files", json::array()},
+               {"files",
+                json::array({
+                    {
+                        {"path",
+                         fs::relative(executable, active_root)
+                             .generic_string()},
+                        {"sha256", packaged_probe.fingerprint},
+                        {"size_bytes", fs::file_size(executable)},
+                    },
+                })},
            }
                .dump(2);
     std::ofstream(data_root / "receipts" / "uci_arena.engine.json")

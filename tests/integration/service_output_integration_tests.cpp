@@ -34,7 +34,8 @@ json register_service(
     arena::application::ControlPlane& control_plane,
     const fs::path& root,
     const std::string& profile,
-    const std::string& cli_name) {
+    const std::string& cli_name,
+    const fs::path& node_executable = ARENA_MOCK_SERVICE_PATH) {
     const fs::path cli = root / cli_name;
     const fs::path workspace = root / (profile + "-workspace");
     fs::create_directories(workspace);
@@ -45,7 +46,7 @@ json register_service(
             {{"kind", "managed_service"}},
             {
                 {"profile_id", profile},
-                {"node_executable", ARENA_MOCK_SERVICE_PATH},
+                {"node_executable", node_executable.string()},
                 {"cli_entrypoint", cli.string()},
                 {"workspace", workspace.string()},
             }),
@@ -56,10 +57,11 @@ json register_and_status(
     arena::application::ControlPlane& control_plane,
     const fs::path& root,
     const std::string& profile,
-    const std::string& cli_name) {
+    const std::string& cli_name,
+    const fs::path& node_executable = ARENA_MOCK_SERVICE_PATH) {
     const json created =
         register_service(
-            control_plane, root, profile, cli_name);
+            control_plane, root, profile, cli_name, node_executable);
     const std::string id =
         created.at("resource").at("id").get<std::string>();
     return control_plane.submit(
@@ -220,6 +222,118 @@ TEST_CASE("managed service profiles are cardinal and removal respects ownership"
                     "resource.remove",
                     {{"kind", "managed_service"},
                      {"id", receipt_owned_id}}),
+                "test"),
+            arena::application::CommandFailure);
+    }
+    fs::remove_all(root);
+}
+
+TEST_CASE("transient provider launch failure preserves the last validated projection") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-service-transient-" + arena::domain::uuid_v7());
+    fs::create_directories(root);
+    const fs::path node_copy =
+        root / fs::path(ARENA_MOCK_SERVICE_PATH).filename();
+    fs::copy_file(
+        ARENA_MOCK_SERVICE_PATH,
+        node_copy,
+        fs::copy_options::overwrite_existing);
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(
+            root / "arena.db");
+        arena::application::ControlPlane control_plane(store);
+        control_plane.initialize();
+
+        const json healthy = register_and_status(
+            control_plane,
+            root,
+            "book_forge",
+            "book-transient.mjs",
+            node_copy);
+        const std::string id = healthy.at("resource").at("id");
+        REQUIRE(
+            healthy.at("resource").at("data").at("integration_state") ==
+            "available");
+        REQUIRE(
+            healthy.at("resource").at("data").contains("output_integration"));
+
+        fs::remove(node_copy);
+        const json unavailable = control_plane.submit(
+            command(
+                "service.status",
+                {{"kind", "managed_service"}, {"id", id}}),
+            "test");
+        const json& data = unavailable.at("resource").at("data");
+        REQUIRE(data.at("integration_state") == "unavailable");
+        REQUIRE(data.at("observed_state") == "degraded");
+        REQUIRE(data.at("output_projection_stale") == true);
+        REQUIRE(data.contains("last_successful_status_at"));
+        REQUIRE(data.contains("output_integration"));
+    }
+    fs::remove_all(root);
+}
+
+TEST_CASE("oversized provider output is rejected before JSON interpretation") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-service-output-limit-" + arena::domain::uuid_v7());
+    fs::create_directories(root);
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(
+            root / "arena.db");
+        arena::application::ControlPlane control_plane(store);
+        control_plane.initialize();
+
+        const json result = register_and_status(
+            control_plane,
+            root,
+            "book_forge",
+            "book-oversized-output.mjs");
+        const json& data = result.at("resource").at("data");
+        REQUIRE(data.at("integration_state") == "incompatible");
+        REQUIRE(data.at("observed_state") == "degraded");
+        REQUIRE_FALSE(data.contains("output_integration"));
+        REQUIRE(
+            data.at("health")
+                .at("reason")
+                .get<std::string>()
+                .find("output exceeded") != std::string::npos);
+    }
+    fs::remove_all(root);
+}
+
+TEST_CASE("provider lifecycle controls await fresh provider truth") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-service-control-truth-" + arena::domain::uuid_v7());
+    fs::create_directories(root);
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(
+            root / "arena.db");
+        arena::application::ControlPlane control_plane(store);
+        control_plane.initialize();
+
+        const json healthy = register_and_status(
+            control_plane, root, "book_forge", "book-control.mjs");
+        const std::string id = healthy.at("resource").at("id");
+        const json paused = control_plane.submit(
+            command(
+                "service.pause",
+                {{"kind", "managed_service"}, {"id", id}}),
+            "test");
+        const json& paused_data = paused.at("resource").at("data");
+        REQUIRE(paused_data.at("desired_state") == "paused");
+        REQUIRE(paused_data.at("observed_state") == "unknown");
+        REQUIRE(
+            paused_data.at("last_control_result").at("token") ==
+            "[REDACTED]");
+
+        REQUIRE_THROWS_AS(
+            control_plane.submit(
+                command(
+                    "service.resume",
+                    {{"kind", "managed_service"}, {"id", id}}),
                 "test"),
             arena::application::CommandFailure);
     }

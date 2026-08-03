@@ -45,8 +45,9 @@ child_isolation:
     - graceful_then_forced_stop
 
 packages:
-  release_authority: manager_repository_protected_ci
-  official_build_location: protected_ci_only
+  release_authority: uci_arena_installer_repository
+  manager_candidate_authority: manager_repository_explicit_component_release
+  official_build_location: installer_repository_protected_release_only
   windows: [signed_per_user_setup_exe, signed_per_machine_setup_exe, per_user_msi, per_machine_msi, zip]
   linux: [deb, rpm, signed_portable_run, tar_gz]
   linux_validation:
@@ -67,6 +68,9 @@ packages:
   cli:
     windows_path_scope: matching_install_scope_msi_owned
     linux_manpage: share/man/man1/arena.1
+  manager_component_runtime:
+    source: declared_entrypoint_runtime_dependency_closure
+    whole_package_manager_bin_copy: forbidden
   selectable_services:
     initial_state: selected
     modify: supported
@@ -74,6 +78,8 @@ packages:
     lifecycle: typed_stop_commit_start_verify_with_rollback
   installer:
     executable: arena-setup
+    source_repository: iteathen/uci-arena-installer
+    manager_source_copy: forbidden
     privilege: unprivileged_plan_elevated_commit_only
     broker_dependency: false
     allowed_operations: [inventory, plan, apply, verify, repair, upgrade, uninstall]

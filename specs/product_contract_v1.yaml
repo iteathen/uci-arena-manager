@@ -73,9 +73,13 @@ engine_contract:
         ModelRoot UCI option.
   installed_candidate_entrypoints:
     rules:
-      - A verified managed-component receipt contributes an engine candidate through an explicit `uci` entrypoint.
-      - A component that declares the `uci_engine` capability may instead expose the same boundary through its managed `executable` entrypoint, as Stockfish packages do.
-      - Discovery never guesses from an arbitrary manifest entrypoint, filename, model label, or enumeration order.
+      - A verified managed-component receipt contributes an engine candidate
+        only when its component manifest declares a `uci_engine` discovery
+        role whose locator resolves to a digest-verified component file.
+      - A discovery locator may name any declared entrypoint or an explicit
+        component-relative path; the entrypoint key itself carries no role.
+      - An entrypoint name, capability, component id, filename, model label,
+        or enumeration order never implies that a component is a UCI engine.
   naming_boundary:
     product_engine_executable: uci_arena_engine
     requirements:
@@ -165,6 +169,13 @@ local_match_planner:
     - Engine-specific overrides do not mutate catalog defaults.
     - Plans are deterministic for the same normalized inputs and seed.
     - Every scheduled game records both engine fingerprints and options.
+    - Before admitting the first game, Manager repeats the complete UCI probe
+      for every distinct participant with that competition's effective option
+      set and verifies the executable fingerprint still equals the registered
+      identity. Failure terminates the competition before creating a game.
+    - Competition-specific option overrides must name options advertised by
+      the registered engine and satisfy their declared type and bounds before
+      the plan is persisted.
     - Color-paired formats schedule reversed colors together.
   opening_suite:
     schema: arena_opening_suite_v1

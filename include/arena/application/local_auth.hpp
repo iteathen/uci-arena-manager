@@ -20,6 +20,13 @@ class LocalAuth final {
 
     void initialize();
     [[nodiscard]] const std::filesystem::path& client_key_path() const;
+    [[nodiscard]] std::string server_proof(
+        const std::string& challenge,
+        const std::string& audience) const;
+    [[nodiscard]] static std::string compute_server_proof(
+        const std::string& client_key,
+        const std::string& challenge,
+        const std::string& audience);
     [[nodiscard]] bool authenticate_bearer(const std::string& authorization) const;
     [[nodiscard]] std::string issue_pairing_token();
     [[nodiscard]] std::optional<BrowserSession> exchange_pairing_token(
@@ -44,6 +51,7 @@ class LocalAuth final {
     std::filesystem::path client_key_path_;
     mutable std::string client_key_;
     mutable std::mutex mutex_;
+    bool initialized_{};
     std::unordered_map<std::string, ExpiringValue> pairing_tokens_;
     std::unordered_map<std::string, ExpiringValue> sessions_;
 };

@@ -15,7 +15,7 @@ profile:
 token_reference:
   ownership: permanent_operator_external_file
   selection_owner: interactive_user_native_picker
-  persistence_owner: manager_locator_store
+  persistence_owner: installer_owned_locator_transaction
   rules:
     - Installers, packages, repositories, release artifacts, tests, and
       Manager state never contain a Lichess API credential.
@@ -25,11 +25,14 @@ token_reference:
       root is rejected; neither location may become credential storage.
     - Discovery exposes an external-token-path blocker before probe or startup
       when a legacy locator points into the verified provider component.
-    - The dashboard can select and replace the token-file reference without a terminal.
-    - The authenticated Manager mutation receives and stores only the normalized path.
-    - Manager validation uses filesystem metadata only and never opens, hashes, copies,
-      logs, or returns token contents.
-    - Mutation responses and discovery output do not return the selected path.
+    - The dashboard can select and replace the token-file reference without a terminal
+      through the authenticated desktop helper and adjacent Installer-owned arena-setup.
+    - The Manager service has no token-locator mutation endpoint. It reads only the
+      validated saved-locator contract and projects redacted availability.
+    - Installer validation uses filesystem metadata only and never opens, hashes, copies,
+      logs, or returns token contents. Its import transaction regenerates and verifies
+      every affected consumer configuration before committing the locator.
+    - Setup mutation responses and Manager discovery output do not return the selected path.
 
 discovery:
   sources:
@@ -183,6 +186,9 @@ lifecycle:
 acceptance:
   - A Complete Arena install shows the adapter as installed but disabled.
   - A token-file reference can be selected without Manager or installer reading it.
+  - Saving the reference through Bots and Configuration uses the same typed
+    Installer import transaction; no Manager-only write path can bypass
+    consumer-configuration regeneration or provider refresh.
   - The account probe discovers one BOT account and rejects a normal account.
   - Startup enablement performs a fresh probe and cannot accept an
     account name from the browser.

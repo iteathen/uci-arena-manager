@@ -14,7 +14,12 @@ sources:
     - discovered
   rules:
     - Managed engines are resolved from their verified install receipt and
-      arena-component.json UCI entrypoint; their filenames are not guessed.
+      an arena-component.json `uci_engine` discovery declaration; their
+      component identity, capability names, entrypoint names, and filenames
+      are not interpreted as discovery roles.
+    - The discovery locator names either a declared entrypoint or an explicit
+      safe component-relative path. The selected executable must be listed in
+      the immutable component file inventory and match its size and SHA-256.
     - Saved uci_engine locators are projected as candidates without copying or
       silently registering the engine.
     - Additional discovery is restricted to an explicitly selected file or
@@ -66,7 +71,9 @@ registration:
 recommendation:
   component_id: uci_arena.engine
   behavior:
-    - The verified UCI Arena component is ordered first and marked recommended.
+    - A verified candidate already admitted through a `uci_engine` discovery
+      declaration is ordered first and marked recommended when its component
+      id is uci_arena.engine.
     - Recommendation never depends on filename guessing, candidate order, or a model label.
 
 installation:
@@ -81,6 +88,12 @@ installation:
 acceptance:
   - A clean Complete Arena installation yields UCI Arena and Stockfish engine
     candidates from receipts.
+  - A component with a UCI-looking entrypoint, capability, or identity but no
+    `uci_engine` discovery declaration is not projected as an engine.
+  - A differently identified component with a valid `uci_engine` discovery
+    declaration is projected without Manager source changes.
+  - A discovery declaration whose selected file no longer matches the
+    immutable manifest is rejected before probing.
   - Both candidates can be probed, explicitly registered, and recovered after
     a Manager service restart.
   - A renamed UCI executable under an explicitly selected root is discoverable.

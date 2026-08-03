@@ -227,12 +227,53 @@ bool legal_starting_bestmove(const std::string& move) {
 
 }  // namespace
 
+void UciProcess::validate_option_overrides(
+    const std::vector<domain::UciOption>& advertised_options,
+    const std::map<std::string, std::string>& option_overrides) {
+    std::map<std::string, const domain::UciOption*, std::less<>> by_name;
+    for (const auto& option : advertised_options) {
+        if (option.name.empty() || !by_name.emplace(option.name, &option).second) {
+            throw std::runtime_error(
+                "engine advertised an empty or duplicate UCI option name");
+        }
+    }
+    for (const auto& [name, value] : option_overrides) {
+        const auto found = by_name.find(name);
+        if (found == by_name.end()) {
+            throw std::runtime_error(
+                "requested UCI option is not advertised: " + name);
+        }
+        const domain::UciOption& option = *found->second;
+        if (option.type == "button") {
+            throw std::runtime_error(
+                "UCI button options cannot be persisted as values: " + name);
+        }
+        if (option.type == "check" && value != "true" && value != "false") {
+            throw std::runtime_error(
+                "UCI check option requires true or false: " + name);
+        }
+        if (option.type == "spin") {
+            const std::int64_t number = parse_integer(value, "spin");
+            if ((option.minimum && number < *option.minimum) ||
+                (option.maximum && number > *option.maximum)) {
+                throw std::runtime_error(
+                    "UCI spin option is outside its advertised bounds: " + name);
+            }
+        }
+        if (option.type == "combo" && !option.variants.empty() &&
+            std::ranges::find(option.variants, value) == option.variants.end()) {
+            throw std::runtime_error(
+                "UCI combo option is not an advertised variant: " + name);
+        }
+    }
+}
+
 UciProbeResult UciProcess::probe(
     const std::filesystem::path& executable,
     const std::filesystem::path& working_directory,
     const std::vector<std::string>& arguments,
     std::chrono::milliseconds timeout,
-    const std::map<std::string, std::string, std::less<>>& option_overrides) {
+    const std::map<std::string, std::string>& option_overrides) {
     UciProbeResult result;
     const auto started = Clock::now();
     ports::NativeProcess process;
@@ -243,16 +284,8 @@ UciProbeResult UciProcess::probe(
 
         process.write_line("uci");
         await_token(process, "uciok", deadline, result, true);
+        validate_option_overrides(result.options, option_overrides);
         for (const auto& [name, value] : option_overrides) {
-            const bool advertised = std::any_of(
-                result.options.begin(), result.options.end(),
-                [&name](const domain::UciOption& option) {
-                    return option.name == name;
-                });
-            if (!advertised) {
-                throw std::runtime_error(
-                    "requested UCI option is not advertised: " + name);
-            }
             process.write_line("setoption name " + name + " value " + value);
         }
         process.write_line("isready");

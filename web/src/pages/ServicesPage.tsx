@@ -40,6 +40,7 @@ import {
   needsEvidenceTarget,
   selectPreferredService,
   serviceCardStates,
+  serviceLifecycleActions,
   serviceLocatorMode,
 } from './serviceSelection'
 
@@ -210,7 +211,12 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
         ),
       ),
     onSuccess: async (_result, variables) => {
-      if (variables.action === 'start' || variables.action === 'restart') {
+      if (
+        variables.action === 'start' ||
+        variables.action === 'restart' ||
+        variables.action === 'pause' ||
+        variables.action === 'resume'
+      ) {
         await new Promise((resolve) => window.setTimeout(resolve, 350))
         try {
           await api.command(
@@ -440,6 +446,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
             service.data.observed_state,
           )
           const receiptOwned = Boolean(service.data.installed_component_id)
+          const lifecycleActions = serviceLifecycleActions(service.data)
           return (
             <Paper withBorder className="service-instance" key={service.id}>
             <Grid align="center">
@@ -473,77 +480,23 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                     >
                       Probe
                     </Button>
-                    {service.data.startup_control === 'provider_owned_per_user' ? (
-                      service.data.observed_state === 'paused' ? (
-                        <Button
-                          size="xs"
-                          variant="light"
-                          onClick={() => control.mutate({ id: service.id, action: 'resume' })}
-                        >
-                          Resume
-                        </Button>
-                      ) : (
-                        <Button
-                          size="xs"
-                          variant="light"
-                          onClick={() => control.mutate({ id: service.id, action: 'pause' })}
-                        >
-                          Pause
-                        </Button>
-                      )
-                    ) : service.data.observed_state === 'running' ? (
-                      <>
-                        <Button
-                          size="xs"
-                          variant="light"
-                          onClick={() => control.mutate({ id: service.id, action: 'pause' })}
-                        >
-                          Pause
-                        </Button>
-                        <Button
-                          size="xs"
-                          color="red"
-                          variant="light"
-                          onClick={() => control.mutate({ id: service.id, action: 'stop' })}
-                        >
-                          Stop
-                        </Button>
-                      </>
-                    ) : service.data.observed_state === 'paused' ? (
-                      <>
-                        <Button
-                          size="xs"
-                          variant="light"
-                          onClick={() => control.mutate({ id: service.id, action: 'resume' })}
-                        >
-                          Resume
-                        </Button>
-                        <Button
-                          size="xs"
-                          color="red"
-                          variant="light"
-                          onClick={() => control.mutate({ id: service.id, action: 'stop' })}
-                        >
-                          Stop
-                        </Button>
-                      </>
-                    ) : service.data.observed_state === 'starting' ? (
+                    {lifecycleActions.map((action) => (
                       <Button
+                        key={action}
                         size="xs"
-                        color="red"
+                        color={action === 'stop' ? 'red' : undefined}
                         variant="light"
-                        onClick={() => control.mutate({ id: service.id, action: 'stop' })}
+                        loading={
+                          control.isPending &&
+                          control.variables?.id === service.id &&
+                          control.variables.action === action
+                        }
+                        disabled={control.isPending}
+                        onClick={() => control.mutate({ id: service.id, action })}
                       >
-                        Stop
+                        {action[0].toUpperCase() + action.slice(1)}
                       </Button>
-                    ) : (
-                      <Button
-                        size="xs"
-                        onClick={() => control.mutate({ id: service.id, action: 'start' })}
-                      >
-                        Start
-                      </Button>
-                    )}
+                    ))}
                     {!receiptOwned && (
                       <Button
                         size="xs"

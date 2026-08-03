@@ -1,0 +1,95 @@
+meta:
+  spec_id: arena_manager_component_release_v1
+  version: 1
+  status: active
+  owner: manager_release_engineering
+
+purpose: >
+  Define the Manager repository's component-publication responsibility and
+  its read-only consumption of Installer-owned installed-component evidence.
+
+authority:
+  provider_repository: iteathen/uci-arena-manager
+  produced_component: manager.core
+  suite_installer_repository: iteathen/uci-arena-installer
+  rules:
+    - Manager publishes one immutable manager.core candidate per target.
+    - Manager never publishes a suite catalog, release lock, platform
+      installer, managed dependency, installation transaction, receipt, or
+      removal plan.
+    - Installer owns the authoritative arena_install_component_v1 and
+      arena_install_receipt_v1 schemas plus clean install, upgrade, repair,
+      reinstall, downgrade, replacement, uninstall, purge, backup, and
+      rollback behavior.
+    - Manager source and component payload do not carry copied Installer
+      lifecycle specifications or schemas.
+
+producer_contract:
+  definition: release/components/manager-core.json
+  builder: tools/release/build-manager-component.mjs
+  manifest_schema: arena_install_component_v1
+  result_schema: arena_provider_release_result_v1
+  artifact_contents:
+    - manager_service
+    - manager_cli
+    - privileged_broker
+    - native_desktop_host
+    - packaged_dashboard
+    - exact_native_runtime_dependency_closure
+    - manager_owned_public_specs_and_schemas
+    - license_evidence
+    - component_test_receipt
+    - spdx_sbom
+  rules:
+    - The component manifest is package data consumed by Installer; it grants
+      no suite composition or installation authority to Manager.
+    - Entrypoints, capabilities, dependencies, startup requirements, data
+      paths, file sizes, and file digests come from the Manager definition and
+      staged payload rather than Installer control flow.
+    - The provider result binds exact source, target, artifact, manifest,
+      dependency-lock, test, SBOM, license, and workflow identities.
+    - A release requires a clean tracked tree and the exact declared test set.
+
+installer_input_projection:
+  consumed_interfaces:
+    - arena_install_catalog_v1
+    - arena_install_component_v1
+    - arena_install_receipt_v1
+    - arena_saved_locator_v1
+    - arena_setup_import_result_v1
+  rules:
+    - These are external Installer-owned contracts. Their canonical schemas
+      ship with Installer runtime and platform packages, not manager.core.
+    - Manager reads only the bounded fields needed for component inventory,
+      discovery, provider contract resolution, and redacted operator status.
+    - A retained catalog, root, locator, or provider workspace is not installed
+      authority. Manager requires a compatible receipt plus matching immutable
+      component identity before projecting managed installation state.
+    - Manager never writes receipts, catalogs, install transactions, saved
+      locators, or provider configuration through these read surfaces.
+    - Installer additions are tolerated when the declared major remains
+      compatible; Manager rejects malformed required fields and never infers
+      roles from component identity, filenames, capabilities, or versions.
+
+packaging_boundary:
+  manager_component_excludes:
+    - arena_setup_executable_or_runtime
+    - installer_lifecycle_schemas
+    - suite_catalog_or_release_lock
+    - wix_or_linux_package_policy
+    - provider_artifacts
+    - managed_node_or_stockfish_payloads
+  installer_integration: >
+    Installer validates the immutable Manager component, overlays its own
+    runtime, contracts, and platform integration, and assembles suite media
+    without reading the Manager source tree.
+
+acceptance:
+  - The Manager release checks fail when copied Installer lifecycle specs or
+    schemas reappear.
+  - The deterministic manager.core artifact contains all Manager entrypoints
+    and no Installer engine or suite artifact.
+  - Manager source and native tests exercise read-only receipt/manifest input
+    without requiring an Installer source checkout.
+  - Installer package tests independently prove that authoritative lifecycle
+    contracts and the complete adjacent Installer runtime enter suite media.

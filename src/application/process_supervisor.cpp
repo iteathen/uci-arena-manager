@@ -5,6 +5,15 @@
 
 namespace arena::application {
 
+ProcessCommandFailure::ProcessCommandFailure(
+    const ProcessCommandFailureKind kind,
+    const std::string& detail)
+    : std::runtime_error(detail), kind_(kind) {}
+
+ProcessCommandFailureKind ProcessCommandFailure::kind() const noexcept {
+    return kind_;
+}
+
 ProcessSupervisor::~ProcessSupervisor() {
     std::map<std::string, std::unique_ptr<ports::NativeProcess>, std::less<>> processes;
     {
@@ -67,15 +76,37 @@ nlohmann::json ProcessSupervisor::run_json(
     const std::filesystem::path& executable,
     const std::filesystem::path& working_directory,
     const std::vector<std::string>& arguments,
-    std::chrono::milliseconds timeout) const {
+    std::chrono::milliseconds timeout,
+    const std::size_t maximum_output_bytes) const {
+    if (maximum_output_bytes == 0) {
+        throw ProcessCommandFailure(
+            ProcessCommandFailureKind::output_limit,
+            "managed service output limit is invalid");
+    }
     ports::NativeProcess process;
-    process.start(executable, working_directory, arguments);
+    try {
+        process.start(executable, working_directory, arguments);
+    } catch (const std::exception& error) {
+        throw ProcessCommandFailure(
+            ProcessCommandFailureKind::launch,
+            std::string("managed service command could not be launched: ") +
+                error.what());
+    }
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     std::string output;
+    const auto append_line = [&](const std::string& line) {
+        if (line.size() >= maximum_output_bytes ||
+            output.size() > maximum_output_bytes - line.size() - 1) {
+            throw ProcessCommandFailure(
+                ProcessCommandFailureKind::output_limit,
+                "managed service output exceeded the one MiB contract boundary");
+        }
+        output += line;
+        output.push_back('\n');
+    };
     while (std::chrono::steady_clock::now() < deadline) {
         if (const auto line = process.read_line(std::chrono::milliseconds(100)); line) {
-            output += *line;
-            output.push_back('\n');
+            append_line(*line);
             continue;
         }
         if (!process.running()) {
@@ -84,17 +115,25 @@ nlohmann::json ProcessSupervisor::run_json(
     }
     if (process.running()) {
         process.stop(std::chrono::milliseconds(250));
-        throw std::runtime_error("managed service command timed out");
+        throw ProcessCommandFailure(
+            ProcessCommandFailureKind::timeout,
+            "managed service command timed out");
     }
     while (const auto line = process.read_line(std::chrono::milliseconds(0))) {
-        output += *line;
-        output.push_back('\n');
+        append_line(*line);
     }
     process.stop(std::chrono::milliseconds(0));
+    if (process.dropped_observational_lines() != 0) {
+        throw ProcessCommandFailure(
+            ProcessCommandFailureKind::output_limit,
+            "managed service output exceeded the bounded transport queue");
+    }
     try {
         return nlohmann::json::parse(output);
     } catch (const nlohmann::json::exception&) {
-        throw std::runtime_error("managed service returned invalid machine-readable status");
+        throw ProcessCommandFailure(
+            ProcessCommandFailureKind::invalid_output,
+            "managed service returned invalid machine-readable status");
     }
 }
 

@@ -1,5 +1,7 @@
 #include "arena/application/engine_onboarding.hpp"
 
+#include <sodium.h>
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -7,6 +9,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -48,12 +51,137 @@ fs::path normalized_absolute(const fs::path& value) {
 }
 
 bool safe_relative_path(const fs::path& value) {
-    if (value.empty() || value.is_absolute()) {
+    if (value.empty() || value.is_absolute() || value.has_root_name()) {
         return false;
     }
     return std::none_of(
         value.begin(), value.end(),
-        [](const fs::path& part) { return part == ".."; });
+        [](const fs::path& part) { return part == "." || part == ".."; });
+}
+
+std::string sha256_file(const fs::path& path) {
+    if (sodium_init() < 0) {
+        throw std::runtime_error("libsodium initialization failed");
+    }
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        throw std::runtime_error("installed component file cannot be verified");
+    }
+    crypto_hash_sha256_state state{};
+    crypto_hash_sha256_init(&state);
+    std::array<unsigned char, 64 * 1024> buffer{};
+    while (input) {
+        input.read(reinterpret_cast<char*>(buffer.data()), buffer.size());
+        const auto count = input.gcount();
+        if (count > 0) {
+            crypto_hash_sha256_update(
+                &state, buffer.data(),
+                static_cast<unsigned long long>(count));
+        }
+    }
+    std::array<unsigned char, crypto_hash_sha256_BYTES> digest{};
+    crypto_hash_sha256_final(&state, digest.data());
+    std::array<char, crypto_hash_sha256_BYTES * 2 + 1> encoded{};
+    sodium_bin2hex(
+        encoded.data(), encoded.size(), digest.data(), digest.size());
+    return encoded.data();
+}
+
+std::optional<fs::path> discovery_path(
+    const json& manifest,
+    const std::string& kind) {
+    if (!manifest.contains("discovery") ||
+        !manifest.at("discovery").is_array() ||
+        manifest.at("discovery").size() > 16U) {
+        return std::nullopt;
+    }
+    std::optional<fs::path> result;
+    for (const auto& declaration : manifest.at("discovery")) {
+        if (!declaration.is_object() ||
+            declaration.value("kind", "") != kind) {
+            continue;
+        }
+        if (result || !declaration.contains("locator") ||
+            !declaration.at("locator").is_object()) {
+            return std::nullopt;
+        }
+        const json& locator = declaration.at("locator");
+        const std::string source = locator.value("source", "");
+        if (source == "entrypoint") {
+            if (!locator.contains("entrypoint") ||
+                !locator.at("entrypoint").is_string() ||
+                !manifest.contains("entrypoints") ||
+                !manifest.at("entrypoints").is_object()) {
+                return std::nullopt;
+            }
+            const std::string name =
+                locator.at("entrypoint").get<std::string>();
+            const json& entrypoints = manifest.at("entrypoints");
+            if (!entrypoints.contains(name) ||
+                !entrypoints.at(name).is_string()) {
+                return std::nullopt;
+            }
+            result = entrypoints.at(name).get<std::string>();
+        } else if (source == "component_path") {
+            if (!locator.contains("path") ||
+                !locator.at("path").is_string()) {
+                return std::nullopt;
+            }
+            result = locator.at("path").get<std::string>();
+        } else {
+            return std::nullopt;
+        }
+        if (!safe_relative_path(*result)) {
+            return std::nullopt;
+        }
+    }
+    return result;
+}
+
+bool verified_manifest_file(
+    const fs::path& active_root,
+    const json& manifest,
+    const fs::path& selected_relative) {
+    if (!safe_relative_path(selected_relative) ||
+        !manifest.contains("files") || !manifest.at("files").is_array()) {
+        return false;
+    }
+    const fs::path selected = selected_relative.lexically_normal();
+    std::set<fs::path> listed;
+    const json* selected_file = nullptr;
+    for (const auto& file : manifest.at("files")) {
+        if (!file.is_object() || !file.contains("path") ||
+            !file.at("path").is_string()) {
+            return false;
+        }
+        const fs::path relative =
+            fs::path(file.at("path").get<std::string>()).lexically_normal();
+        if (!safe_relative_path(relative) || !listed.insert(relative).second) {
+            return false;
+        }
+        if (relative == selected) {
+            selected_file = &file;
+        }
+    }
+    if (selected_file == nullptr || !selected_file->contains("sha256") ||
+        !selected_file->at("sha256").is_string() ||
+        !selected_file->contains("size_bytes") ||
+        !selected_file->at("size_bytes").is_number_unsigned()) {
+        return false;
+    }
+    const fs::path executable = active_root / selected;
+    std::error_code error;
+    if (!fs::is_regular_file(executable, error) || error ||
+        fs::is_symlink(executable, error) || error ||
+        fs::file_size(executable, error) !=
+            selected_file->at("size_bytes").get<std::uintmax_t>() ||
+        error) {
+        return false;
+    }
+    const std::string expected =
+        selected_file->at("sha256").get<std::string>();
+    return expected.size() == crypto_hash_sha256_BYTES * 2U &&
+           sha256_file(executable) == expected;
 }
 
 bool usable_executable(const fs::path& value) {
@@ -189,62 +317,71 @@ void append_receipt_candidates(
             if (receipt.value("schema", "") != "arena_install_receipt_v1" ||
                 receipt.value("schema_version", 0) != 1 ||
                 receipt.value("state", "") != "installed_managed" ||
-                !receipt.contains("active_root")) {
+                !receipt.contains("component_id") ||
+                !receipt.at("component_id").is_string() ||
+                !receipt.contains("component_version") ||
+                !receipt.at("component_version").is_string() ||
+                !receipt.contains("active_root") ||
+                !receipt.at("active_root").is_string()) {
                 continue;
             }
-            const fs::path active_root =
-                normalized_absolute(receipt.at("active_root").get<std::string>());
+            const std::string component_id =
+                receipt.at("component_id").get<std::string>();
+            if (receipt_path.filename() != component_id + ".json") {
+                continue;
+            }
+            const fs::path declared_root =
+                receipt.at("active_root").get<std::string>();
+            if (fs::is_symlink(declared_root, error) || error) {
+                error.clear();
+                continue;
+            }
+            const fs::path active_root = normalized_absolute(declared_root);
+            const fs::path manifest_path = active_root / "arena-component.json";
+            if (!fs::is_regular_file(manifest_path, error) || error ||
+                fs::is_symlink(manifest_path, error) || error) {
+                error.clear();
+                continue;
+            }
             const json manifest =
-                read_json_bounded(active_root / "arena-component.json");
+                read_json_bounded(manifest_path);
             if (manifest.value("schema", "") !=
                     "arena_install_component_v1" ||
+                manifest.value("schema_version", 0) != 1 ||
                 manifest.value("component_id", "") !=
-                    receipt.value("component_id", "") ||
+                    component_id ||
                 manifest.value("component_version", "") !=
-                    receipt.value("component_version", "") ||
-                !manifest.contains("entrypoints") ||
-                !manifest.at("entrypoints").is_object()) {
+                    receipt.value("component_version", "")) {
                 continue;
             }
-            const json& entrypoints = manifest.at("entrypoints");
-            const bool has_uci_capability =
-                manifest.contains("capabilities") &&
-                manifest.at("capabilities").is_array() &&
-                std::ranges::any_of(
-                    manifest.at("capabilities"),
-                    [](const json& capability) {
-                        return capability.is_string() &&
-                               capability.get<std::string>() == "uci_engine";
-                    });
-            const char* entrypoint_name =
-                entrypoints.contains("uci") && entrypoints.at("uci").is_string()
-                    ? "uci"
-                    : (has_uci_capability && entrypoints.contains("executable") &&
-                               entrypoints.at("executable").is_string()
-                           ? "executable"
-                           : nullptr);
-            if (entrypoint_name == nullptr) {
+            const auto relative = discovery_path(manifest, "uci_engine");
+            if (!relative ||
+                !verified_manifest_file(active_root, manifest, *relative)) {
                 continue;
             }
-            const fs::path relative =
-                entrypoints.at(entrypoint_name).get<std::string>();
-            if (!safe_relative_path(relative)) {
-                continue;
-            }
-            const fs::path executable = active_root / relative;
+            const fs::path executable = active_root / *relative;
             json metadata{
-                {"component_id", receipt.value("component_id", "")},
+                {"component_id", component_id},
                 {"component_version",
                  receipt.value("component_version", "")},
-                {"recommended",
-                 receipt.value("component_id", "") ==
-                     "uci_arena.engine"},
+                {"recommended", component_id == "uci_arena.engine"},
             };
             if (manifest.contains("default_model") &&
                 manifest.at("default_model").is_object()) {
                 const json& model = manifest.at("default_model");
-                metadata["default_model"] = model;
-                if (model.contains("root") && model.at("root").is_string()) {
+                if (model.contains("model_id") &&
+                    model.at("model_id").is_string() &&
+                    model.contains("display_name") &&
+                    model.at("display_name").is_string() &&
+                    model.contains("input_adapter_id") &&
+                    model.at("input_adapter_id").is_string() &&
+                    model.contains("root") && model.at("root").is_string()) {
+                    metadata["default_model"] = {
+                        {"model_id", model.at("model_id")},
+                        {"display_name", model.at("display_name")},
+                        {"input_adapter_id", model.at("input_adapter_id")},
+                        {"root", model.at("root")},
+                    };
                     const fs::path relative_model_root =
                         model.at("root").get<std::string>();
                     if (safe_relative_path(relative_model_root)) {
@@ -262,8 +399,6 @@ void append_receipt_candidates(
                     }
                 }
             }
-            const std::string component_id =
-                receipt.value("component_id", "");
             add_candidate(
                 candidates, seen, "install_receipt", executable, active_root,
                 component_id == "uci_arena.engine"

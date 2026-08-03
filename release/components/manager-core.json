@@ -17,10 +17,6 @@
     }
   },
   "dependencies": [],
-  "exclude_by_target": {
-    "windows-x86_64": ["bin/arena-setup.exe"],
-    "linux-x86_64": ["bin/arena-setup"]
-  },
   "capabilities": ["control_plane", "broker", "desktop_host"],
   "startup": {
     "windows": "windows_service",
