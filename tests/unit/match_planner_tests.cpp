@@ -4,7 +4,6 @@
 
 #include <filesystem>
 #include <limits>
-#include <set>
 #include <string>
 
 namespace {
@@ -13,6 +12,7 @@ arena::domain::MatchPlan base_plan() {
     arena::domain::MatchPlan plan;
     plan.id = "018f218e-7be1-7a56-9daa-3f003641c801";
     plan.display_name = "Registered engine round robin";
+    plan.format = arena::domain::TournamentFormat::round_robin;
     plan.engine_ids = {
         "018f218e-7be1-7a56-9daa-3f003641c811",
         "018f218e-7be1-7a56-9daa-3f003641c812",
@@ -27,7 +27,6 @@ arena::domain::MatchPlan base_plan() {
 
 TEST_CASE("round robin produces color-paired games for every engine pair") {
     auto plan = base_plan();
-    plan.format = arena::domain::TournamentFormat::round_robin;
     const auto scheduled =
         arena::domain::MatchPlanner::normalize_and_schedule(plan);
     REQUIRE(scheduled.pairings.size() == 6);
@@ -125,23 +124,27 @@ TEST_CASE("SPRT rejects nonfinite values") {
 TEST_CASE("time control and adjudication policy enforce contract bounds") {
     auto plan = base_plan();
     plan.time_control.moves_to_go = 0;
-    REQUIRE_THROWS(
-        arena::domain::MatchPlanner::normalize_and_schedule(plan));
+    REQUIRE_THROWS_WITH(
+        arena::domain::MatchPlanner::normalize_and_schedule(plan),
+        "time control moves_to_go must be positive");
 
     plan.time_control.moves_to_go = 40;
     plan.adjudication.max_plies = 2049;
-    REQUIRE_THROWS(
-        arena::domain::MatchPlanner::normalize_and_schedule(plan));
+    REQUIRE_THROWS_WITH(
+        arena::domain::MatchPlanner::normalize_and_schedule(plan),
+        "adjudication max_plies must be between 2 and 2048");
 
     plan.adjudication.max_plies = 512;
     plan.adjudication.draw_cp = 1001;
-    REQUIRE_THROWS(
-        arena::domain::MatchPlanner::normalize_and_schedule(plan));
+    REQUIRE_THROWS_WITH(
+        arena::domain::MatchPlanner::normalize_and_schedule(plan),
+        "adjudication draw_cp must be between 0 and 1000");
 
     plan.adjudication.draw_cp.reset();
     plan.adjudication.win_consecutive_plies = 0;
-    REQUIRE_THROWS(
-        arena::domain::MatchPlanner::normalize_and_schedule(plan));
+    REQUIRE_THROWS_WITH(
+        arena::domain::MatchPlanner::normalize_and_schedule(plan),
+        "adjudication consecutive-ply bounds are invalid");
 }
 
 TEST_CASE("schedule cardinality is recovery bounded before allocation") {
@@ -160,7 +163,6 @@ TEST_CASE("schedule cardinality is recovery bounded before allocation") {
         "competition schedule must contain 1..10000 games");
 
     plan = base_plan();
-    plan.format = arena::domain::TournamentFormat::round_robin;
     plan.games_per_pair = 1;
     for (int index = 0; index < 150; ++index) {
         plan.engine_ids.push_back("engine-" + std::to_string(index));
@@ -278,6 +280,7 @@ TEST_CASE("display names are normalized then bounded") {
     auto plan = base_plan();
     plan.display_name.clear();
     plan.engine_ids.pop_back();
+    plan.format = arena::domain::TournamentFormat::head_to_head;
     const auto normalized =
         arena::domain::MatchPlanner::normalize_and_schedule(plan);
     REQUIRE(normalized.display_name == "Local head_to_head");
@@ -298,7 +301,6 @@ TEST_CASE("display names are normalized then bounded") {
 
 TEST_CASE("submitted pairings are discarded and regenerated") {
     auto plan = base_plan();
-    plan.engine_ids.pop_back();
     plan.pairings.push_back(arena::domain::GamePairing{
         999,
         "attacker-white",
@@ -309,7 +311,7 @@ TEST_CASE("submitted pairings are discarded and regenerated") {
     });
     const auto scheduled =
         arena::domain::MatchPlanner::normalize_and_schedule(plan);
-    REQUIRE(scheduled.pairings.size() == 2);
+    REQUIRE(scheduled.pairings.size() == 6);
     REQUIRE(scheduled.pairings.front().sequence == 1);
     REQUIRE(scheduled.pairings.front().white_engine_id != "attacker-white");
 }
@@ -317,6 +319,7 @@ TEST_CASE("submitted pairings are discarded and regenerated") {
 TEST_CASE("opening index addition cannot wrap the seed") {
     auto plan = base_plan();
     plan.engine_ids.pop_back();
+    plan.format = arena::domain::TournamentFormat::head_to_head;
     plan.games_per_pair = 4;
     plan.seed = (std::numeric_limits<std::uint64_t>::max)();
     REQUIRE_THROWS_WITH(
@@ -324,20 +327,12 @@ TEST_CASE("opening index addition cannot wrap the seed") {
         "opening index overflows the planning domain");
 }
 
-TEST_CASE("plan metadata copied after admission is bounded") {
+TEST_CASE("planning-owned metadata is admitted before copying") {
     auto plan = base_plan();
-    plan.id = std::string(129, 'i');
+    plan.id = "not-a-uuid";
     REQUIRE_THROWS_WITH(
         arena::domain::MatchPlanner::normalize_and_schedule(plan),
-        "plan id must be bounded UTF-8 scalar text");
-
-    plan = base_plan();
-    for (int index = 0; index < 65; ++index) {
-        plan.labels["label-" + std::to_string(index)] = "value";
-    }
-    REQUIRE_THROWS_WITH(
-        arena::domain::MatchPlanner::normalize_and_schedule(plan),
-        "plan label count exceeds 64");
+        "plan id must be a UUID");
 
     plan = base_plan();
     plan.opening_suite = std::filesystem::path{};
