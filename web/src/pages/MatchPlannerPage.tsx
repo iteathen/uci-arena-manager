@@ -20,6 +20,7 @@ import { useMemo, useState } from 'react'
 import { api, makeCommand } from '../api/client'
 import type { EngineData, MatchPlanData, Resource } from '../api/types'
 import { CompetitionList } from '../components/CompetitionList'
+import { PathPickerInput } from '../components/PathPickerInput'
 import {
   competitionPairingPreview,
   competitionPlanTarget,
@@ -307,12 +308,17 @@ export function MatchPlannerPage({ navigate }: { navigate: (page: string) => voi
                     <Accordion.Panel>
                       <Grid>
                         <Grid.Col span={12}>
-                          <TextInput
+                          <PathPickerInput
                             label="Opening suite JSON path"
                             description="Optional bounded arena_opening_suite_v1 file. Book Forge and service controls are linked above."
                             placeholder="C:\\path\\to\\opening-suite.json"
                             value={openingSuite}
-                            onChange={(event) => setOpeningSuite(event.currentTarget.value)}
+                            onChange={setOpeningSuite}
+                            mode="file"
+                            title="Select an opening suite"
+                            filters={[
+                              { name: 'UCI Arena opening suite', patterns: ['*.json'] },
+                            ]}
                           />
                         </Grid.Col>
                         <Grid.Col span={{ base: 6, sm: 3 }}><NumberInput label="Maximum plies" min={2} max={2048} value={maxPlies} onChange={setMaxPlies} /></Grid.Col>

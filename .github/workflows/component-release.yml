@@ -58,7 +58,7 @@ jobs:
         working-directory: web
       - uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57
         if: runner.os == 'Windows'
-      - name: Install pinned CMake packaging toolchain
+      - name: Install pinned CMake build toolchain
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -78,24 +78,24 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes acl autoconf autoconf-archive automake libtool ninja-build lintian rpm rpmlint libwebkit2gtk-4.1-dev
+          sudo apt-get install --yes acl autoconf autoconf-archive automake libtool ninja-build libwebkit2gtk-4.1-dev
       - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
         with:
           vcpkgGitCommitId: 9e593bb18ea69cc5095e012465dcd675a822ed0d
-      - name: Install pinned WiX toolset
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          dotnet tool install --global wix --version 6.0.2
-          wix extension add -g WixToolset.UI.wixext/6.0.2
-          wix extension add -g WixToolset.BootstrapperApplications.wixext/6.0.2
       - name: Build and verify exact Manager source
         shell: pwsh
         run: |
-          node tools/release/clean-build.mjs `
-            --manager-only `
-            --platform $env:RELEASE_TARGET `
-            --version $env:RELEASE_VERSION
+          node tools/spec-check.mjs
+          npm run naming:check
+          npm test --prefix web
+          npm run build --prefix web
+          $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-release' } else { 'linux-release' }
+          cmake --preset $preset "-DARENA_VERSION=$env:RELEASE_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw 'Manager configure failed' }
+          cmake --build --preset $preset --clean-first
+          if ($LASTEXITCODE -ne 0) { throw 'Manager build failed' }
+          ctest --preset $preset --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'Manager native tests failed' }
       - name: Build deterministic Manager component
         shell: pwsh
         run: |

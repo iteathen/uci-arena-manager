@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -23,6 +24,59 @@ const script = path.join(
   "release",
   "build-manager-component.mjs",
 );
+
+test("Manager source and component definition contain no Installer engine", () => {
+  const cmake = readFileSync(path.join(repositoryRoot, "CMakeLists.txt"), "utf8");
+  const definition = JSON.parse(readFileSync(
+    path.join(repositoryRoot, "release", "components", "manager-core.json"),
+    "utf8",
+  ));
+  assert.doesNotMatch(cmake, /add_executable\(arena-setup/u);
+  assert.doesNotMatch(cmake, /application\/installer\/setup\.cpp/u);
+  assert.match(cmake, /RUNTIME_DEPENDENCIES/u);
+  assert.match(cmake, /ARENA_MANAGER_RUNTIME_SEARCH_DIRECTORIES/u);
+  assert.doesNotMatch(cmake, /\bCPACK_/u);
+  assert.doesNotMatch(cmake, /include\(CPack\)/u);
+  assert.doesNotMatch(cmake, /ARENA_WINDOWS_PER_USER_INSTALL/u);
+  assert.doesNotMatch(cmake, /install-scope\.txt/u);
+  assert.doesNotMatch(cmake, /packaging\/linux\/uci-arena-manager\.service/u);
+  assert.doesNotMatch(cmake, /CMAKE_INSTALL_UCRT_LIBRARIES\s+TRUE/u);
+  assert.equal(existsSync(path.join(repositoryRoot, "packaging", "windows")), false);
+  assert.equal(definition.exclude_by_target, undefined);
+  assert.equal(existsSync(path.join(repositoryRoot, "apps", "setup", "main.cpp")), false);
+  assert.equal(
+    existsSync(path.join(repositoryRoot, "src", "application", "installer", "setup.cpp")),
+    false,
+  );
+  assert.equal(
+    existsSync(path.join(repositoryRoot, "specs", "installation_contract_v1.yaml")),
+    false,
+  );
+  for (const name of [
+    "install-catalog.schema.json",
+    "install-component.schema.json",
+    "install-plan.schema.json",
+    "install-receipt.schema.json",
+    "install-transaction.schema.json",
+    "saved-locator.schema.json",
+    "setup-discovery.schema.json",
+    "setup-import-result.schema.json",
+  ]) {
+    assert.equal(
+      existsSync(path.join(repositoryRoot, "specs", "schemas", name)),
+      false,
+      `Installer-owned schema must not be copied into Manager: ${name}`,
+    );
+  }
+  assert.equal(
+    existsSync(path.join(
+      repositoryRoot,
+      "specs",
+      "manager_component_release_v1.yaml",
+    )),
+    true,
+  );
+});
 
 test("Manager component workflow uses the manifest's exact vcpkg baseline", () => {
   const manifest = JSON.parse(readFileSync(
@@ -53,7 +107,6 @@ test("Manager component archives accept a source epoch and remain reproducible",
       "arena-service.exe",
       "arena.exe",
       "arena-broker.exe",
-      "arena-setup.exe",
       "uci-arena-manager.exe",
     ]) {
       writeFileSync(path.join(bin, name), `${name}\n`);

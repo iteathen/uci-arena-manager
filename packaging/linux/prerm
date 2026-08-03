@@ -1,6 +1,0 @@
-#!/bin/sh
-set -eu
-
-if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-  systemctl disable --now uci-arena-manager.service || true
-fi

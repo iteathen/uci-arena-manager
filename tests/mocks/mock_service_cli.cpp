@@ -35,8 +35,17 @@ int main(int argc, char** argv) {
     const bool evidence = cli.find("evidence") != std::string::npos;
     const std::string command = argv[2];
     const std::string operation = argv[3];
+    if (command == "pause" || command == "resume") {
+        std::cout << R"({"ok":true,"token":"must-not-project"})" << '\n';
+        return 0;
+    }
     if (command != "api") {
         return 3;
+    }
+    if (cli.find("oversized-output") != std::string::npos &&
+        operation == "describe") {
+        std::cout << std::string((1U << 20U) + 1U, 'x') << '\n';
+        return 0;
     }
     if (cli.find("bad-major") != std::string::npos &&
         operation == "describe") {

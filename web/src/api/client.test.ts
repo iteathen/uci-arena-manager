@@ -326,4 +326,49 @@ describe('native desktop typed setup', () => {
     })
     fetchMock.mockRestore()
   })
+
+  it('plans and commits a token-file locator only through typed Installer setup', async () => {
+    history.replaceState(
+      null,
+      '',
+      '/#pair=' +
+        'a'.repeat(64) +
+        '&picker_port=47832&picker_token=' +
+        'b'.repeat(64) +
+        '&setup=1',
+    )
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ csrf_token: 'csrf' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        schema: 'arena_ui_setup_plan_v1',
+        operation: 'import',
+        actions: [{ action: 'validate_and_import', asset_kind: 'lichess_token_path' }],
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        schema: 'arena_setup_import_result_v1',
+        state: 'imported',
+      }), { status: 200 }))
+
+    await exchangePairingToken()
+    const { applyLocalSetup, planLocalSetup } = await import('./client')
+    const request = {
+      operation: 'import' as const,
+      asset_kind: 'lichess_token_path' as const,
+      path: 'C:\\operator\\fixture-token.txt',
+    }
+    await planLocalSetup(request)
+    await applyLocalSetup(request)
+
+    expect(fetchMock.mock.calls.slice(1).map((call) => call[0])).toEqual([
+      'http://127.0.0.1:47832/v1/setup-plan',
+      'http://127.0.0.1:47832/v1/setup-apply',
+    ])
+    for (const call of fetchMock.mock.calls.slice(1)) {
+      expect(JSON.parse(String(call[1]?.body))).toEqual({
+        schema: 'arena_ui_setup_request_v1',
+        ...request,
+      })
+    }
+  })
 })

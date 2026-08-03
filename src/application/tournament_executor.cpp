@@ -1,6 +1,7 @@
 #include "arena/application/tournament_executor.hpp"
 
 #include "arena/adapters/uci_game_runner.hpp"
+#include "arena/adapters/uci_process.hpp"
 #include "arena/domain/uuid.hpp"
 
 #include <chess.hpp>
@@ -325,6 +326,40 @@ adapters::UciGameEngine game_engine(
         }
     }
     return engine;
+}
+
+void validate_competition_engines(
+    const std::shared_ptr<ports::Store>& store,
+    const json& competition) {
+    std::set<std::string> engine_ids;
+    for (const auto& engine_id : competition.at("engine_ids")) {
+        if (!engine_id.is_string()) {
+            throw std::runtime_error(
+                "competition contains a malformed engine identity");
+        }
+        engine_ids.insert(engine_id.get<std::string>());
+    }
+
+    for (const auto& engine_id : engine_ids) {
+        const adapters::UciGameEngine engine =
+            game_engine(store, competition, engine_id);
+        const adapters::UciProbeResult probe = adapters::UciProcess::probe(
+            engine.executable,
+            engine.working_directory,
+            engine.arguments,
+            std::chrono::seconds(15),
+            engine.options);
+        if (!probe.ok) {
+            throw std::runtime_error(
+                "engine preflight failed before game admission for " +
+                engine_id + ": " + probe.error);
+        }
+        if (probe.fingerprint != engine.fingerprint) {
+            throw std::runtime_error(
+                "registered engine identity changed before game admission for " +
+                engine_id);
+        }
+    }
 }
 
 std::optional<ports::ResourceRecord> existing_game(
@@ -1014,6 +1049,7 @@ void TournamentExecutor::run(
             competition["resolved_opening_positions"] = load_opening_suite(
                 competition.at("opening_suite").get<std::string>());
         }
+        validate_competition_engines(store_, competition);
         const std::size_t concurrency = std::clamp<std::size_t>(
             competition.value("concurrency", 1U), 1, 64);
         std::string failure;

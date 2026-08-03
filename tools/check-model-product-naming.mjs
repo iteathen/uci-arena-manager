@@ -22,7 +22,6 @@ const textExtensions = new Set([
 const modelName = /flashfork|latticeknight/i
 const requiredIdentities = new Map([
   ['src/application/engine_onboarding.cpp', ['"uci_arena_engine.exe"', '"uci_arena_engine"']],
-  ['src/application/installer/setup.cpp', ['"uci_arena_engine.exe"', '"uci_arena_engine"']],
   ['specs/product_contract_v1.yaml', ['product_engine_executable: uci_arena_engine']],
 ])
 

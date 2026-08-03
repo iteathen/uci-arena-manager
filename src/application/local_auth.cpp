@@ -8,8 +8,49 @@
 #include <fstream>
 #include <ranges>
 #include <stdexcept>
+#include <string_view>
 
 namespace arena::application {
+namespace {
+
+bool lowercase_hex_token(const std::string_view value) {
+    return value.size() == 64 &&
+           std::ranges::all_of(value, [](const unsigned char character) {
+               return std::isdigit(character) != 0 ||
+                      (character >= 'a' && character <= 'f');
+           });
+}
+
+bool numeric_loopback_audience(const std::string_view value) {
+    constexpr std::string_view prefix = "http://127.0.0.1:";
+    if (!value.starts_with(prefix)) {
+        return false;
+    }
+    const std::string_view port = value.substr(prefix.size());
+    if (port.empty() || port.size() > 5) {
+        return false;
+    }
+    unsigned number = 0;
+    for (const unsigned char character : port) {
+        if (std::isdigit(character) == 0) {
+            return false;
+        }
+        number = number * 10 + static_cast<unsigned>(character - '0');
+    }
+    return number != 0 && number <= 65'535;
+}
+
+std::string read_client_key(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    std::string key;
+    std::getline(input, key);
+    if (!lowercase_hex_token(key)) {
+        throw std::runtime_error("client authentication key is invalid");
+    }
+    return key;
+}
+
+}  // namespace
 
 LocalAuth::LocalAuth(std::filesystem::path state_directory)
     : state_directory_(std::move(state_directory)),
@@ -29,11 +70,7 @@ std::string LocalAuth::random_token() {
 void LocalAuth::initialize() {
     std::filesystem::create_directories(state_directory_);
     if (std::filesystem::is_regular_file(client_key_path_)) {
-        std::ifstream input(client_key_path_, std::ios::binary);
-        std::getline(input, client_key_);
-        if (client_key_.size() != 64) {
-            throw std::runtime_error("client authentication key is invalid");
-        }
+        client_key_ = read_client_key(client_key_path_);
         return;
     }
 
@@ -59,6 +96,46 @@ void LocalAuth::initialize() {
 
 const std::filesystem::path& LocalAuth::client_key_path() const { return client_key_path_; }
 
+std::string LocalAuth::compute_server_proof(
+    const std::string& client_key,
+    const std::string& challenge,
+    const std::string& audience) {
+    if (sodium_init() < 0) {
+        throw std::runtime_error("libsodium initialization failed");
+    }
+    if (!lowercase_hex_token(client_key) || !lowercase_hex_token(challenge) ||
+        !numeric_loopback_audience(audience)) {
+        throw std::invalid_argument(
+            "server proof requires lowercase hexadecimal key and challenge values and a numeric loopback audience");
+    }
+    std::array<unsigned char, crypto_auth_hmacsha256_KEYBYTES> key{};
+    std::size_t key_size = 0;
+    if (sodium_hex2bin(
+            key.data(), key.size(), client_key.data(), client_key.size(),
+            nullptr, &key_size, nullptr) != 0 || key_size != key.size()) {
+        throw std::invalid_argument("server proof hexadecimal input is invalid");
+    }
+    const std::string message =
+        "uci-arena-manager-server-proof-v1\n" + challenge + "\n" + audience;
+    std::array<unsigned char, crypto_auth_hmacsha256_BYTES> proof{};
+    crypto_auth_hmacsha256(
+        proof.data(),
+        reinterpret_cast<const unsigned char*>(message.data()),
+        message.size(),
+        key.data());
+    std::array<char, crypto_auth_hmacsha256_BYTES * 2 + 1> encoded{};
+    sodium_bin2hex(encoded.data(), encoded.size(), proof.data(), proof.size());
+    return encoded.data();
+}
+
+std::string LocalAuth::server_proof(
+    const std::string& challenge,
+    const std::string& audience) const {
+    std::scoped_lock lock(mutex_);
+    client_key_ = read_client_key(client_key_path_);
+    return compute_server_proof(client_key_, challenge, audience);
+}
+
 bool LocalAuth::authenticate_bearer(const std::string& authorization) const {
     constexpr std::string_view prefix = "Bearer ";
     if (!authorization.starts_with(prefix)) {
@@ -78,14 +155,10 @@ bool LocalAuth::authenticate_bearer(const std::string& authorization) const {
         return true;
     }
 
-    std::ifstream input(client_key_path_, std::ios::binary);
     std::string persisted;
-    std::getline(input, persisted);
-    if (persisted.size() != 64 ||
-        !std::ranges::all_of(persisted, [](const unsigned char character) {
-            return std::isdigit(character) != 0 ||
-                   (character >= 'a' && character <= 'f');
-        })) {
+    try {
+        persisted = read_client_key(client_key_path_);
+    } catch (const std::exception&) {
         return false;
     }
     client_key_ = std::move(persisted);

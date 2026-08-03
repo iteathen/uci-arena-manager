@@ -27,6 +27,14 @@ struct UciProbeResult {
 
 class UciProcess final {
   public:
+    static void validate_option_overrides(
+        const std::vector<domain::UciOption>& advertised_options,
+        const std::map<std::string, std::string>& option_overrides);
+
+    static void validate_option_overrides(
+        const std::vector<domain::UciOption>& advertised_options,
+        const std::map<std::string, std::string, std::less<>>& option_overrides);
+
     [[nodiscard]] static UciProbeResult probe(
         const std::filesystem::path& executable,
         const std::filesystem::path& working_directory,

@@ -1,6 +1,9 @@
 #include <curl/curl.h>
+#include <sodium.h>
 
 #include <CLI/CLI.hpp>
+#include <array>
+#include <charconv>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -8,10 +11,12 @@
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "arena/adapters/uci_process.hpp"
 #include "arena/application/broker_policy.hpp"
+#include "arena/application/local_auth.hpp"
 #include "arena/domain/uuid.hpp"
 #include "ui_picker.hpp"
 
@@ -73,11 +78,53 @@ std::filesystem::path current_executable_directory() {
 struct HttpResult {
     long status{};
     std::string body;
+    bool exceeded{};
 };
 
 std::size_t receive_body(char* data, std::size_t size, std::size_t count, void* target) {
-    static_cast<std::string*>(target)->append(data, size * count);
-    return size * count;
+    constexpr std::size_t maximum_response_bytes = 1024 * 1024;
+    auto& result = *static_cast<HttpResult*>(target);
+    if (count != 0 && size > maximum_response_bytes / count) {
+        result.exceeded = true;
+        return 0;
+    }
+    const std::size_t bytes = size * count;
+    if (result.body.size() > maximum_response_bytes - bytes) {
+        result.exceeded = true;
+        return 0;
+    }
+    result.body.append(data, bytes);
+    return bytes;
+}
+
+void validate_loopback_endpoint(const std::string& endpoint) {
+    constexpr std::string_view prefix = "http://127.0.0.1:";
+    if (!endpoint.starts_with(prefix)) {
+        throw std::invalid_argument(
+            "Manager endpoint must be an explicit numeric loopback HTTP origin");
+    }
+    const std::string_view port{
+        endpoint.data() + prefix.size(), endpoint.size() - prefix.size()};
+    unsigned number = 0;
+    const auto parsed =
+        std::from_chars(port.data(), port.data() + port.size(), number);
+    if (port.empty() || parsed.ec != std::errc{} ||
+        parsed.ptr != port.data() + port.size() || number == 0 ||
+        number > 65'535) {
+        throw std::invalid_argument(
+            "Manager endpoint must contain one valid numeric loopback port");
+    }
+}
+
+std::string fresh_challenge() {
+    if (sodium_init() < 0) {
+        throw std::runtime_error("libsodium initialization failed");
+    }
+    std::array<unsigned char, 32> bytes{};
+    randombytes_buf(bytes.data(), bytes.size());
+    std::array<char, 65> encoded{};
+    sodium_bin2hex(encoded.data(), encoded.size(), bytes.data(), bytes.size());
+    return encoded.data();
 }
 
 class HttpClient final {
@@ -87,11 +134,29 @@ class HttpClient final {
         while (!endpoint_.empty() && endpoint_.back() == '/') {
             endpoint_.pop_back();
         }
+        validate_loopback_endpoint(endpoint_);
         std::ifstream input(key_path, std::ios::binary);
         std::getline(input, key_);
-        if (key_.empty()) {
+        if (key_.size() != 64) {
             throw std::runtime_error(
                 "client key is unavailable; start arena-service or set --data-dir");
+        }
+        const std::string challenge = fresh_challenge();
+        const json identity = request(
+            "POST",
+            "/api/v1/auth/server-proof",
+            json{{"challenge", challenge}}.dump(),
+            false);
+        const std::string observed = identity.value("proof", "");
+        const std::string expected =
+            arena::application::LocalAuth::compute_server_proof(
+                key_, challenge, endpoint_);
+        if (identity.value("schema", "") != "arena_manager_server_proof_v1" ||
+            identity.value("audience", "") != endpoint_ ||
+            observed.size() != expected.size() ||
+            sodium_memcmp(observed.data(), expected.data(), expected.size()) != 0) {
+            throw std::runtime_error(
+                "the loopback endpoint did not prove Manager identity");
         }
     }
 
@@ -105,15 +170,19 @@ class HttpClient final {
 
   private:
     [[nodiscard]] json request(const std::string& method, const std::string& path,
-                               const std::optional<std::string>& body) const {
+                               const std::optional<std::string>& body,
+                               const bool authenticated = true) const {
         CURL* handle = curl_easy_init();
         if (handle == nullptr) {
             throw std::runtime_error("cannot initialize HTTP client");
         }
         HttpResult result;
         curl_slist* headers = nullptr;
-        const std::string authorization = "Authorization: Bearer " + key_;
-        headers = curl_slist_append(headers, authorization.c_str());
+        std::string authorization;
+        if (authenticated) {
+            authorization = "Authorization: Bearer " + key_;
+            headers = curl_slist_append(headers, authorization.c_str());
+        }
         headers = curl_slist_append(headers, "Accept: application/json");
         if (body) {
             headers = curl_slist_append(headers, "Content-Type: application/json");
@@ -122,7 +191,8 @@ class HttpClient final {
         curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
         curl_easy_setopt(handle, CURLOPT_HTTPHEADER, headers);
         curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, receive_body);
-        curl_easy_setopt(handle, CURLOPT_WRITEDATA, &result.body);
+        curl_easy_setopt(handle, CURLOPT_WRITEDATA, &result);
+        curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
         curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 2000L);
         curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 30000L);
         curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
@@ -135,6 +205,10 @@ class HttpClient final {
         curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &result.status);
         curl_slist_free_all(headers);
         curl_easy_cleanup(handle);
+        if (result.exceeded) {
+            throw std::runtime_error(
+                "service response exceeded the one MiB client boundary");
+        }
         if (performed != CURLE_OK) {
             throw std::runtime_error(std::string("service request failed: ") +
                                      curl_easy_strerror(performed));
