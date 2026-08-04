@@ -210,6 +210,24 @@ TEST_CASE("UCI overrides resolve case-insensitively and retain advertised spelli
     REQUIRE(canonical == expected);
 }
 
+TEST_CASE("advertised UCI option records obey the cumulative metadata bound") {
+    std::vector<UciOption> advertised;
+    advertised.reserve(uci_option_maximum_count);
+    for (std::size_t index = 0; index < uci_option_maximum_count; ++index) {
+        advertised.push_back(UciOption{
+            "Text" + std::to_string(index),
+            "string",
+            std::string(uci_option_maximum_value_bytes, 'x'),
+            std::nullopt,
+            std::nullopt,
+            {},
+        });
+    }
+    REQUIRE_THROWS_WITH(
+        UciOptionContract::canonicalize_overrides(advertised, {}),
+        "advertised UCI option metadata exceeds its cumulative byte bound");
+}
+
 TEST_CASE("UCI overrides reject type violations and folded duplicates") {
     const std::vector<UciOption> advertised{
         UciOption{"Clear Hash", "button", "", std::nullopt, std::nullopt, {}},
