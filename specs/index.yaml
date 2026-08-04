@@ -48,6 +48,14 @@ specs:
       - src/adapters
       - include/arena/adapters
       - runtime
+  - spec_id: arena_uci_option_contract_v1
+    path: specs/uci_option_contract_v1.yaml
+    owner: manager_uci_metadata_contract
+    applies_to:
+      - include/arena/adapters/uci_option_contract.hpp
+      - src/adapters/uci_option_contract.cpp
+      - tests/unit/uci_option_contract_tests.cpp
+      - specs/uci_option_contract_v1.yaml
   - spec_id: arena_platform_lifecycle_v1
     path: specs/platform_lifecycle_v1.yaml
     owner: platform
