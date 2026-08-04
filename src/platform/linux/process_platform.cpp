@@ -55,6 +55,13 @@ bool invalid_input_line(const std::string_view line) {
            line.find('\n') != std::string_view::npos;
 }
 
+void reap_child(const pid_t child) noexcept {
+    static_cast<void>(kill(-child, SIGKILL));
+    static_cast<void>(kill(child, SIGKILL));
+    while (waitpid(child, nullptr, 0) < 0 && errno == EINTR) {
+    }
+}
+
 }  // namespace
 
 struct NativeProcess::Impl {
@@ -288,7 +295,20 @@ void NativeProcess::start(
         impl_->output_error.clear();
         impl_->reader_finished = false;
     }
-    impl_->reader = std::thread([this] { impl_->read_output(); });
+    try {
+        impl_->reader = std::thread([this] { impl_->read_output(); });
+    } catch (...) {
+        reap_child(child);
+        impl_->close_descriptors();
+        impl_->process_id = -1;
+        {
+            std::scoped_lock lock(impl_->mutex);
+            impl_->reader_finished = true;
+            impl_->lines.clear();
+            impl_->queued_bytes = 0;
+        }
+        throw;
+    }
 }
 
 void NativeProcess::write_line(const std::string& line) {
@@ -374,9 +394,7 @@ void NativeProcess::stop(std::chrono::milliseconds graceful_timeout) {
             poll(nullptr, 0, 10);
         }
         if (running()) {
-            kill(-impl_->process_id, SIGKILL);
-            while (waitpid(impl_->process_id, nullptr, 0) < 0 && errno == EINTR) {
-            }
+            reap_child(impl_->process_id);
         }
     }
     if (impl_->stdin_fd >= 0) {
