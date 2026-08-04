@@ -161,10 +161,15 @@ struct NativeProcess::Impl {
 
         for (;;) {
             const ssize_t count = read(stdout_fd, buffer, sizeof(buffer));
-            if (count < 0 && errno == EINTR) {
-                continue;
+            if (count < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                std::scoped_lock lock(mutex);
+                fail_output_locked("failed to read process output");
+                break;
             }
-            if (count <= 0) {
+            if (count == 0) {
                 break;
             }
 
