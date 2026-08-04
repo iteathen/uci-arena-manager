@@ -37,6 +37,17 @@ TEST_CASE("UCI probe rejects repeated option fields through the production contr
     REQUIRE(result.error == "UCI spin min field is repeated");
 }
 
+TEST_CASE("UCI probe bounds metadata before accumulating the complete response") {
+    const std::filesystem::path executable = ARENA_MOCK_UCI_PATH;
+    const auto result = UciProcess::probe(
+        executable,
+        executable.parent_path(),
+        {"--too-many-metadata-lines"},
+        std::chrono::seconds(5));
+    REQUIRE_FALSE(result.ok);
+    REQUIRE(result.error == "UCI metadata exceeds its line-count bound");
+}
+
 TEST_CASE("UCI probe sends overrides using advertised canonical option spelling") {
     const std::filesystem::path executable = ARENA_MOCK_UCI_PATH;
     const auto result = UciProcess::probe(
