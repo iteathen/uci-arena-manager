@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -9,6 +10,14 @@
 #include <vector>
 
 namespace arena::ports {
+
+struct NativeProcessIoLimits final {
+    std::size_t maximum_input_line_bytes{1024 * 1024};
+    std::size_t maximum_output_line_bytes{1024 * 1024};
+    std::size_t maximum_queued_lines{8192};
+    std::size_t maximum_queued_bytes{8 * 1024 * 1024};
+    std::string droppable_output_prefix{"info "};
+};
 
 class NativeProcess final {
   public:
@@ -21,7 +30,8 @@ class NativeProcess final {
     void start(
         const std::filesystem::path& executable,
         const std::filesystem::path& working_directory,
-        const std::vector<std::string>& arguments);
+        const std::vector<std::string>& arguments,
+        const NativeProcessIoLimits& limits = {});
     void write_line(const std::string& line);
     [[nodiscard]] std::optional<std::string> read_line(std::chrono::milliseconds timeout);
     [[nodiscard]] bool running() const;
