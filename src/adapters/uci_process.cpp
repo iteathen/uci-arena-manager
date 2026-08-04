@@ -1,20 +1,21 @@
 #include "arena/adapters/uci_process.hpp"
 
+#include "arena/adapters/uci_option_contract.hpp"
 #include "arena/ports/native_process.hpp"
 
 #include <sodium.h>
 
-#include <array>
 #include <algorithm>
+#include <array>
 #include <cctype>
-#include <charconv>
 #include <chrono>
 #include <fstream>
-#include <iomanip>
 #include <set>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
+#include <vector>
 
 namespace arena::adapters {
 namespace {
@@ -54,67 +55,6 @@ std::vector<std::string> split(const std::string& value) {
         result.push_back(std::move(token));
     }
     return result;
-}
-
-std::int64_t parse_integer(const std::string& value, const std::string& field) {
-    std::int64_t result = 0;
-    const auto parsed =
-        std::from_chars(value.data(), value.data() + value.size(), result);
-    if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size()) {
-        throw std::runtime_error("UCI option has an invalid " + field + " value");
-    }
-    return result;
-}
-
-domain::UciOption parse_option(const std::string& line) {
-    const auto tokens = split(line);
-    domain::UciOption option;
-    if (tokens.size() < 5 || tokens[0] != "option" || tokens[1] != "name") {
-        return option;
-    }
-    std::size_t cursor = 2;
-    while (cursor < tokens.size() && tokens[cursor] != "type") {
-        if (!option.name.empty()) {
-            option.name += ' ';
-        }
-        option.name += tokens[cursor++];
-    }
-    if (cursor + 1 >= tokens.size()) {
-        option.name.clear();
-        return option;
-    }
-    option.type = tokens[++cursor];
-    ++cursor;
-    while (cursor < tokens.size()) {
-        const std::string field = tokens[cursor++];
-        if (field == "default") {
-            while (cursor < tokens.size() && tokens[cursor] != "min" &&
-                   tokens[cursor] != "max" && tokens[cursor] != "var") {
-                if (!option.default_value.empty()) {
-                    option.default_value += ' ';
-                }
-                option.default_value += tokens[cursor++];
-            }
-        } else if (field == "min" && cursor < tokens.size()) {
-            option.minimum = parse_integer(tokens[cursor++], "min");
-        } else if (field == "max" && cursor < tokens.size()) {
-            option.maximum = parse_integer(tokens[cursor++], "max");
-        } else if (field == "var") {
-            std::string variant;
-            while (cursor < tokens.size() && tokens[cursor] != "var") {
-                if (!variant.empty()) {
-                    variant += ' ';
-                }
-                variant += tokens[cursor++];
-            }
-            option.variants.push_back(std::move(variant));
-        }
-    }
-    return option;
-}
-
-std::string value_after(const std::string& line, const std::string_view prefix) {
-    return line.starts_with(prefix) ? line.substr(prefix.size()) : std::string{};
 }
 
 bool safe_token(const std::string_view value, const std::size_t maximum) {
@@ -180,12 +120,17 @@ void capture_runtime_model_identity(
     result.runtime_provider_fingerprint = provider_fingerprint;
 }
 
+bool metadata_line(const std::string_view line) {
+    return line == "id" || line.starts_with("id ") ||
+           line == "option" || line.starts_with("option ");
+}
+
 std::string await_token(
     ports::NativeProcess& process,
     const std::string_view token,
     const Clock::time_point deadline,
     UciProbeResult& result,
-    const bool capture_metadata) {
+    std::vector<std::string>* metadata_lines = nullptr) {
     while (Clock::now() < deadline) {
         const auto remaining =
             std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now());
@@ -196,17 +141,8 @@ std::string await_token(
             }
             continue;
         }
-        if (capture_metadata) {
-            if (line->starts_with("id name ")) {
-                result.engine_name = value_after(*line, "id name ");
-            } else if (line->starts_with("id author ")) {
-                result.engine_author = value_after(*line, "id author ");
-            } else if (line->starts_with("option ")) {
-                auto option = parse_option(*line);
-                if (!option.name.empty() && !option.type.empty()) {
-                    result.options.push_back(std::move(option));
-                }
-            }
+        if (metadata_lines != nullptr && metadata_line(*line)) {
+            metadata_lines->push_back(*line);
         }
         capture_runtime_model_identity(*line, result);
         if (*line == token || line->starts_with(std::string(token) + " ")) {
@@ -214,6 +150,16 @@ std::string await_token(
         }
     }
     throw std::runtime_error("engine timed out waiting for " + std::string(token));
+}
+
+UciMetadata parse_metadata(const std::vector<std::string>& lines) {
+    std::vector<std::string_view> views;
+    views.reserve(lines.size());
+    for (const std::string& line : lines) {
+        views.push_back(line);
+    }
+    return UciOptionContract::parse(
+        std::span<const std::string_view>(views.data(), views.size()));
 }
 
 bool legal_starting_bestmove(const std::string& move) {
@@ -230,42 +176,10 @@ bool legal_starting_bestmove(const std::string& move) {
 void UciProcess::validate_option_overrides(
     const std::vector<domain::UciOption>& advertised_options,
     const std::map<std::string, std::string>& option_overrides) {
-    std::map<std::string, const domain::UciOption*, std::less<>> by_name;
-    for (const auto& option : advertised_options) {
-        if (option.name.empty() || !by_name.emplace(option.name, &option).second) {
-            throw std::runtime_error(
-                "engine advertised an empty or duplicate UCI option name");
-        }
-    }
-    for (const auto& [name, value] : option_overrides) {
-        const auto found = by_name.find(name);
-        if (found == by_name.end()) {
-            throw std::runtime_error(
-                "requested UCI option is not advertised: " + name);
-        }
-        const domain::UciOption& option = *found->second;
-        if (option.type == "button") {
-            throw std::runtime_error(
-                "UCI button options cannot be persisted as values: " + name);
-        }
-        if (option.type == "check" && value != "true" && value != "false") {
-            throw std::runtime_error(
-                "UCI check option requires true or false: " + name);
-        }
-        if (option.type == "spin") {
-            const std::int64_t number = parse_integer(value, "spin");
-            if ((option.minimum && number < *option.minimum) ||
-                (option.maximum && number > *option.maximum)) {
-                throw std::runtime_error(
-                    "UCI spin option is outside its advertised bounds: " + name);
-            }
-        }
-        if (option.type == "combo" && !option.variants.empty() &&
-            std::ranges::find(option.variants, value) == option.variants.end()) {
-            throw std::runtime_error(
-                "UCI combo option is not an advertised variant: " + name);
-        }
-    }
+    static_cast<void>(UciOptionContract::canonicalize_overrides(
+        std::span<const domain::UciOption>(
+            advertised_options.data(), advertised_options.size()),
+        option_overrides));
 }
 
 UciProbeResult UciProcess::probe(
@@ -282,19 +196,29 @@ UciProbeResult UciProcess::probe(
         process.start(executable, working_directory, arguments);
         const auto deadline = Clock::now() + timeout;
 
+        std::vector<std::string> metadata_lines;
         process.write_line("uci");
-        await_token(process, "uciok", deadline, result, true);
-        validate_option_overrides(result.options, option_overrides);
-        for (const auto& [name, value] : option_overrides) {
+        await_token(process, "uciok", deadline, result, &metadata_lines);
+        UciMetadata metadata = parse_metadata(metadata_lines);
+        result.engine_name = std::move(metadata.engine_name);
+        result.engine_author = std::move(metadata.engine_author);
+        result.options = std::move(metadata.options);
+
+        const CanonicalUciOptions canonical_options =
+            UciOptionContract::canonicalize_overrides(
+                std::span<const domain::UciOption>(
+                    result.options.data(), result.options.size()),
+                option_overrides);
+        for (const auto& [name, value] : canonical_options) {
             process.write_line("setoption name " + name + " value " + value);
         }
         process.write_line("isready");
-        await_token(process, "readyok", deadline, result, false);
+        await_token(process, "readyok", deadline, result);
         process.write_line("ucinewgame");
         process.write_line("position startpos");
         process.write_line("go depth 1");
         const std::string bestmove_line =
-            await_token(process, "bestmove", deadline, result, false);
+            await_token(process, "bestmove", deadline, result);
         const auto parts = split(bestmove_line);
         if (parts.size() < 2 || !legal_starting_bestmove(parts[1])) {
             throw std::runtime_error("engine returned an illegal starting-position bestmove");
