@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <condition_variable>
 #include <cstring>
 #include <deque>
@@ -17,12 +18,46 @@
 #include <thread>
 
 namespace arena::ports {
+namespace {
+
+constexpr std::size_t hard_maximum_line_bytes = 16 * 1024 * 1024;
+constexpr std::size_t hard_maximum_queued_bytes = 64 * 1024 * 1024;
+constexpr std::size_t hard_maximum_queued_lines = 65'536;
+constexpr std::size_t hard_maximum_prefix_bytes = 64;
+
+void validate_limits(const NativeProcessIoLimits& limits) {
+    if (limits.maximum_input_line_bytes == 0 ||
+        limits.maximum_input_line_bytes > hard_maximum_line_bytes) {
+        throw std::runtime_error("native process input line bound is invalid");
+    }
+    if (limits.maximum_output_line_bytes == 0 ||
+        limits.maximum_output_line_bytes > hard_maximum_line_bytes) {
+        throw std::runtime_error("native process output line bound is invalid");
+    }
+    if (limits.maximum_queued_lines == 0 ||
+        limits.maximum_queued_lines > hard_maximum_queued_lines) {
+        throw std::runtime_error("native process queued line bound is invalid");
+    }
+    if (limits.maximum_queued_bytes < limits.maximum_output_line_bytes ||
+        limits.maximum_queued_bytes > hard_maximum_queued_bytes) {
+        throw std::runtime_error("native process queued byte bound is invalid");
+    }
+    if (limits.droppable_output_prefix.size() > hard_maximum_prefix_bytes ||
+        limits.droppable_output_prefix.size() > limits.maximum_output_line_bytes ||
+        limits.droppable_output_prefix.find_first_of("\0\r\n") != std::string::npos) {
+        throw std::runtime_error("native process droppable prefix is invalid");
+    }
+}
+
+bool invalid_input_line(const std::string_view line) {
+    return line.find('\0') != std::string_view::npos ||
+           line.find('\r') != std::string_view::npos ||
+           line.find('\n') != std::string_view::npos;
+}
+
+}  // namespace
 
 struct NativeProcess::Impl {
-    static constexpr std::size_t max_lines = 8192;
-    static constexpr std::size_t max_line_bytes = 1024 * 1024;
-    static constexpr std::size_t max_queued_bytes = 8 * 1024 * 1024;
-
     pid_t process_id{-1};
     int stdin_fd{-1};
     int stdout_fd{-1};
@@ -33,6 +68,13 @@ struct NativeProcess::Impl {
     std::size_t queued_bytes{};
     std::uint64_t dropped{};
     bool reader_finished{true};
+    NativeProcessIoLimits limits{};
+    std::string output_error;
+
+    [[nodiscard]] bool droppable(const std::string_view line) const noexcept {
+        return !limits.droppable_output_prefix.empty() &&
+               line.starts_with(limits.droppable_output_prefix);
+    }
 
     void close_descriptors() {
         if (stdin_fd >= 0) {
@@ -45,50 +87,80 @@ struct NativeProcess::Impl {
         }
     }
 
-    void enqueue(std::string line) {
+    void fail_output_locked(const std::string_view reason) {
+        if (output_error.empty()) {
+            output_error.assign(reason);
+        }
+        condition.notify_all();
+    }
+
+    void record_oversized_line(const std::string_view prefix) {
         std::scoped_lock lock(mutex);
+        if (droppable(prefix)) {
+            ++dropped;
+        } else {
+            fail_output_locked("process control output line exceeds byte bound");
+        }
+    }
+
+    void enqueue(std::string line) {
         if (!line.empty() && line.back() == '\r') {
             line.pop_back();
         }
-        if (line.size() > max_line_bytes) {
-            ++dropped;
+
+        std::scoped_lock lock(mutex);
+        if (!output_error.empty()) {
             return;
         }
-        while (lines.size() >= max_lines ||
-               queued_bytes + line.size() > max_queued_bytes) {
-            if (line.starts_with("info ")) {
+        if (line.size() > limits.maximum_output_line_bytes) {
+            if (droppable(line)) {
                 ++dropped;
-                return;
+            } else {
+                fail_output_locked("process control output line exceeds byte bound");
             }
+            return;
+        }
+
+        while (lines.size() >= limits.maximum_queued_lines ||
+               queued_bytes + line.size() > limits.maximum_queued_bytes) {
             const auto observational = std::find_if(
-                lines.begin(), lines.end(), [](const std::string& queued) {
-                    return queued.starts_with("info ");
+                lines.begin(), lines.end(), [this](const std::string& queued) {
+                    return droppable(queued);
                 });
             if (observational != lines.end()) {
                 queued_bytes -= observational->size();
                 lines.erase(observational);
-            } else {
-                queued_bytes -= lines.front().size();
-                lines.pop_front();
+                ++dropped;
+                continue;
             }
-            ++dropped;
+            if (droppable(line)) {
+                ++dropped;
+                return;
+            }
+            fail_output_locked("process control output queue exceeds bound");
+            return;
         }
+
         queued_bytes += line.size();
         lines.push_back(std::move(line));
         condition.notify_one();
     }
 
-    void record_dropped_line() {
-        std::scoped_lock lock(mutex);
-        ++dropped;
-    }
-
     void read_output() {
         std::string pending;
         bool discard_until_newline = false;
+        const std::size_t wire_line_limit = limits.maximum_output_line_bytes + 1;
         char buffer[4096];
-        ssize_t count = 0;
-        while ((count = read(stdout_fd, buffer, sizeof(buffer))) > 0) {
+
+        for (;;) {
+            const ssize_t count = read(stdout_fd, buffer, sizeof(buffer));
+            if (count < 0 && errno == EINTR) {
+                continue;
+            }
+            if (count <= 0) {
+                break;
+            }
+
             const std::size_t read_size = static_cast<std::size_t>(count);
             std::size_t offset = 0;
             while (offset < read_size) {
@@ -96,15 +168,21 @@ struct NativeProcess::Impl {
                 const std::size_t newline = chunk.find('\n');
                 const std::size_t segment_size =
                     newline == std::string_view::npos ? chunk.size() : newline;
+
                 if (!discard_until_newline) {
-                    if (pending.size() + segment_size <= max_line_bytes) {
-                        pending.append(chunk.data(), segment_size);
-                    } else {
+                    const std::size_t available =
+                        wire_line_limit > pending.size()
+                            ? wire_line_limit - pending.size()
+                            : 0;
+                    const std::size_t accepted = std::min(available, segment_size);
+                    pending.append(chunk.data(), accepted);
+                    if (accepted != segment_size) {
+                        record_oversized_line(pending);
                         pending.clear();
                         discard_until_newline = true;
-                        record_dropped_line();
                     }
                 }
+
                 offset += segment_size;
                 if (newline == std::string_view::npos) {
                     break;
@@ -117,6 +195,7 @@ struct NativeProcess::Impl {
                 ++offset;
             }
         }
+
         if (!discard_until_newline && !pending.empty()) {
             enqueue(std::move(pending));
         }
@@ -140,14 +219,23 @@ NativeProcess::~NativeProcess() {
 void NativeProcess::start(
     const std::filesystem::path& executable,
     const std::filesystem::path& working_directory,
-    const std::vector<std::string>& arguments) {
+    const std::vector<std::string>& arguments,
+    const NativeProcessIoLimits& limits) {
     if (running()) {
         throw std::runtime_error("process is already running");
     }
+    validate_limits(limits);
+
     int stdin_pipe[2]{};
     int stdout_pipe[2]{};
-    if (pipe2(stdin_pipe, O_CLOEXEC) != 0 || pipe2(stdout_pipe, O_CLOEXEC) != 0) {
-        throw std::runtime_error(std::string("failed to create process pipes: ") +
+    if (pipe2(stdin_pipe, O_CLOEXEC) != 0) {
+        throw std::runtime_error(std::string("failed to create process input pipe: ") +
+                                 std::strerror(errno));
+    }
+    if (pipe2(stdout_pipe, O_CLOEXEC) != 0) {
+        close(stdin_pipe[0]);
+        close(stdin_pipe[1]);
+        throw std::runtime_error(std::string("failed to create process output pipe: ") +
                                  std::strerror(errno));
     }
 
@@ -193,9 +281,11 @@ void NativeProcess::start(
     impl_->stdout_fd = stdout_pipe[0];
     {
         std::scoped_lock lock(impl_->mutex);
+        impl_->limits = limits;
         impl_->lines.clear();
         impl_->queued_bytes = 0;
         impl_->dropped = 0;
+        impl_->output_error.clear();
         impl_->reader_finished = false;
     }
     impl_->reader = std::thread([this] { impl_->read_output(); });
@@ -205,11 +295,21 @@ void NativeProcess::write_line(const std::string& line) {
     if (!running()) {
         throw std::runtime_error("cannot write to a stopped process");
     }
+    if (line.size() > impl_->limits.maximum_input_line_bytes) {
+        throw std::runtime_error("process input line exceeds byte bound");
+    }
+    if (invalid_input_line(line)) {
+        throw std::runtime_error("process input line contains a framing character");
+    }
+
     const std::string framed = line + "\n";
     std::size_t offset = 0;
     while (offset < framed.size()) {
         const ssize_t written = write(
             impl_->stdin_fd, framed.data() + offset, framed.size() - offset);
+        if (written < 0 && errno == EINTR) {
+            continue;
+        }
         if (written <= 0) {
             throw std::runtime_error("failed to write to process");
         }
@@ -218,10 +318,18 @@ void NativeProcess::write_line(const std::string& line) {
 }
 
 std::optional<std::string> NativeProcess::read_line(std::chrono::milliseconds timeout) {
+    if (timeout.count() < 0) {
+        throw std::runtime_error("process read timeout is invalid");
+    }
     std::unique_lock lock(impl_->mutex);
     impl_->condition.wait_for(lock, timeout, [this] {
-        return !impl_->lines.empty() || impl_->reader_finished;
+        return !impl_->output_error.empty() ||
+               !impl_->lines.empty() ||
+               impl_->reader_finished;
     });
+    if (!impl_->output_error.empty()) {
+        throw std::runtime_error(impl_->output_error);
+    }
     if (impl_->lines.empty()) {
         return std::nullopt;
     }
@@ -253,6 +361,9 @@ void NativeProcess::stop(std::chrono::milliseconds graceful_timeout) {
     if (impl_->process_id <= 0) {
         return;
     }
+    if (graceful_timeout.count() < 0) {
+        throw std::runtime_error("process stop timeout is invalid");
+    }
     if (running()) {
         try {
             write_line("quit");
@@ -264,7 +375,8 @@ void NativeProcess::stop(std::chrono::milliseconds graceful_timeout) {
         }
         if (running()) {
             kill(-impl_->process_id, SIGKILL);
-            waitpid(impl_->process_id, nullptr, 0);
+            while (waitpid(impl_->process_id, nullptr, 0) < 0 && errno == EINTR) {
+            }
         }
     }
     if (impl_->stdin_fd >= 0) {
