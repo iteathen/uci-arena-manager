@@ -104,6 +104,29 @@ void close_handle(HANDLE& handle) {
     }
 }
 
+void reset_failed_start(
+    HANDLE& job,
+    HANDLE& process,
+    HANDLE& thread,
+    HANDLE& stdin_write,
+    HANDLE& stdout_read,
+    std::uint64_t& process_id) noexcept {
+    if (job != nullptr) {
+        static_cast<void>(TerminateJobObject(job, 1));
+    } else if (process != nullptr) {
+        static_cast<void>(TerminateProcess(process, 1));
+    }
+    if (process != nullptr) {
+        static_cast<void>(WaitForSingleObject(process, 2'000));
+    }
+    close_handle(stdin_write);
+    close_handle(stdout_read);
+    close_handle(thread);
+    close_handle(process);
+    close_handle(job);
+    process_id = 0;
+}
+
 }  // namespace
 
 struct NativeProcess::Impl {
@@ -382,10 +405,39 @@ void NativeProcess::start(
         impl_->reader_finished = false;
     }
     if (ResumeThread(impl_->thread) == static_cast<DWORD>(-1)) {
-        TerminateJobObject(impl_->job, 1);
+        reset_failed_start(
+            impl_->job,
+            impl_->process,
+            impl_->thread,
+            impl_->stdin_write,
+            impl_->stdout_read,
+            impl_->process_id);
+        {
+            std::scoped_lock lock(impl_->mutex);
+            impl_->reader_finished = true;
+            impl_->lines.clear();
+            impl_->queued_bytes = 0;
+        }
         throw std::runtime_error("failed to resume process thread");
     }
-    impl_->reader = std::thread([this] { impl_->read_output(); });
+    try {
+        impl_->reader = std::thread([this] { impl_->read_output(); });
+    } catch (...) {
+        reset_failed_start(
+            impl_->job,
+            impl_->process,
+            impl_->thread,
+            impl_->stdin_write,
+            impl_->stdout_read,
+            impl_->process_id);
+        {
+            std::scoped_lock lock(impl_->mutex);
+            impl_->reader_finished = true;
+            impl_->lines.clear();
+            impl_->queued_bytes = 0;
+        }
+        throw;
+    }
 }
 
 void NativeProcess::write_line(const std::string& line) {
