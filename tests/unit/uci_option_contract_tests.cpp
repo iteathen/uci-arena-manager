@@ -6,9 +6,11 @@
 #include <cstdint>
 #include <limits>
 #include <map>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -88,9 +90,7 @@ TEST_CASE("UCI identity requires one name and rejects every duplicate") {
     constexpr std::array empty_name{
         std::string_view{"id name "},
     };
-    REQUIRE_THROWS(empty_name.size() == 1
-        ? UciOptionContract::parse(empty_name)
-        : UciOptionContract::parse(empty_name));
+    REQUIRE_THROWS(UciOptionContract::parse(empty_name));
 }
 
 TEST_CASE("UCI metadata rejects malformed UTF-8 and forbidden scalar classes") {
@@ -201,12 +201,13 @@ TEST_CASE("UCI overrides resolve case-insensitively and retain advertised spelli
     };
     const CanonicalUciOptions canonical =
         UciOptionContract::canonicalize_overrides(advertised, requested);
-    REQUIRE(canonical == CanonicalUciOptions{
+    const CanonicalUciOptions expected{
         {"Hash", "128"},
         {"Notes", ""},
         {"Ponder", "true"},
         {"Style", "Fast"},
-    });
+    };
+    REQUIRE(canonical == expected);
 }
 
 TEST_CASE("UCI overrides reject type violations and folded duplicates") {
