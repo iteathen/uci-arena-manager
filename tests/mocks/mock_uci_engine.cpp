@@ -16,6 +16,7 @@ int main(int argc, char** argv) {
     bool duplicate_id_name = false;
     bool malformed_option = false;
     bool require_style_risky = false;
+    bool too_many_metadata_lines = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
         if (argument == "--delay-ms" && index + 1 < argc) {
@@ -38,6 +39,8 @@ int main(int argc, char** argv) {
             malformed_option = true;
         } else if (argument == "--require-style-risky") {
             require_style_risky = true;
+        } else if (argument == "--too-many-metadata-lines") {
+            too_many_metadata_lines = true;
         }
     }
     std::string position;
@@ -57,6 +60,11 @@ int main(int argc, char** argv) {
                       << "option name Style type combo default Normal var Solid var Normal var Risky\n";
             if (malformed_option) {
                 std::cout << "option name Broken type spin default 1 min 0 min 0 max 2\n";
+            }
+            if (too_many_metadata_lines) {
+                for (std::size_t index = 0; index < 1'025; ++index) {
+                    std::cout << "id extra " << index << "\n";
+                }
             }
             if (!required_model_root.empty()) {
                 std::cout << "option name ModelRoot type string default missing\n";
