@@ -252,6 +252,8 @@ if(ARENA_BUILD_TESTS)
     tests/unit/match_planner_tests.cpp
     tests/unit/security_report_tests.cpp
     tests/unit/uci_option_contract_tests.cpp
+    tests/unit/uci_wire_contract_tests.cpp
+    tests/integration/native_process_framing_tests.cpp
     tests/integration/service_output_integration_tests.cpp
     tests/integration/sqlite_store_tests.cpp
     tests/integration/tournament_execution_tests.cpp
