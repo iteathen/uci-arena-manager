@@ -1,0 +1,93 @@
+meta:
+  spec_id: arena_uci_process_framing_v1
+  version: 1
+  status: active
+  owner: manager_native_process_and_uci_wire_boundary
+  purpose: >-
+    Preserve every bounded UCI control line exactly across Windows and Linux process
+    pipes while permitting explicitly classified observational info traffic to be
+    dropped under bounded pressure.
+
+authority:
+  process_port: include/arena/ports/native_process.hpp
+  linux_adapter: src/platform/linux/process_platform.cpp
+  windows_adapter: src/platform/windows/process_platform.cpp
+  uci_consumer: src/adapters/uci_process.cpp
+  wire_text_owner: include/arena/adapters/uci_option_contract.hpp
+  parent_contract: specs/uci_option_contract_v1.yaml
+
+native_process_io:
+  limits:
+    maximum_input_line_bytes:
+      type: positive_size
+      hard_maximum: 16777216
+    maximum_output_line_bytes:
+      type: positive_size
+      hard_maximum: 16777216
+    maximum_queued_lines:
+      type: positive_size
+      hard_maximum: 65536
+    maximum_queued_bytes:
+      type: positive_size
+      hard_maximum: 67108864
+      must_be_at_least: maximum_output_line_bytes
+    droppable_output_prefix:
+      maximum_bytes: 64
+      forbidden_bytes: [NUL, CR, LF]
+  rules:
+    - Limits are validated before process launch.
+    - Input is one exact line; embedded NUL, CR, or LF is rejected before write.
+    - Partial writes are retried until the complete framed input is written or fail.
+    - Output is framed from raw bytes before string semantics.
+    - A line exceeding maximum_output_line_bytes is never fully materialized.
+    - Only lines beginning with the exact configured droppable prefix may be dropped.
+    - A control line that cannot fit its line or queue bound makes the session fail.
+    - A queued control line is never evicted to admit another line.
+    - Observational lines may be dropped or evicted to preserve bounded control traffic.
+    - Fatal reader state is surfaced by read_line and is never represented as timeout.
+    - Windows and Linux expose identical public failure semantics.
+
+uci_probe_policy:
+  input_line_bytes: 4096
+  output_line_bytes: 4096
+  maximum_queued_lines: 2048
+  maximum_queued_bytes: 524288
+  droppable_prefix: "info "
+  rules:
+    - Every returned line is admitted as exact UTF-8 scalar text before token matching.
+    - Reject C0, C1, DEL, Unicode line separator, and Unicode paragraph separator.
+    - Reject malformed, truncated, overlong, surrogate, or out-of-range UTF-8.
+    - uciok and readyok match only exact complete lines.
+    - bestmove requires the exact prefix followed by a value.
+    - Metadata count and cumulative option bounds remain owned by the UCI option contract.
+    - Runtime model observation does not weaken wire admission.
+
+performance:
+  - Read buffers are fixed-size and line accumulation is bounded by the configured limit plus one byte.
+  - No per-byte heap allocation is permitted.
+  - Queue scans may remove observational entries but must remain bounded by maximum_queued_lines.
+  - Control traffic is not copied through an unbounded intermediate representation.
+
+validation:
+  pure:
+    - exact 4096-byte wire boundary
+    - malformed and non-scalar UTF-8
+    - C0, C1, DEL, U+2028, and U+2029 rejection
+  process:
+    - oversized control line is fatal
+    - oversized observation is dropped and later control is retained
+    - observation burst drops only observations
+    - control queue pressure is fatal rather than lossy
+    - invalid limits fail before launch
+    - oversized and embedded-framing input fail before write
+    - exact uciok and readyok matching
+    - identical Windows and Linux behavior
+  required_commands:
+    - node tools/spec-preflight.mjs --task "bounded UCI wire framing" --changed-files <files>
+    - node tools/spec-check.mjs
+    - cmake --preset linux-release
+    - cmake --build --preset linux-release
+    - ctest --preset linux-release --output-on-failure -R "UCI|native process framing"
+    - cmake --preset windows-release
+    - cmake --build --preset windows-release
+    - ctest --preset windows-release --output-on-failure -R "UCI|native process framing"
