@@ -5,6 +5,7 @@
 #include <chrono>
 #include <filesystem>
 #include <string>
+#include <thread>
 
 #ifndef ARENA_MOCK_UCI_PATH
 #error ARENA_MOCK_UCI_PATH must name the mock UCI engine
@@ -30,6 +31,7 @@ TEST_CASE("native process never silently evicts bounded control output") {
     NativeProcess process;
     process.start(executable, executable.parent_path(), {}, small_limits());
     process.write_line("framing-control-burst");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     REQUIRE_THROWS_WITH(
         process.read_line(std::chrono::seconds(2)),
         "process control output queue exceeds bound");
