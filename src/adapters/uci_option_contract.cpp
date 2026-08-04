@@ -1,12 +1,14 @@
 #include "arena/adapters/uci_option_contract.hpp"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cstdint>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace arena::adapters {
@@ -98,6 +100,29 @@ void require_no_edge_space(
     if (!value.empty() && (value.front() == ' ' || value.back() == ' ')) {
         reject(error);
     }
+}
+
+void add_bounded_size(
+    std::size_t& total,
+    const std::size_t amount,
+    const std::size_t maximum,
+    const std::string_view error) {
+    if (amount > maximum - total) {
+        reject(error);
+    }
+    total += amount;
+}
+
+std::size_t decimal_bytes(const std::int64_t value) {
+    std::array<char, 32> buffer{};
+    const auto converted = std::to_chars(
+        buffer.data(),
+        buffer.data() + buffer.size(),
+        value);
+    if (converted.ec != std::errc{}) {
+        reject("UCI spin integer cannot be represented");
+    }
+    return static_cast<std::size_t>(converted.ptr - buffer.data());
 }
 
 std::string ascii_fold(const std::string_view value) {
@@ -212,6 +237,9 @@ void validate_option_record(const domain::UciOption& option) {
             uci_option_maximum_value_bytes,
             "UCI combo default is empty",
             "UCI combo default exceeds its byte bound");
+        require_no_edge_space(
+            option.default_value,
+            "UCI combo default has ambiguous edge spaces");
         std::set<std::string, std::less<>> variants;
         bool default_found = false;
         for (const std::string& variant : option.variants) {
@@ -221,6 +249,9 @@ void validate_option_record(const domain::UciOption& option) {
                 uci_option_maximum_value_bytes,
                 "UCI combo variant is empty",
                 "UCI combo variant exceeds its byte bound");
+            require_no_edge_space(
+                variant,
+                "UCI combo variant has ambiguous edge spaces");
             if (!variants.insert(variant).second) {
                 reject("UCI combo variant is duplicated");
             }
@@ -241,9 +272,55 @@ void validate_option_record(const domain::UciOption& option) {
             uci_option_maximum_value_bytes,
             "",
             "UCI string default exceeds its byte bound");
+        require_no_edge_space(
+            option.default_value,
+            "UCI string default has ambiguous edge spaces");
         return;
     }
     reject("UCI option type is unsupported");
+}
+
+std::size_t option_metadata_bytes(const domain::UciOption& option) {
+    std::size_t total = 32;
+    constexpr std::string_view error =
+        "advertised UCI option metadata exceeds its cumulative byte bound";
+    add_bounded_size(
+        total,
+        option.name.size(),
+        uci_option_maximum_cumulative_bytes,
+        error);
+    add_bounded_size(
+        total,
+        option.type.size(),
+        uci_option_maximum_cumulative_bytes,
+        error);
+    add_bounded_size(
+        total,
+        option.default_value.size(),
+        uci_option_maximum_cumulative_bytes,
+        error);
+    if (option.minimum) {
+        add_bounded_size(
+            total,
+            decimal_bytes(*option.minimum) + 5,
+            uci_option_maximum_cumulative_bytes,
+            error);
+    }
+    if (option.maximum) {
+        add_bounded_size(
+            total,
+            decimal_bytes(*option.maximum) + 5,
+            uci_option_maximum_cumulative_bytes,
+            error);
+    }
+    for (const std::string& variant : option.variants) {
+        add_bounded_size(
+            total,
+            variant.size() + 5,
+            uci_option_maximum_cumulative_bytes,
+            error);
+    }
+    return total;
 }
 
 domain::UciOption parse_button(
@@ -459,10 +536,11 @@ UciMetadata UciOptionContract::parse(
                 "UCI engine name is empty",
                 "UCI engine name exceeds its byte bound");
             require_no_edge_space(value, "UCI engine name has ambiguous edge spaces");
-            identity_bytes += value.size();
-            if (identity_bytes > uci_identity_maximum_cumulative_bytes) {
-                reject("UCI identity exceeds its cumulative byte bound");
-            }
+            add_bounded_size(
+                identity_bytes,
+                value.size(),
+                uci_identity_maximum_cumulative_bytes,
+                "UCI identity exceeds its cumulative byte bound");
             result.engine_name = std::string(value);
             saw_name = true;
             continue;
@@ -482,10 +560,11 @@ UciMetadata UciOptionContract::parse(
                 "UCI engine author is empty",
                 "UCI engine author exceeds its byte bound");
             require_no_edge_space(value, "UCI engine author has ambiguous edge spaces");
-            identity_bytes += value.size();
-            if (identity_bytes > uci_identity_maximum_cumulative_bytes) {
-                reject("UCI identity exceeds its cumulative byte bound");
-            }
+            add_bounded_size(
+                identity_bytes,
+                value.size(),
+                uci_identity_maximum_cumulative_bytes,
+                "UCI identity exceeds its cumulative byte bound");
             result.engine_author = std::string(value);
             saw_author = true;
             continue;
@@ -500,10 +579,11 @@ UciMetadata UciOptionContract::parse(
             if (result.options.size() >= uci_option_maximum_count) {
                 reject("UCI option count exceeds its bound");
             }
-            option_bytes += line.size();
-            if (option_bytes > uci_option_maximum_cumulative_bytes) {
-                reject("UCI option metadata exceeds its cumulative byte bound");
-            }
+            add_bounded_size(
+                option_bytes,
+                line.size(),
+                uci_option_maximum_cumulative_bytes,
+                "UCI option metadata exceeds its cumulative byte bound");
             domain::UciOption option = parse_option_line(line);
             const std::string folded = ascii_fold(option.name);
             if (!folded_option_names.insert(folded).second) {
@@ -530,8 +610,14 @@ CanonicalUciOptions UciOptionContract::canonicalize_overrides(
     }
 
     std::map<std::string, const domain::UciOption*, std::less<>> advertised;
+    std::size_t advertised_bytes = 0;
     for (const domain::UciOption& option : advertised_options) {
         validate_option_record(option);
+        add_bounded_size(
+            advertised_bytes,
+            option_metadata_bytes(option),
+            uci_option_maximum_cumulative_bytes,
+            "advertised UCI option metadata exceeds its cumulative byte bound");
         const std::string folded = ascii_fold(option.name);
         if (!advertised.emplace(folded, &option).second) {
             reject("advertised UCI option name is duplicated under ASCII case folding");
@@ -555,10 +641,16 @@ CanonicalUciOptions UciOptionContract::canonicalize_overrides(
             uci_option_maximum_value_bytes,
             "",
             "UCI override value exceeds its byte bound");
-        cumulative_bytes += requested_name.size() + requested_value.size();
-        if (cumulative_bytes > uci_override_maximum_cumulative_bytes) {
-            reject("UCI overrides exceed their cumulative byte bound");
-        }
+        add_bounded_size(
+            cumulative_bytes,
+            requested_name.size(),
+            uci_override_maximum_cumulative_bytes,
+            "UCI overrides exceed their cumulative byte bound");
+        add_bounded_size(
+            cumulative_bytes,
+            requested_value.size(),
+            uci_override_maximum_cumulative_bytes,
+            "UCI overrides exceed their cumulative byte bound");
 
         const std::string folded = ascii_fold(requested_name);
         if (!folded_overrides.insert(folded).second) {
