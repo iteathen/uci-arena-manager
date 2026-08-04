@@ -31,7 +31,14 @@ TEST_CASE("native process never silently evicts bounded control output") {
     NativeProcess process;
     process.start(executable, executable.parent_path(), {}, small_limits());
     process.write_line("framing-control-burst");
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (process.running() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    REQUIRE_FALSE(process.running());
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
     REQUIRE_THROWS_WITH(
         process.read_line(std::chrono::seconds(2)),
         "process control output queue exceeds bound");
