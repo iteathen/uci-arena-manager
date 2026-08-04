@@ -57,6 +57,16 @@ std::vector<std::string> split(const std::string& value) {
     return result;
 }
 
+std::string ascii_fold(const std::string_view value) {
+    std::string folded(value);
+    for (char& character : folded) {
+        if (character >= 'A' && character <= 'Z') {
+            character = static_cast<char>(character - 'A' + 'a');
+        }
+    }
+    return folded;
+}
+
 bool safe_token(const std::string_view value, const std::size_t maximum) {
     return !value.empty() && value.size() <= maximum &&
            std::all_of(value.begin(), value.end(), [](const unsigned char character) {
@@ -162,6 +172,33 @@ UciMetadata parse_metadata(const std::vector<std::string>& lines) {
         std::span<const std::string_view>(views.data(), views.size()));
 }
 
+CanonicalUciOptions canonicalize_options(
+    const std::vector<domain::UciOption>& advertised_options,
+    const std::map<std::string, std::string>& option_overrides) {
+    try {
+        return UciOptionContract::canonicalize_overrides(
+            std::span<const domain::UciOption>(
+                advertised_options.data(), advertised_options.size()),
+            option_overrides);
+    } catch (const std::runtime_error& error) {
+        if (std::string_view(error.what()) ==
+            "UCI override names an unadvertised option") {
+            std::set<std::string, std::less<>> advertised_names;
+            for (const domain::UciOption& option : advertised_options) {
+                advertised_names.insert(ascii_fold(option.name));
+            }
+            for (const auto& [name, value] : option_overrides) {
+                static_cast<void>(value);
+                if (!advertised_names.contains(ascii_fold(name))) {
+                    throw std::runtime_error(
+                        "requested UCI option is not advertised: " + name);
+                }
+            }
+        }
+        throw;
+    }
+}
+
 bool legal_starting_bestmove(const std::string& move) {
     static const std::set<std::string, std::less<>> legal = {
         "a2a3", "a2a4", "b2b3", "b2b4", "c2c3", "c2c4", "d2d3",
@@ -176,10 +213,7 @@ bool legal_starting_bestmove(const std::string& move) {
 void UciProcess::validate_option_overrides(
     const std::vector<domain::UciOption>& advertised_options,
     const std::map<std::string, std::string>& option_overrides) {
-    static_cast<void>(UciOptionContract::canonicalize_overrides(
-        std::span<const domain::UciOption>(
-            advertised_options.data(), advertised_options.size()),
-        option_overrides));
+    static_cast<void>(canonicalize_options(advertised_options, option_overrides));
 }
 
 UciProbeResult UciProcess::probe(
@@ -205,10 +239,7 @@ UciProbeResult UciProcess::probe(
         result.options = std::move(metadata.options);
 
         const CanonicalUciOptions canonical_options =
-            UciOptionContract::canonicalize_overrides(
-                std::span<const domain::UciOption>(
-                    result.options.data(), result.options.size()),
-                option_overrides);
+            canonicalize_options(result.options, option_overrides);
         for (const auto& [name, value] : canonical_options) {
             process.write_line("setoption name " + name + " value " + value);
         }
