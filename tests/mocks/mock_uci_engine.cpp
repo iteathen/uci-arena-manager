@@ -13,6 +13,9 @@ int main(int argc, char** argv) {
     bool require_chess960 = false;
     unsigned required_moves_to_go = 0;
     std::string required_model_root;
+    bool duplicate_id_name = false;
+    bool malformed_option = false;
+    bool require_style_risky = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
         if (argument == "--delay-ms" && index + 1 < argc) {
@@ -29,19 +32,32 @@ int main(int argc, char** argv) {
                 static_cast<unsigned>(std::stoul(argv[++index]));
         } else if (argument == "--require-model-root" && index + 1 < argc) {
             required_model_root = argv[++index];
+        } else if (argument == "--duplicate-id-name") {
+            duplicate_id_name = true;
+        } else if (argument == "--malformed-option") {
+            malformed_option = true;
+        } else if (argument == "--require-style-risky") {
+            require_style_risky = true;
         }
     }
     std::string position;
     bool chess960_enabled = false;
     bool model_root_ready = required_model_root.empty();
+    bool style_ready = !require_style_risky;
     const std::vector<std::string> scholar_mate{
         "e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "h5f7"};
     for (std::string line; std::getline(std::cin, line);) {
         if (line == "uci") {
-            std::cout << "id name Arena Mock Engine\n"
-                      << "id author UCI Arena Manager\n"
+            std::cout << "id name Arena Mock Engine\n";
+            if (duplicate_id_name) {
+                std::cout << "id name Arena Mock Engine\n";
+            }
+            std::cout << "id author UCI Arena Manager\n"
                       << "option name Threads type spin default 1 min 1 max 16\n"
                       << "option name Style type combo default Normal var Solid var Normal var Risky\n";
+            if (malformed_option) {
+                std::cout << "option name Broken type spin default 1 min 0 min 0 max 2\n";
+            }
             if (!required_model_root.empty()) {
                 std::cout << "option name ModelRoot type string default missing\n";
             } else {
@@ -52,6 +68,8 @@ int main(int argc, char** argv) {
             model_root_ready =
                 line.substr(std::string("setoption name ModelRoot value ").size()) ==
                 required_model_root;
+        } else if (line == "setoption name Style value Risky") {
+            style_ready = true;
         } else if (line == "isready") {
             if (!required_model_root.empty() && model_root_ready) {
                 std::cout << "info string model loaded:backend:onnx:path:fixture:fingerprint:8104116015256418347:provider:cpu:provider_numeric_fingerprint:5805769137532863231\n";
@@ -81,7 +99,7 @@ int main(int argc, char** argv) {
                     std::string::npos;
             const std::string move =
                 illegal || move_count >= illegal_after_ply ||
-                        !model_root_ready ||
+                        !model_root_ready || !style_ready ||
                         (require_chess960 && position.starts_with("position fen ") &&
                          !chess960_enabled) ||
                         !moves_to_go_present
