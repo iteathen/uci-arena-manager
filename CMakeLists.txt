@@ -255,6 +255,7 @@ if(ARENA_BUILD_TESTS)
     tests/integration/service_output_integration_tests.cpp
     tests/integration/sqlite_store_tests.cpp
     tests/integration/tournament_execution_tests.cpp
+    tests/integration/uci_option_integration_tests.cpp
     tests/integration/uci_probe_tests.cpp
   )
   add_dependencies(arena_tests arena_mock_uci arena_mock_service)
