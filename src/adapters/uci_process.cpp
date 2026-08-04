@@ -135,6 +135,18 @@ bool metadata_line(const std::string_view line) {
            line == "option" || line.starts_with("option ");
 }
 
+void capture_metadata_line(
+    std::vector<std::string>& metadata_lines,
+    const std::string& line) {
+    if (line.size() > uci_metadata_maximum_line_bytes) {
+        throw std::runtime_error("UCI metadata line exceeds its byte bound");
+    }
+    if (metadata_lines.size() >= uci_metadata_maximum_lines) {
+        throw std::runtime_error("UCI metadata exceeds its line-count bound");
+    }
+    metadata_lines.push_back(line);
+}
+
 std::string await_token(
     ports::NativeProcess& process,
     const std::string_view token,
@@ -152,7 +164,7 @@ std::string await_token(
             continue;
         }
         if (metadata_lines != nullptr && metadata_line(*line)) {
-            metadata_lines->push_back(*line);
+            capture_metadata_line(*metadata_lines, *line);
         }
         capture_runtime_model_identity(*line, result);
         if (*line == token || line->starts_with(std::string(token) + " ")) {
