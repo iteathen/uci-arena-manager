@@ -33,6 +33,8 @@ using CanonicalUciOptions = std::map<std::string, std::string, std::less<>>;
 
 class UciOptionContract final {
 public:
+    static void validate_wire_line(std::string_view line);
+
     [[nodiscard]] static UciMetadata parse(
         std::span<const std::string_view> lines);
 
