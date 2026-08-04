@@ -66,11 +66,11 @@ int main(int argc, char** argv) {
         "e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "h5f7"};
     for (std::string line; std::getline(std::cin, line);) {
         if (line == "framing-control-burst") {
-            std::cout << "control-0\n"
-                      << "control-1\n"
-                      << "control-2\n"
-                      << "control-3\n"
-                      << std::flush;
+            for (std::size_t index = 0; index < 32; ++index) {
+                std::cout << "control-" << index << "\n";
+            }
+            std::cout << std::flush;
+            return 0;
         } else if (line == "framing-info-burst") {
             for (std::size_t index = 0; index < 16; ++index) {
                 std::cout << "info string observation-" << index << "\n";
