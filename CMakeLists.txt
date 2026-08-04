@@ -65,6 +65,7 @@ add_library(arena_core
   src/application/process_supervisor.cpp
   src/application/tournament_executor.cpp
   src/adapters/sqlite_store.cpp
+  src/adapters/uci_option_contract.cpp
   src/adapters/uci_process.cpp
   src/adapters/uci_game_runner.cpp
   src/adapters/report_renderer.cpp
@@ -250,6 +251,7 @@ if(ARENA_BUILD_TESTS)
     tests/unit/engine_onboarding_tests.cpp
     tests/unit/match_planner_tests.cpp
     tests/unit/security_report_tests.cpp
+    tests/unit/uci_option_contract_tests.cpp
     tests/integration/service_output_integration_tests.cpp
     tests/integration/sqlite_store_tests.cpp
     tests/integration/tournament_execution_tests.cpp
