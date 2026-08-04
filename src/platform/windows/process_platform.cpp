@@ -14,6 +14,41 @@
 namespace arena::ports {
 namespace {
 
+constexpr std::size_t hard_maximum_line_bytes = 16 * 1024 * 1024;
+constexpr std::size_t hard_maximum_queued_bytes = 64 * 1024 * 1024;
+constexpr std::size_t hard_maximum_queued_lines = 65'536;
+constexpr std::size_t hard_maximum_prefix_bytes = 64;
+
+void validate_limits(const NativeProcessIoLimits& limits) {
+    if (limits.maximum_input_line_bytes == 0 ||
+        limits.maximum_input_line_bytes > hard_maximum_line_bytes) {
+        throw std::runtime_error("native process input line bound is invalid");
+    }
+    if (limits.maximum_output_line_bytes == 0 ||
+        limits.maximum_output_line_bytes > hard_maximum_line_bytes) {
+        throw std::runtime_error("native process output line bound is invalid");
+    }
+    if (limits.maximum_queued_lines == 0 ||
+        limits.maximum_queued_lines > hard_maximum_queued_lines) {
+        throw std::runtime_error("native process queued line bound is invalid");
+    }
+    if (limits.maximum_queued_bytes < limits.maximum_output_line_bytes ||
+        limits.maximum_queued_bytes > hard_maximum_queued_bytes) {
+        throw std::runtime_error("native process queued byte bound is invalid");
+    }
+    if (limits.droppable_output_prefix.size() > hard_maximum_prefix_bytes ||
+        limits.droppable_output_prefix.size() > limits.maximum_output_line_bytes ||
+        limits.droppable_output_prefix.find_first_of("\0\r\n") != std::string::npos) {
+        throw std::runtime_error("native process droppable prefix is invalid");
+    }
+}
+
+bool invalid_input_line(const std::string_view line) {
+    return line.find('\0') != std::string_view::npos ||
+           line.find('\r') != std::string_view::npos ||
+           line.find('\n') != std::string_view::npos;
+}
+
 std::wstring utf8_to_wide(const std::string& value) {
     if (value.empty()) {
         return {};
@@ -24,13 +59,15 @@ std::wstring utf8_to_wide(const std::string& value) {
         throw std::runtime_error("invalid UTF-8 process argument");
     }
     std::wstring result(static_cast<std::size_t>(size), L'\0');
-    MultiByteToWideChar(
-        CP_UTF8,
-        MB_ERR_INVALID_CHARS,
-        value.data(),
-        static_cast<int>(value.size()),
-        result.data(),
-        size);
+    if (MultiByteToWideChar(
+            CP_UTF8,
+            MB_ERR_INVALID_CHARS,
+            value.data(),
+            static_cast<int>(value.size()),
+            result.data(),
+            size) != size) {
+        throw std::runtime_error("failed to convert process argument");
+    }
     return result;
 }
 
@@ -70,10 +107,6 @@ void close_handle(HANDLE& handle) {
 }  // namespace
 
 struct NativeProcess::Impl {
-    static constexpr std::size_t max_lines = 8192;
-    static constexpr std::size_t max_line_bytes = 1024 * 1024;
-    static constexpr std::size_t max_queued_bytes = 8 * 1024 * 1024;
-
     HANDLE process{nullptr};
     HANDLE thread{nullptr};
     HANDLE job{nullptr};
@@ -87,6 +120,8 @@ struct NativeProcess::Impl {
     std::uint64_t process_id{};
     std::uint64_t dropped{};
     bool reader_finished{true};
+    NativeProcessIoLimits limits{};
+    std::string output_error;
 
     ~Impl() {
         if (reader.joinable()) {
@@ -100,68 +135,112 @@ struct NativeProcess::Impl {
         close_handle(job);
     }
 
-    void enqueue(std::string line) {
+    [[nodiscard]] bool droppable(const std::string_view line) const noexcept {
+        return !limits.droppable_output_prefix.empty() &&
+               line.starts_with(limits.droppable_output_prefix);
+    }
+
+    void fail_output_locked(const std::string_view reason) {
+        if (output_error.empty()) {
+            output_error.assign(reason);
+        }
+        condition.notify_all();
+    }
+
+    void record_oversized_line(const std::string_view prefix) {
         std::scoped_lock lock(mutex);
+        if (droppable(prefix)) {
+            ++dropped;
+        } else {
+            fail_output_locked("process control output line exceeds byte bound");
+        }
+    }
+
+    void enqueue(std::string line) {
         if (!line.empty() && line.back() == '\r') {
             line.pop_back();
         }
-        if (line.size() > max_line_bytes) {
-            ++dropped;
+
+        std::scoped_lock lock(mutex);
+        if (!output_error.empty()) {
             return;
         }
-        while (lines.size() >= max_lines ||
-               queued_bytes + line.size() > max_queued_bytes) {
-            if (line.starts_with("info ")) {
+        if (line.size() > limits.maximum_output_line_bytes) {
+            if (droppable(line)) {
                 ++dropped;
-                return;
+            } else {
+                fail_output_locked("process control output line exceeds byte bound");
             }
+            return;
+        }
+
+        while (lines.size() >= limits.maximum_queued_lines ||
+               queued_bytes + line.size() > limits.maximum_queued_bytes) {
             const auto observational = std::find_if(
-                lines.begin(), lines.end(), [](const std::string& queued) {
-                    return queued.starts_with("info ");
+                lines.begin(), lines.end(), [this](const std::string& queued) {
+                    return droppable(queued);
                 });
             if (observational != lines.end()) {
                 queued_bytes -= observational->size();
                 lines.erase(observational);
                 ++dropped;
-            } else {
-                queued_bytes -= lines.front().size();
-                lines.pop_front();
-                ++dropped;
+                continue;
             }
+            if (droppable(line)) {
+                ++dropped;
+                return;
+            }
+            fail_output_locked("process control output queue exceeds bound");
+            return;
         }
+
         queued_bytes += line.size();
         lines.push_back(std::move(line));
         condition.notify_one();
     }
 
-    void record_dropped_line() {
-        std::scoped_lock lock(mutex);
-        ++dropped;
-    }
-
     void read_output() {
         std::string pending;
         bool discard_until_newline = false;
+        const std::size_t wire_line_limit = limits.maximum_output_line_bytes + 1;
         char buffer[4096];
-        DWORD read = 0;
-        while (ReadFile(stdout_read, buffer, sizeof(buffer), &read, nullptr) && read != 0) {
+
+        for (;;) {
+            DWORD count = 0;
+            if (!ReadFile(stdout_read, buffer, sizeof(buffer), &count, nullptr)) {
+                const DWORD code = GetLastError();
+                if (code != ERROR_BROKEN_PIPE && code != ERROR_OPERATION_ABORTED) {
+                    std::scoped_lock lock(mutex);
+                    fail_output_locked("failed to read process output");
+                }
+                break;
+            }
+            if (count == 0) {
+                break;
+            }
+
             std::size_t offset = 0;
-            while (offset < read) {
-                const std::string_view chunk(buffer + offset, read - offset);
+            while (offset < count) {
+                const std::string_view chunk(buffer + offset, count - offset);
                 const std::size_t newline = chunk.find('\n');
-                const std::size_t count = newline == std::string_view::npos
-                    ? chunk.size()
-                    : newline;
+                const std::size_t segment_size =
+                    newline == std::string_view::npos ? chunk.size() : newline;
+
                 if (!discard_until_newline) {
-                    if (pending.size() + count <= max_line_bytes) {
-                        pending.append(chunk.data(), count);
-                    } else {
+                    const std::size_t available =
+                        wire_line_limit > pending.size()
+                            ? wire_line_limit - pending.size()
+                            : 0;
+                    const std::size_t accepted = std::min(available, segment_size);
+                    pending.append(chunk.data(), accepted);
+                    if (accepted != segment_size) {
+                        record_oversized_line(pending);
                         pending.clear();
                         discard_until_newline = true;
-                        record_dropped_line();
                     }
                 }
-                offset += count;
+
+                offset += segment_size;
                 if (newline == std::string_view::npos) {
                     break;
                 }
@@ -173,6 +252,7 @@ struct NativeProcess::Impl {
                 ++offset;
             }
         }
+
         if (!discard_until_newline && !pending.empty()) {
             enqueue(std::move(pending));
         }
@@ -196,10 +276,12 @@ NativeProcess::~NativeProcess() {
 void NativeProcess::start(
     const std::filesystem::path& executable,
     const std::filesystem::path& working_directory,
-    const std::vector<std::string>& arguments) {
+    const std::vector<std::string>& arguments,
+    const NativeProcessIoLimits& limits) {
     if (running()) {
         throw std::runtime_error("process is already running");
     }
+    validate_limits(limits);
 
     SECURITY_ATTRIBUTES security{
         .nLength = sizeof(SECURITY_ATTRIBUTES),
@@ -208,14 +290,22 @@ void NativeProcess::start(
     };
     HANDLE stdin_read = nullptr;
     HANDLE stdout_write = nullptr;
-    if (!CreatePipe(&stdin_read, &impl_->stdin_write, &security, 0) ||
-        !CreatePipe(&impl_->stdout_read, &stdout_write, &security, 0)) {
-        close_handle(stdin_read);
-        close_handle(stdout_write);
-        throw std::runtime_error("failed to create process pipes");
+    if (!CreatePipe(&stdin_read, &impl_->stdin_write, &security, 0)) {
+        throw std::runtime_error("failed to create process input pipe");
     }
-    SetHandleInformation(impl_->stdin_write, HANDLE_FLAG_INHERIT, 0);
-    SetHandleInformation(impl_->stdout_read, HANDLE_FLAG_INHERIT, 0);
+    if (!CreatePipe(&impl_->stdout_read, &stdout_write, &security, 0)) {
+        close_handle(stdin_read);
+        close_handle(impl_->stdin_write);
+        throw std::runtime_error("failed to create process output pipe");
+    }
+    if (!SetHandleInformation(impl_->stdin_write, HANDLE_FLAG_INHERIT, 0) ||
+        !SetHandleInformation(impl_->stdout_read, HANDLE_FLAG_INHERIT, 0)) {
+        close_handle(stdin_read);
+        close_handle(impl_->stdin_write);
+        close_handle(impl_->stdout_read);
+        close_handle(stdout_write);
+        throw std::runtime_error("failed to secure process pipe inheritance");
+    }
 
     const std::wstring executable_wide = executable.wstring();
     std::wstring command_line = quote_argument(executable_wide);
@@ -258,20 +348,24 @@ void NativeProcess::start(
         TerminateProcess(process_info.hProcess, 1);
         CloseHandle(process_info.hThread);
         CloseHandle(process_info.hProcess);
+        close_handle(impl_->stdin_write);
+        close_handle(impl_->stdout_read);
         throw std::runtime_error("failed to create process Job Object");
     }
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
-    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION job_limits{};
+    job_limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     if (!SetInformationJobObject(
             impl_->job,
             JobObjectExtendedLimitInformation,
-            &limits,
-            sizeof(limits)) ||
+            &job_limits,
+            sizeof(job_limits)) ||
         !AssignProcessToJobObject(impl_->job, process_info.hProcess)) {
         TerminateProcess(process_info.hProcess, 1);
         CloseHandle(process_info.hThread);
         CloseHandle(process_info.hProcess);
         close_handle(impl_->job);
+        close_handle(impl_->stdin_write);
+        close_handle(impl_->stdout_read);
         throw std::runtime_error("failed to contain process in Job Object");
     }
 
@@ -280,12 +374,17 @@ void NativeProcess::start(
     impl_->process_id = process_info.dwProcessId;
     {
         std::scoped_lock lock(impl_->mutex);
+        impl_->limits = limits;
         impl_->lines.clear();
         impl_->queued_bytes = 0;
         impl_->dropped = 0;
+        impl_->output_error.clear();
         impl_->reader_finished = false;
     }
-    ResumeThread(impl_->thread);
+    if (ResumeThread(impl_->thread) == static_cast<DWORD>(-1)) {
+        TerminateJobObject(impl_->job, 1);
+        throw std::runtime_error("failed to resume process thread");
+    }
     impl_->reader = std::thread([this] { impl_->read_output(); });
 }
 
@@ -293,24 +392,44 @@ void NativeProcess::write_line(const std::string& line) {
     if (!running()) {
         throw std::runtime_error("cannot write to a stopped process");
     }
+    if (line.size() > impl_->limits.maximum_input_line_bytes) {
+        throw std::runtime_error("process input line exceeds byte bound");
+    }
+    if (invalid_input_line(line)) {
+        throw std::runtime_error("process input line contains a framing character");
+    }
+
     const std::string framed = line + "\n";
-    DWORD written = 0;
-    if (!WriteFile(
-            impl_->stdin_write,
-            framed.data(),
-            static_cast<DWORD>(framed.size()),
-            &written,
-            nullptr) ||
-        written != framed.size()) {
-        throw std::runtime_error("failed to write to process");
+    std::size_t offset = 0;
+    while (offset < framed.size()) {
+        DWORD written = 0;
+        const DWORD remaining = static_cast<DWORD>(framed.size() - offset);
+        if (!WriteFile(
+                impl_->stdin_write,
+                framed.data() + offset,
+                remaining,
+                &written,
+                nullptr) ||
+            written == 0) {
+            throw std::runtime_error("failed to write to process");
+        }
+        offset += static_cast<std::size_t>(written);
     }
 }
 
 std::optional<std::string> NativeProcess::read_line(std::chrono::milliseconds timeout) {
+    if (timeout.count() < 0) {
+        throw std::runtime_error("process read timeout is invalid");
+    }
     std::unique_lock lock(impl_->mutex);
     impl_->condition.wait_for(lock, timeout, [this] {
-        return !impl_->lines.empty() || impl_->reader_finished;
+        return !impl_->output_error.empty() ||
+               !impl_->lines.empty() ||
+               impl_->reader_finished;
     });
+    if (!impl_->output_error.empty()) {
+        throw std::runtime_error(impl_->output_error);
+    }
     if (impl_->lines.empty()) {
         return std::nullopt;
     }
@@ -339,13 +458,17 @@ void NativeProcess::stop(std::chrono::milliseconds graceful_timeout) {
     if (impl_->process == nullptr) {
         return;
     }
+    if (graceful_timeout.count() < 0) {
+        throw std::runtime_error("process stop timeout is invalid");
+    }
     if (running()) {
         try {
             write_line("quit");
         } catch (...) {
         }
-        if (WaitForSingleObject(impl_->process, static_cast<DWORD>(graceful_timeout.count())) ==
-            WAIT_TIMEOUT) {
+        if (WaitForSingleObject(
+                impl_->process,
+                static_cast<DWORD>(graceful_timeout.count())) == WAIT_TIMEOUT) {
             TerminateJobObject(impl_->job, 1);
             WaitForSingleObject(impl_->process, 2000);
         }
