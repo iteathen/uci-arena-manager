@@ -22,6 +22,16 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
+ports::NativeProcessIoLimits uci_probe_io_limits() {
+    return ports::NativeProcessIoLimits{
+        4'096,
+        uci_metadata_maximum_line_bytes,
+        2'048,
+        512 * 1'024,
+        "info ",
+    };
+}
+
 std::string fingerprint(const std::filesystem::path& executable) {
     if (sodium_init() < 0) {
         throw std::runtime_error("libsodium initialization failed");
@@ -138,13 +148,19 @@ bool metadata_line(const std::string_view line) {
 void capture_metadata_line(
     std::vector<std::string>& metadata_lines,
     const std::string& line) {
-    if (line.size() > uci_metadata_maximum_line_bytes) {
-        throw std::runtime_error("UCI metadata line exceeds its byte bound");
-    }
     if (metadata_lines.size() >= uci_metadata_maximum_lines) {
         throw std::runtime_error("UCI metadata exceeds its line-count bound");
     }
     metadata_lines.push_back(line);
+}
+
+bool expected_token_line(
+    const std::string_view line,
+    const std::string_view token) {
+    if (token == "bestmove") {
+        return line.starts_with("bestmove ");
+    }
+    return line == token;
 }
 
 std::string await_token(
@@ -163,11 +179,13 @@ std::string await_token(
             }
             continue;
         }
+
+        UciOptionContract::validate_wire_line(*line);
         if (metadata_lines != nullptr && metadata_line(*line)) {
             capture_metadata_line(*metadata_lines, *line);
         }
         capture_runtime_model_identity(*line, result);
-        if (*line == token || line->starts_with(std::string(token) + " ")) {
+        if (expected_token_line(*line, token)) {
             return *line;
         }
     }
@@ -239,7 +257,11 @@ UciProbeResult UciProcess::probe(
     ports::NativeProcess process;
     try {
         result.fingerprint = fingerprint(executable);
-        process.start(executable, working_directory, arguments);
+        process.start(
+            executable,
+            working_directory,
+            arguments,
+            uci_probe_io_limits());
         const auto deadline = Clock::now() + timeout;
 
         std::vector<std::string> metadata_lines;
