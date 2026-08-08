@@ -24,6 +24,10 @@ import {
   updateLocalBotOptions,
 } from '../api/client'
 import type { BotAccountAction, BotOptions, BotOptionsUpdate } from '../api/types'
+import {
+  needsOutboundConfirmation,
+  needsRatedConfirmation,
+} from './botOperationsModel'
 
 const speeds = ['ultraBullet', 'bullet', 'blitz', 'rapid', 'classical', 'correspondence']
 const modes = ['casual', 'rated']
@@ -110,15 +114,12 @@ export function BotOperationsPanel({
     },
   })
 
-  const ratedConfirmationRequired =
-    options.data?.outbound_challenge.rated !== true &&
-    form?.outbound_challenge.rated === true
-  const outboundPreviouslyDisabled =
-    options.data?.scheduler.enabled !== true ||
-    options.data?.capacity.bot.target_active === 0
-  const outboundNowEnabled =
-    form?.scheduler.enabled === true && (form?.capacity.bot.target_active ?? 0) > 0
-  const outboundConfirmationRequired = outboundPreviouslyDisabled && outboundNowEnabled
+  const ratedConfirmationRequired = Boolean(
+    options.data && form && needsRatedConfirmation(options.data, form),
+  )
+  const outboundConfirmationRequired = Boolean(
+    options.data && form && needsOutboundConfirmation(options.data, form),
+  )
   const saveBlocked = !form ||
     (ratedConfirmationRequired && !confirmRated) ||
     (outboundConfirmationRequired && !confirmOutbound)
