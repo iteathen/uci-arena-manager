@@ -341,7 +341,7 @@ export function BotOperationsPanel({
                 </Group>
               </Stack>
             </Fieldset>
-            <Fieldset legend="Inbound challenges">
+            <Fieldset legend="Inbound game types and connection policy">
               <Stack gap="sm">
                 <Switch label="Accept challenges from bots" checked={form.inbound_challenges.accept_bots}
                   onChange={(event) => setForm({ ...form, inbound_challenges: { ...form.inbound_challenges, accept_bots: event.currentTarget.checked } })} />
@@ -364,12 +364,23 @@ export function BotOperationsPanel({
             <Fieldset legend="Outbound challenges">
               <Stack gap="sm">
                 <Group>
-                  <Switch label="Automatic outbound scheduling" checked={form.scheduler.enabled}
-                    onChange={(event) => setForm({ ...form, scheduler: { ...form.scheduler, enabled: event.currentTarget.checked } })} />
                   <Switch label="Rated games" checked={form.outbound_challenge.rated}
                     onChange={(event) => setForm({ ...form, outbound_challenge: { ...form.outbound_challenge, rated: event.currentTarget.checked } })} />
                 </Group>
-                <SimpleGrid cols={{ base: 1, sm: 3 }}>
+                <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
+                  <Select
+                    label="Play behavior"
+                    description="Choose whether to seek games or only wait for incoming challenges."
+                    data={[
+                      { value: 'wait', label: 'Wait for incoming challenges' },
+                      { value: 'active', label: 'Actively seek bot games' },
+                    ]}
+                    value={form.scheduler.enabled ? 'active' : 'wait'}
+                    onChange={(value) => setForm({
+                      ...form,
+                      scheduler: { ...form.scheduler, enabled: value === 'active' },
+                    })}
+                  />
                   <Select label="Preferred color" data={['random', 'white', 'black']} value={form.outbound_challenge.color}
                     onChange={(value) => value && setForm({ ...form, outbound_challenge: { ...form.outbound_challenge, color: value as 'random' | 'white' | 'black' } })} />
                   <NumberInput label="Clock base (seconds)" min={0} max={86400} value={form.outbound_challenge.clock_limit}

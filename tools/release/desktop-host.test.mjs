@@ -43,6 +43,32 @@ test("native host setup authority is narrow, typed, and unavailable to normal br
   assert.doesNotMatch(helper, /input\.at\("catalog"\)/);
 });
 
+test("direct Lichess credential entry is a write-only native transaction", () => {
+  const helper = readFileSync(
+    path.join(root, "apps", "cli", "ui_picker.cpp"),
+    "utf8",
+  );
+  const header = readFileSync(
+    path.join(root, "include", "arena", "platform", "operator_credential_file.hpp"),
+    "utf8",
+  );
+  assert.match(helper, /\/v1\/bot-credential-plan/);
+  assert.match(helper, /\/v1\/bot-credential-apply/);
+  assert.match(helper, /application\/octet-stream/);
+  assert.match(helper, /OperatorCredentialFileUpdate/);
+  assert.match(helper, /lichess_token_path/);
+  assert.match(helper, /consumer_configuration_regenerated/);
+  assert.doesNotMatch(helper, /arguments\.push_back\(credential\)/);
+  const applyHandler = helper.slice(
+    helper.indexOf('"/v1/bot-credential-apply"'),
+    helper.indexOf("const auto register_setup_handler"),
+  );
+  assert.doesNotMatch(applyHandler, /error\.what\(\)/);
+  assert.match(applyHandler, /preceding credential remains authoritative/);
+  assert.match(header, /void commit\(\)/);
+  assert.match(header, /void rollback\(\) noexcept/);
+});
+
 test("desktop helper keeps scratch state out of the install directory", () => {
   const helper = readFileSync(
     path.join(root, "apps", "cli", "ui_picker.cpp"),

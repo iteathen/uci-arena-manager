@@ -31,6 +31,7 @@ import {
   type LocalSetupResult,
 } from '../api/client'
 import { managerEndpointLabel } from '../components/configurationModel'
+import { LichessCredentialSetup } from '../components/LichessCredentialSetup'
 import { PageHeader } from '../components/PageHeader'
 import { PathPickerInput } from '../components/PathPickerInput'
 
@@ -72,7 +73,6 @@ export function ConfigurationPage({ navigate }: { navigate: (page: string) => vo
   const [capacityProfilePath, setCapacityProfilePath] = useState('')
   const [transportProfilePath, setTransportProfilePath] = useState('')
   const [assetScanRoot, setAssetScanRoot] = useState('')
-  const [lichessTokenPath, setLichessTokenPath] = useState('')
   const [copied, setCopied] = useState('')
   const [pendingSetup, setPendingSetup] = useState<{
     key: string
@@ -447,21 +447,11 @@ export function ConfigurationPage({ navigate }: { navigate: (page: string) => vo
               {reviewImport('syzygy', 'Import Syzygy', 'syzygy', syzygyPath)}
             </Stack>
             <Stack>
-              <PathPickerInput
-                label="Lichess token file reference"
-                description="Select only the credential file path. Its contents are never opened or returned."
-                placeholder="C:\Users\you\.config\uci-arena\lichess-token.txt"
-                value={lichessTokenPath}
-                onChange={setLichessTokenPath}
-                mode="file"
-                filters={[{ name: 'Credential text files', patterns: ['*.txt', '*.token'] }]}
+              <LichessCredentialSetup
+                onCompleted={() => {
+                  setSetupResult('Lichess credential locator and consumer configuration committed.')
+                }}
               />
-              {reviewImport(
-                'lichess',
-                'Save token-file reference',
-                'lichess_token_path',
-                lichessTokenPath,
-              )}
             </Stack>
             <Stack>
               <PathPickerInput

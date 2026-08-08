@@ -91,6 +91,7 @@ target_link_libraries(arena_core
 
 if(WIN32)
   target_sources(arena_core PRIVATE
+    src/platform/windows/operator_credential_file.cpp
     src/platform/windows/path_inspection.cpp
     src/platform/windows/process_platform.cpp
     src/platform/windows/service_control.cpp
@@ -99,6 +100,7 @@ if(WIN32)
   target_link_libraries(arena_core PRIVATE advapi32 bcrypt shell32 userenv)
 else()
   target_sources(arena_core PRIVATE
+    src/platform/linux/operator_credential_file.cpp
     src/platform/linux/path_inspection.cpp
     src/platform/linux/process_platform.cpp
     src/platform/linux/service_control.cpp

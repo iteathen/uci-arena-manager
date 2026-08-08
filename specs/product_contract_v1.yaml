@@ -124,9 +124,14 @@ bot_contract:
     - health
   invariants:
     - Every installation supplies an operator-owned token file outside the
-      repository and installed immutable component roots.
+      repository and installed immutable component roots. The authenticated
+      native helper may materialize that file from a write-only direct entry,
+      or the operator may select an existing external file.
     - Account identity comes from the verified adapter's BOT-only account probe.
-    - Credential contents never enter Manager state, APIs, logs, argv, or receipts.
+    - Credential contents never enter Manager service state or APIs, logs,
+      argv, receipts, setup results, browser storage, or provider configuration.
+      The direct-entry value crosses only the authenticated interactive helper
+      request body and is discarded after the external locator transaction.
     - Discovery, probing, and installation never register or start a bot.
     - Provider-owned per-user startup cannot be duplicated by Manager.
     - The bot account is a verified adapter projection, not a generic resource

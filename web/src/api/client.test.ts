@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  applyLocalLichessCredential,
   controlLocalBot,
   controlLocalBotAccount,
   exchangePairingToken,
   getLocalBotOptions,
   makeCommand,
   pickLocalPath,
+  planLocalLichessCredential,
   probeLocalBot,
   updateLocalBotOptions,
 } from './client'
@@ -235,6 +237,75 @@ describe('interactive-user BOT account control', () => {
 })
 
 describe('native desktop typed setup', () => {
+  it('keeps a directly entered API key out of JSON, storage, argv, and results', async () => {
+    history.replaceState(
+      null,
+      '',
+      '/#pair=' +
+        'a'.repeat(64) +
+        '&picker_port=47832&picker_token=' +
+        'b'.repeat(64) +
+        '&setup=1',
+    )
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ csrf_token: 'csrf' }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            schema: 'arena_ui_credential_plan_v1',
+            credential: 'lichess_bot_token',
+            storage: 'private_operator_external_file',
+            provider_startup_must_be_disabled: true,
+            actions: [{ action: 'materialize_private_operator_file' }],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            schema: 'arena_ui_credential_result_v1',
+            state: 'committed',
+            credential: 'lichess_bot_token',
+            locator_committed: true,
+            consumer_configuration_regenerated: true,
+          }),
+          { status: 200 },
+        ),
+      )
+
+    await exchangePairingToken()
+    await planLocalLichessCredential()
+    const fixture = 'synthetic-direct-entry-value'
+    await expect(applyLocalLichessCredential(fixture)).resolves.toEqual({
+      schema: 'arena_ui_credential_result_v1',
+      state: 'committed',
+      credential: 'lichess_bot_token',
+      locator_committed: true,
+      consumer_configuration_regenerated: true,
+    })
+
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      'http://127.0.0.1:47832/v1/bot-credential-plan',
+    )
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      schema: 'arena_ui_credential_plan_request_v1',
+    })
+    expect(fetchMock.mock.calls[2]?.[0]).toBe(
+      'http://127.0.0.1:47832/v1/bot-credential-apply',
+    )
+    expect(fetchMock.mock.calls[2]?.[1]?.body).toBe(fixture)
+    expect(fetchMock.mock.calls[2]?.[1]?.headers).toMatchObject({
+      'Content-Type': 'application/octet-stream',
+    })
+    for (let index = 0; index < sessionStorage.length; index += 1) {
+      expect(sessionStorage.getItem(sessionStorage.key(index) ?? '')).not.toContain(fixture)
+    }
+  })
+
   it('retains setup capability only for a native-host pairing and sends typed fields', async () => {
     history.replaceState(
       null,

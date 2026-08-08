@@ -158,11 +158,16 @@ immutable component directory and projects it through the engine's advertised
 the legal-bestmove check, then persists it for matches and Evidence probes. A
 model label or product name never selects an engine path or parser.
 
-The Bots dashboard installs and detects the packaged Lichess adapter, lets the
-operator select an existing token file, and verifies the BOT account without a
-terminal. Saving the reference invokes the same reviewed Installer import
-transaction used by Configuration; Manager only reads and projects its redacted
-availability. The credential probe
+The Bots dashboard installs and detects the packaged Lichess adapter, presents
+a masked direct API-key field by default, keeps existing token-file selection
+behind **Use an existing key file instead**, and verifies the BOT account
+without a terminal. Direct entry is sent only to the authenticated native
+helper as a bounded octet-stream body. The helper atomically materializes an
+access-restricted per-user file outside Manager data and installed software;
+only that file path enters the same reviewed Installer import transaction used
+by Configuration. The preceding file is restored if locator commit fails, and
+replacement requires provider startup to be disabled. The Manager service only
+reads and projects redacted locator availability. The credential probe
 runs through the authenticated, ephemeral helper hosted by the desktop
 launcher under the interactive user; only the receipt-verified adapter may
 open the token file, and only redacted account identity returns to the
@@ -180,6 +185,14 @@ account probe and uses that verified identity; the browser cannot provide an
 account name. Status and disable do not open the token file. Closing the
 desktop helper removes control authority but does not stop provider-owned
 startup that is already enabled.
+
+Provider-owned behavior controls on the same page cover qualified connection
+capacity, human and bot slots, accepted inbound speeds and casual/rated modes,
+base and increment limits, public-human and bot challenge policy, outbound
+clock and color, rated play, wait-for-incoming versus actively-seek-games mode,
+scheduler timing, opponent limits and cooldowns, owners, reservations, and a
+live scheduler pause. Saves cross only the typed Lichess options contract; the
+Manager dashboard does not edit provider configuration directly.
 
 ## Installer and releases
 

@@ -62,6 +62,8 @@ x-interactive-helper-contract:
   origin: authenticated_desktop_launcher_session
   authority: receipt_verified_provider_adapter
   operations:
+    - bot_credential_plan
+    - bot_credential_materialize
     - bot_probe
     - bot_startup_control
     - bot_options_get
@@ -70,6 +72,14 @@ x-interactive-helper-contract:
   rules:
     - These loopback helper operations are not Manager service endpoints and
       exist only for the interactive desktop-host lifetime.
+    - Bot credential planning accepts no credential. Materialization accepts
+      one bounded application/octet-stream body, writes it atomically to an
+      access-restricted operator-owned external file, and commits only that
+      path through the adjacent Installer locator transaction. The response is
+      redacted and the operation is unavailable while provider startup is
+      enabled.
+    - Credential contents never enter JSON, a URL, argv, setup results, logs,
+      Manager persistence, provider configuration, or browser storage.
     - Bot option requests carry only the
       uci_arena_lichess_manager_options_v1 allowlisted groups plus explicit
       rated/outbound confirmations.

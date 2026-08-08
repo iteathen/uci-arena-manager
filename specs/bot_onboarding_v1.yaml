@@ -14,19 +14,36 @@ profile:
 
 token_reference:
   ownership: permanent_operator_external_file
-  selection_owner: interactive_user_native_picker
+  selection_owner: authenticated_interactive_user_helper
   persistence_owner: installer_owned_locator_transaction
+  input_modes:
+    default: write_only_direct_token
+    advanced: existing_external_file_locator
   rules:
     - Installers, packages, repositories, release artifacts, tests, and
       Manager state never contain a Lichess API credential.
     - Each local installation supplies its own external token file and may
       replace the saved path reference without modifying installed payloads.
+    - The default dashboard control is a masked direct API-token field. Its
+      value is sent only as one bounded application/octet-stream body to the
+      authenticated native helper and is never encoded as JSON, a URL, argv,
+      setup output, browser storage, or Manager service state.
+    - The native helper atomically materializes the value in an
+      access-restricted per-user operator-owned file outside Manager data and
+      installed component roots. It then supplies only that path to the same
+      Installer-owned locator transaction used by existing-file selection.
+    - Direct replacement is rejected while provider startup is enabled. A
+      failed locator commit restores the preceding file exactly and leaves no
+      staged or backup credential file.
+    - Existing token-file selection remains available behind an explicit
+      advanced control and retains its metadata-only validation contract.
     - A token path under Manager-owned data or the verified provider component
       root is rejected; neither location may become credential storage.
     - Discovery exposes an external-token-path blocker before probe or startup
       when a legacy locator points into the verified provider component.
-    - The dashboard can select and replace the token-file reference without a terminal
-      through the authenticated desktop helper and adjacent Installer-owned arena-setup.
+    - The dashboard can materialize, select, and replace the token-file
+      reference without a terminal through the authenticated desktop helper
+      and adjacent Installer-owned arena-setup.
     - The Manager service has no token-locator mutation endpoint. It reads only the
       validated saved-locator contract and projects redacted availability.
     - Installer validation uses filesystem metadata only and never opens, hashes, copies,
@@ -195,7 +212,11 @@ lifecycle:
 
 acceptance:
   - A Complete Arena install shows the adapter as installed but disabled.
-  - A token-file reference can be selected without Manager or installer reading it.
+  - A direct token can be entered without reaching the Manager service and is
+    materialized as a private external file before only its path is committed.
+  - An existing token-file reference can be selected without Manager or installer reading it.
+  - Failed direct materialization or locator commit leaves the prior credential
+    and locator authoritative and leaves no staged or backup file.
   - Saving the reference through Bots and Configuration uses the same typed
     Installer import transaction; no Manager-only write path can bypass
     consumer-configuration regeneration or provider refresh.

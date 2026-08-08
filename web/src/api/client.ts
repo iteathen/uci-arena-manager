@@ -231,6 +231,22 @@ export function discoverLocalAssets(roots: string[] = []) {
   )
 }
 
+export interface LocalCredentialPlan {
+  schema: 'arena_ui_credential_plan_v1'
+  credential: 'lichess_bot_token'
+  storage: 'private_operator_external_file'
+  provider_startup_must_be_disabled: true
+  actions: Array<{ action: string }>
+}
+
+export interface LocalCredentialResult {
+  schema: 'arena_ui_credential_result_v1'
+  state: 'committed'
+  credential: 'lichess_bot_token'
+  locator_committed: true
+  consumer_configuration_regenerated: true
+}
+
 export function applyLocalSetup(request: LocalSetupRequest) {
   if (!localSetupAvailable()) {
     throw new ApiError(
@@ -243,6 +259,63 @@ export function applyLocalSetup(request: LocalSetupRequest) {
     schema: 'arena_ui_setup_request_v1',
     ...request,
   })
+}
+
+export function planLocalLichessCredential(): Promise<LocalCredentialPlan> {
+  if (!localSetupAvailable()) {
+    throw new ApiError(
+      'API-key setup is available only in the native desktop application.',
+      503,
+      'credential_capability_unavailable',
+    )
+  }
+  return localHelperRequest<LocalCredentialPlan>('/v1/bot-credential-plan', {
+    schema: 'arena_ui_credential_plan_request_v1',
+  })
+}
+
+export async function applyLocalLichessCredential(
+  credential: string,
+): Promise<LocalCredentialResult> {
+  const port = sessionStorage.getItem(pickerPortKey)
+  const token = sessionStorage.getItem(pickerTokenKey)
+  if (!localSetupAvailable() || !port || !token) {
+    throw new ApiError(
+      'Open UCI Arena Manager from its desktop launcher and keep it open to save the API key.',
+      503,
+      'credential_capability_unavailable',
+    )
+  }
+  let response: Response
+  try {
+    response = await fetch(`http://127.0.0.1:${port}/v1/bot-credential-apply`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/octet-stream',
+      },
+      body: credential,
+    })
+  } catch {
+    throw new ApiError(
+      'The interactive-user helper is no longer running. Reopen UCI Arena Manager and try again.',
+      503,
+      'interactive_helper_unavailable',
+    )
+  }
+  const result = (await response.json()) as LocalCredentialResult & {
+    code?: string
+    detail?: string
+  }
+  if (!response.ok) {
+    throw new ApiError(
+      result.detail ?? 'The API key could not be saved',
+      response.status,
+      result.code ?? 'credential_setup_failed',
+    )
+  }
+  return result
 }
 
 export interface LocalPathFilter {

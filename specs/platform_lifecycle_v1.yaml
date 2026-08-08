@@ -122,7 +122,10 @@ desktop_application:
     runtime_authority: manager_service_only
     manager_endpoint: authenticated_loopback_http
     authentication: one_use_pairing_token
-    interactive_authority: [path_picker, typed_component_setup]
+    interactive_authority:
+      - path_picker
+      - typed_component_setup
+      - write_only_operator_credential_materialization
     bridge: authenticated_narrow_typed_loopback_capabilities_only
     arbitrary_process_execution: forbidden
     external_browser:

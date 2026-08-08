@@ -256,9 +256,19 @@ bot_experience:
       dependencies before token-file onboarding.
       If the adapter is missing but retained media is unavailable, keep an
       explicit Suite Setup repair prerequisite visible.
+    - Present a masked direct Lichess API-key field as the normal credential
+      setup path. Keep selection of an existing token file behind an explicit
+      advanced control rather than showing both paths at once.
+    - Direct entry is available only through the authenticated native desktop
+      helper. It creates or atomically replaces one access-restricted per-user
+      operator-owned token file outside Manager data and installed roots, then
+      commits only its path through the same Installer-owned import transaction.
+      Provider startup must be disabled before replacement.
     - Use an operator-owned token-file path permanently. Local installations
-      provide their own credential; repositories, packages, tests, and Manager
-      state never contain one.
+      provide their own credential; repositories, packages, tests, setup
+      results, browser storage, Manager service APIs, and Manager state never
+      contain one. Normal uninstall preserves the external file and purge has
+      no authority to remove it.
     - Saving or replacing the token-file reference uses the same reviewed
       Installer-owned import plan and commit from both Bots and Configuration.
       The Manager HTTP API remains read-only for saved locators and cannot

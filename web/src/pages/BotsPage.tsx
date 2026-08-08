@@ -2,13 +2,12 @@ import { IconRefresh, IconRobot } from '@tabler/icons-react'
 import { Alert, Badge, Button, Code, Group, Paper, SimpleGrid, Stack, Text, ThemeIcon, Title } from '@mantine/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { api, controlLocalBot, localSetupAvailable, probeLocalBot } from '../api/client'
+import { api, controlLocalBot, probeLocalBot } from '../api/client'
 import type { BotCandidate } from '../api/types'
 import { PageHeader } from '../components/PageHeader'
-import { PathPickerInput } from '../components/PathPickerInput'
 import { ComponentSetupButton } from '../components/ComponentSetupButton'
 import { BotOperationsPanel } from '../components/BotOperationsPanel'
-import { LocalSetupImportButton } from '../components/LocalSetupImportButton'
+import { LichessCredentialSetup } from '../components/LichessCredentialSetup'
 
 export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
   const queryClient = useQueryClient()
@@ -18,8 +17,6 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
   const adapterComponent = components.data?.components.find(
     (component) => component.component_id === 'lichess.adapter',
   )
-  const [tokenPath, setTokenPath] = useState('')
-  const [tokenSaveMessage, setTokenSaveMessage] = useState('')
   const [detectionMessage, setDetectionMessage] = useState('')
   const probe = useMutation({ mutationFn: probeLocalBot })
   const candidate = candidates.data?.candidates[0]
@@ -109,7 +106,7 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
               <div>
                 <Title order={2}>Lichess Bot</Title>
                 <Text size="sm" c="dimmed">
-                  One local BOT account using a token-file path reference.
+                  One local BOT account with direct API-key setup or an advanced existing-file locator.
                 </Text>
               </div>
             </Group>
@@ -147,42 +144,11 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
               <Text size="sm">Token-file reference</Text>
               <Code>{candidate?.token_reference_available ? 'available' : 'missing'}</Code>
             </Group>
-            <PathPickerInput
-              label="Lichess token file"
-              description="Select an operator-owned file outside Manager data and the installed adapter. Only its path is saved."
-              placeholder="Select the existing token file"
-              value={tokenPath}
-              onChange={setTokenPath}
-              mode="file"
-              filters={[{ name: 'Token reference files', patterns: ['*.txt', '*.token', '*'] }]}
+            <LichessCredentialSetup
+              onCompleted={async () => {
+                await candidates.refetch()
+              }}
             />
-            <Group justify="flex-end">
-              <LocalSetupImportButton
-                assetKind="lichess_token_path"
-                path={tokenPath}
-                label="Review token-file reference"
-                onCompleted={async () => {
-                  setTokenPath('')
-                  setTokenSaveMessage(
-                    'Token-file reference and affected consumer configuration committed.',
-                  )
-                  await candidates.refetch()
-                }}
-              />
-            </Group>
-            {!localSetupAvailable() && (
-              <Alert color="blue" title="Desktop setup required">
-                <Group justify="space-between" align="flex-end">
-                  <Text size="sm">
-                    Reopen the installed desktop application to save this reference, or
-                    use Configuration to copy the equivalent setup command.
-                  </Text>
-                  <Button size="xs" variant="subtle" onClick={() => navigate('configuration')}>
-                    Open Configuration
-                  </Button>
-                </Group>
-              </Alert>
-            )}
             <Group justify="space-between">
               <Text size="sm">Startup</Text>
               <Code>
@@ -232,7 +198,6 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
             ))}
             {candidates.error && <Alert color="red">{candidates.error.message}</Alert>}
             {detectionMessage && <Alert color="blue">{detectionMessage}</Alert>}
-            {tokenSaveMessage && <Alert color="green">{tokenSaveMessage}</Alert>}
             {probe.error && <Alert color="red">{probe.error.message}</Alert>}
             {startup.error && (
               <Alert color="blue">

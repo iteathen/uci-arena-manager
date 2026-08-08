@@ -51,7 +51,7 @@ mandatory_boundaries:
   - "The Installer is an independent product that installs Manager through Manager's immutable artifact and component manifest; Manager does not own installer transaction behavior."
   - "Installer-owned saved locators are mutated only through the adjacent typed arena-setup transaction; Manager may validate and project their redacted availability but its service API never writes them."
   - "Repositories exchange versioned contracts and immutable release artifacts and never import one another's internal source trees."
-  - "Operator secrets are write-only at Manager boundaries; token contents belong to the provider and are never returned, logged, packaged, or persisted by Manager."
+  - "Operator secrets are write-only at Manager boundaries; token contents belong to the operator and provider and are never returned, logged, packaged, or persisted in Manager state. The authenticated native helper may accept one bounded token body solely to atomically materialize an access-restricted operator-owned external file and commit its path through the adjacent Installer locator transaction; the Manager service never receives that body."
 
 required_provider_operations:
   characteristics:
