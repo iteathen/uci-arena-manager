@@ -167,6 +167,16 @@ readiness:
         independently projects active, ready, stream connectivity, and bounded
         blockers. Startup registration alone never implies an active bot.
   rule: Missing readiness never appears as active.
+  evidence_contract:
+    current_capacity_schema: uci_arena_lichess_capacity_profile_v2
+    current_transport_schema: uci_arena_lichess_transport_profile_v2
+    rules:
+      - Manager path hints prefer the current v2 capacity and transport
+        filenames, while permissive discovery may retain older parseable
+        evidence for review.
+      - Manager never promotes, rewrites, or invalidates timing evidence from
+        its filename or age. The verified Lichess provider remains authority
+        for profile schema, qualification, compatibility, and effective use.
 
 lifecycle:
   startup_owner: provider_per_user

@@ -340,7 +340,7 @@ void write_ready_bot_fixture(
         {"lichess_single_game_profile",
          root / "uci_arena_single_game_profile_v1.json"},
         {"lichess_capacity_profile",
-         root / "uci_arena_lichess_capacity_profile_v1.json"},
+         root / "uci_arena_lichess_capacity_profile_v2.json"},
         {"lichess_transport_profile", root / "transport_profile_v2.json"},
         {"lichess_token_path", root / "operator-token.txt"},
     }};
@@ -909,7 +909,7 @@ TEST_CASE("Lichess bot discovery becomes probe-ready only with exact visible pre
     const fs::path timing = root / "uci_time_profile_v3.json";
     const fs::path single = root / "uci_arena_single_game_profile_v1.json";
     const fs::path capacity =
-        root / "uci_arena_lichess_capacity_profile_v1.json";
+        root / "uci_arena_lichess_capacity_profile_v2.json";
     const fs::path transport = root / "transport_profile_v2.json";
     const fs::path token = root / "operator-token.txt";
     for (const auto& path : {timing, single, capacity, transport, token}) {

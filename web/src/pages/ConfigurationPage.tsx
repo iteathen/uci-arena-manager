@@ -500,12 +500,12 @@ export function ConfigurationPage({ navigate }: { navigate: (page: string) => vo
             <Stack>
               <PathPickerInput
                 label="Lichess capacity profile"
-                description="Select the qualified concurrency profile bound to the same engine, model, and single-game profile."
-                placeholder="D:\Chess\profiles\uci_arena_lichess_capacity_profile_v1.json"
+                description="Select the qualified v2 concurrency profile bound to the same engine, model, timing authority, and single-game profile."
+                placeholder="D:\Chess\profiles\uci_arena_lichess_capacity_profile_v2.json"
                 value={capacityProfilePath}
                 onChange={setCapacityProfilePath}
                 mode="file"
-                filters={[{ name: 'Lichess capacity profiles', patterns: ['uci_arena_lichess_capacity_profile_v1.json', '*.json'] }]}
+                filters={[{ name: 'Lichess capacity profiles', patterns: ['uci_arena_lichess_capacity_profile_v2.json', '*.json'] }]}
               />
               {reviewImport(
                 'capacity-profile',
@@ -517,7 +517,7 @@ export function ConfigurationPage({ navigate }: { navigate: (page: string) => vo
             <Stack>
               <PathPickerInput
                 label="Lichess transport profile"
-                description="Select the qualified v2 network transport-reserve profile measured for this host."
+                description="Select the qualified v2 network transport-reserve profile. Compatible evidence remains authoritative as it rolls forward with completed-game observations; age alone does not invalidate it."
                 placeholder="D:\Chess\profiles\transport_profile_v2.json"
                 value={transportProfilePath}
                 onChange={setTransportProfilePath}
