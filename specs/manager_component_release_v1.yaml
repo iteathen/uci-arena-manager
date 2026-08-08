@@ -49,6 +49,10 @@ producer_contract:
     - The provider result binds exact source, target, artifact, manifest,
       dependency-lock, test, SBOM, license, and workflow identities.
     - A release requires a clean tracked tree and the exact declared test set.
+    - Candidate publication uses repository-owned release-only vcpkg triplets
+      in isolated component-release build roots. Debug dependency variants are
+      developer-build inputs, not candidate inputs, and the candidate manifest
+      declares only packages consumed by Manager targets.
     - The manually dispatched candidate workflow separates specification/web,
       pinned native dependency materialization, native configure, native build,
       and native test gates; every gate and the complete job have explicit time

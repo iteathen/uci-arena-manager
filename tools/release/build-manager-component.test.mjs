@@ -87,6 +87,13 @@ test("Manager component workflow pins dependencies and bounds each release gate"
     path.join(repositoryRoot, ".github", "workflows", "component-release.yml"),
     "utf8",
   );
+  const presets = JSON.parse(readFileSync(
+    path.join(repositoryRoot, "CMakePresets.json"),
+    "utf8",
+  ));
+  const dependencyNames = manifest.dependencies.map((dependency) => (
+    typeof dependency === "string" ? dependency : dependency.name
+  ));
   assert.match(
     workflow,
     new RegExp(`vcpkgGitCommitId: ${manifest["builtin-baseline"]}`, "u"),
@@ -104,7 +111,33 @@ test("Manager component workflow pins dependencies and bounds each release gate"
   assert.match(workflow, /--clean-first --parallel 4/u);
   assert.match(workflow, /--output-on-failure --timeout 300/u);
   assert.match(workflow, /VCPKG_BINARY_SOURCES = 'clear'/u);
+  assert.match(workflow, /--overlay-triplets=\$overlayTriplets/u);
   assert.match(workflow, /--x-install-root=\$installRoot/u);
+  assert.match(workflow, /x64-windows-release/u);
+  assert.match(workflow, /x64-linux-release/u);
+  for (const target of ["windows", "linux"]) {
+    const preset = presets.configurePresets.find(
+      ({ name }) => name === `${target}-component-release`,
+    );
+    assert.ok(preset, `missing ${target} component-release preset`);
+    assert.equal(
+      preset.cacheVariables.VCPKG_TARGET_TRIPLET,
+      `x64-${target}-release`,
+    );
+    const triplet = readFileSync(
+      path.join(
+        repositoryRoot,
+        "cmake",
+        "triplets",
+        `x64-${target}-release.cmake`,
+      ),
+      "utf8",
+    );
+    assert.match(triplet, /set\(VCPKG_BUILD_TYPE release\)/u);
+  }
+  for (const stale of ["libarchive", "tomlplusplus", "zstd"]) {
+    assert.equal(dependencyNames.includes(stale), false);
+  }
   assert.doesNotMatch(workflow, /- name: Build and verify exact Manager source/u);
 });
 

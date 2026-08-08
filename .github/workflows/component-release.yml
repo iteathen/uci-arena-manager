@@ -95,13 +95,15 @@ jobs:
         timeout-minutes: 45
         shell: pwsh
         run: |
-          $triplet = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'x64-windows' } else { 'x64-linux' }
-          $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-release' } else { 'linux-release' }
+          $triplet = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'x64-windows-release' } else { 'x64-linux-release' }
+          $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-component-release' } else { 'linux-component-release' }
           $vcpkg = Join-Path $env:VCPKG_ROOT $(if ($IsWindows) { 'vcpkg.exe' } else { 'vcpkg' })
           $installRoot = Join-Path $PWD "build/$preset/vcpkg_installed"
+          $overlayTriplets = Join-Path $PWD 'cmake/triplets'
           $env:VCPKG_BINARY_SOURCES = 'clear'
           & $vcpkg install `
             --triplet $triplet `
+            "--overlay-triplets=$overlayTriplets" `
             "--x-manifest-root=$PWD" `
             "--x-install-root=$installRoot"
           if ($LASTEXITCODE -ne 0) { throw 'Manager native dependency installation failed' }
@@ -109,27 +111,27 @@ jobs:
         timeout-minutes: 5
         shell: pwsh
         run: |
-          $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-release' } else { 'linux-release' }
+          $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-component-release' } else { 'linux-component-release' }
           cmake --preset $preset "-DARENA_VERSION=$env:RELEASE_VERSION"
           if ($LASTEXITCODE -ne 0) { throw 'Manager configure failed' }
       - name: Build exact Manager source
         timeout-minutes: 30
         shell: pwsh
         run: |
-          $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-release' } else { 'linux-release' }
+          $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-component-release' } else { 'linux-component-release' }
           cmake --build --preset $preset --clean-first --parallel 4
           if ($LASTEXITCODE -ne 0) { throw 'Manager build failed' }
       - name: Verify exact Manager native tests
         timeout-minutes: 10
         shell: pwsh
         run: |
-          $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-release' } else { 'linux-release' }
+          $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-component-release' } else { 'linux-component-release' }
           ctest --preset $preset --output-on-failure --timeout 300
           if ($LASTEXITCODE -ne 0) { throw 'Manager native tests failed' }
       - name: Build deterministic Manager component
         shell: pwsh
         run: |
-          $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-release' } else { 'linux-release' }
+          $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-component-release' } else { 'linux-component-release' }
           cmake --install "build/$preset" --config Release --prefix provider_stage/manager-install
           if ($LASTEXITCODE -ne 0) { throw 'Manager install-tree staging failed' }
           $epoch = git show -s --format=%ct HEAD

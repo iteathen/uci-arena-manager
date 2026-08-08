@@ -51,7 +51,6 @@ find_package(unofficial-libharu CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
-find_package(tomlplusplus CONFIG REQUIRED)
 find_package(unofficial-sodium CONFIG REQUIRED)
 
 add_library(arena_core
