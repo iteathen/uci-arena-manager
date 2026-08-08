@@ -91,9 +91,10 @@ test("Manager component workflow pins dependencies and bounds each release gate"
     workflow,
     new RegExp(`vcpkgGitCommitId: ${manifest["builtin-baseline"]}`, "u"),
   );
-  assert.match(workflow, /^\s{4}timeout-minutes: 60$/mu);
+  assert.match(workflow, /^\s{4}timeout-minutes: 75$/mu);
   for (const gate of [
     "Verify Manager specifications and web application",
+    "Install exact native dependency closure",
     "Configure exact Manager source",
     "Build exact Manager source",
     "Verify exact Manager native tests",
@@ -102,6 +103,8 @@ test("Manager component workflow pins dependencies and bounds each release gate"
   }
   assert.match(workflow, /--clean-first --parallel 4/u);
   assert.match(workflow, /--output-on-failure --timeout 300/u);
+  assert.match(workflow, /VCPKG_BINARY_SOURCES = 'clear'/u);
+  assert.match(workflow, /--x-install-root=\$installRoot/u);
   assert.doesNotMatch(workflow, /- name: Build and verify exact Manager source/u);
 });
 

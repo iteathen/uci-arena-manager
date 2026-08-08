@@ -25,7 +25,7 @@ concurrency:
 jobs:
   build-sign-verify:
     runs-on: ${{ inputs.target == 'windows-x86_64' && 'windows-2025' || 'ubuntu-24.04' }}
-    timeout-minutes: 60
+    timeout-minutes: 75
     permissions:
       contents: write
       id-token: write
@@ -91,8 +91,22 @@ jobs:
           npm run naming:check
           npm test --prefix web
           npm run build --prefix web
+      - name: Install exact native dependency closure
+        timeout-minutes: 45
+        shell: pwsh
+        run: |
+          $triplet = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'x64-windows' } else { 'x64-linux' }
+          $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-release' } else { 'linux-release' }
+          $vcpkg = Join-Path $env:VCPKG_ROOT $(if ($IsWindows) { 'vcpkg.exe' } else { 'vcpkg' })
+          $installRoot = Join-Path $PWD "build/$preset/vcpkg_installed"
+          $env:VCPKG_BINARY_SOURCES = 'clear'
+          & $vcpkg install `
+            --triplet $triplet `
+            "--x-manifest-root=$PWD" `
+            "--x-install-root=$installRoot"
+          if ($LASTEXITCODE -ne 0) { throw 'Manager native dependency installation failed' }
       - name: Configure exact Manager source
-        timeout-minutes: 10
+        timeout-minutes: 5
         shell: pwsh
         run: |
           $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-release' } else { 'linux-release' }

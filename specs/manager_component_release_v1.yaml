@@ -50,9 +50,11 @@ producer_contract:
       dependency-lock, test, SBOM, license, and workflow identities.
     - A release requires a clean tracked tree and the exact declared test set.
     - The manually dispatched candidate workflow separates specification/web,
-      native configure, native build, and native test gates; every gate and the
-      complete job have explicit time bounds so a stalled runner cannot consume
-      unbounded private-repository minutes or hide which brick stalled.
+      pinned native dependency materialization, native configure, native build,
+      and native test gates; every gate and the complete job have explicit time
+      bounds so a stalled runner cannot consume unbounded private-repository
+      minutes or hide which brick stalled. Deprecated or unavailable binary
+      cache backends never masquerade as restored dependency authority.
     - The explicitly dispatched signing job publishes the verified archive,
       provider result, and Sigstore bundle directly to one private immutable
       candidate prerelease. Actions artifact storage is not candidate transport.
