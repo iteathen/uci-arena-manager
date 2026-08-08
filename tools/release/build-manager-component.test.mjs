@@ -78,7 +78,7 @@ test("Manager source and component definition contain no Installer engine", () =
   );
 });
 
-test("Manager component workflow uses the manifest's exact vcpkg baseline", () => {
+test("Manager component workflow pins dependencies and bounds each release gate", () => {
   const manifest = JSON.parse(readFileSync(
     path.join(repositoryRoot, "vcpkg.json"),
     "utf8",
@@ -91,6 +91,18 @@ test("Manager component workflow uses the manifest's exact vcpkg baseline", () =
     workflow,
     new RegExp(`vcpkgGitCommitId: ${manifest["builtin-baseline"]}`, "u"),
   );
+  assert.match(workflow, /^\s{4}timeout-minutes: 60$/mu);
+  for (const gate of [
+    "Verify Manager specifications and web application",
+    "Configure exact Manager source",
+    "Build exact Manager source",
+    "Verify exact Manager native tests",
+  ]) {
+    assert.match(workflow, new RegExp(`- name: ${gate}`, "u"));
+  }
+  assert.match(workflow, /--clean-first --parallel 4/u);
+  assert.match(workflow, /--output-on-failure --timeout 300/u);
+  assert.doesNotMatch(workflow, /- name: Build and verify exact Manager source/u);
 });
 
 function sha256(filename) {

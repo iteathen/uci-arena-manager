@@ -25,6 +25,7 @@ concurrency:
 jobs:
   build-sign-verify:
     runs-on: ${{ inputs.target == 'windows-x86_64' && 'windows-2025' || 'ubuntu-24.04' }}
+    timeout-minutes: 60
     permissions:
       contents: write
       id-token: write
@@ -82,19 +83,34 @@ jobs:
       - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
         with:
           vcpkgGitCommitId: 9e593bb18ea69cc5095e012465dcd675a822ed0d
-      - name: Build and verify exact Manager source
+      - name: Verify Manager specifications and web application
+        timeout-minutes: 10
         shell: pwsh
         run: |
           node tools/spec-check.mjs
           npm run naming:check
           npm test --prefix web
           npm run build --prefix web
+      - name: Configure exact Manager source
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
           $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-release' } else { 'linux-release' }
           cmake --preset $preset "-DARENA_VERSION=$env:RELEASE_VERSION"
           if ($LASTEXITCODE -ne 0) { throw 'Manager configure failed' }
-          cmake --build --preset $preset --clean-first
+      - name: Build exact Manager source
+        timeout-minutes: 30
+        shell: pwsh
+        run: |
+          $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-release' } else { 'linux-release' }
+          cmake --build --preset $preset --clean-first --parallel 4
           if ($LASTEXITCODE -ne 0) { throw 'Manager build failed' }
-          ctest --preset $preset --output-on-failure
+      - name: Verify exact Manager native tests
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-release' } else { 'linux-release' }
+          ctest --preset $preset --output-on-failure --timeout 300
           if ($LASTEXITCODE -ne 0) { throw 'Manager native tests failed' }
       - name: Build deterministic Manager component
         shell: pwsh
