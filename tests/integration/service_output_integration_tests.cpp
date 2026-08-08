@@ -116,8 +116,9 @@ void seed_managed_service(
 json register_installed_evidence_and_status(
     arena::application::ControlPlane& control_plane,
     const std::shared_ptr<arena::adapters::SqliteStore>& store,
-    const fs::path& root) {
-    const fs::path cli = root / "evidence-cli.mjs";
+    const fs::path& root,
+    const std::string& cli_name = "evidence-cli.mjs") {
+    const fs::path cli = root / cli_name;
     const fs::path workspace = root / "uci_arena_evidence-workspace";
     fs::create_directories(workspace);
     std::ofstream(cli) << "mock";
@@ -388,6 +389,78 @@ TEST_CASE("service start never reports running before provider status") {
             status.at("resource")
                     .at("data")
                     .at("observed_state") == "running");
+    }
+    fs::remove_all(root);
+}
+
+TEST_CASE("remembered provider phase is never live runtime authority") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-service-live-authority-" + arena::domain::uuid_v7());
+    fs::create_directories(root);
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(
+            root / "arena.db");
+        arena::application::ControlPlane control_plane(store);
+        control_plane.initialize();
+
+        const json dead = register_and_status(
+            control_plane, root, "book_forge", "book-dead-phase.mjs");
+        const json& dead_data = dead.at("resource").at("data");
+        REQUIRE(dead_data.at("integration_state") == "available");
+        REQUIRE(dead_data.at("observed_state") == "stopped");
+        REQUIRE(dead_data.at("health").at("state") == "healthy");
+        REQUIRE(
+            dead_data.at("health").at("reason") ==
+            "provider reports no live daemon; API contracts validated");
+
+        const std::string dead_id = dead.at("resource").at("id");
+        static_cast<void>(control_plane.submit(
+            command(
+                "resource.remove",
+                {{"kind", "managed_service"}, {"id", dead_id}}),
+            "test"));
+
+        const json legacy = register_and_status(
+            control_plane,
+            root,
+            "book_forge",
+            "book-missing-liveness.mjs");
+        const json& legacy_data = legacy.at("resource").at("data");
+        REQUIRE(legacy_data.at("integration_state") == "available");
+        REQUIRE(legacy_data.at("observed_state") == "stopped");
+        REQUIRE(legacy_data.at("health").at("state") == "unknown");
+        REQUIRE(
+            legacy_data.at("health").at("reason") ==
+            "provider status omitted authoritative daemon liveness");
+    }
+    fs::remove_all(root);
+}
+
+TEST_CASE("installed provider API without liveness fails closed to stopped") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-service-api-live-authority-" + arena::domain::uuid_v7());
+    fs::create_directories(root);
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(
+            root / "arena.db");
+        arena::application::ControlPlane control_plane(store);
+        control_plane.initialize();
+
+        const json status = register_installed_evidence_and_status(
+            control_plane,
+            store,
+            root,
+            "evidence-missing-liveness.mjs");
+        const json& data = status.at("resource").at("data");
+        REQUIRE(data.at("integration_state") == "available");
+        REQUIRE(data.at("observed_state") == "stopped");
+        REQUIRE(data.at("health").at("state") == "unknown");
+        REQUIRE(
+            data.at("health").at("reason") ==
+            "provider status omitted authoritative daemon liveness");
+        REQUIRE(data.contains("output_integration"));
     }
     fs::remove_all(root);
 }

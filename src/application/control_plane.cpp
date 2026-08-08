@@ -28,6 +28,78 @@ using nlohmann::json;
 
 std::vector<std::string> string_array(const json& object, const char* name);
 
+struct ProviderRuntimeProjection final {
+    std::string observed_state;
+    std::string health_state;
+    std::string health_reason;
+};
+
+ProviderRuntimeProjection project_provider_runtime(
+    const json& daemon,
+    const bool paused,
+    const bool manager_process_running,
+    const std::string& last_error,
+    const std::string& healthy_reason) {
+    if (!daemon.is_object()) {
+        throw std::runtime_error("provider daemon status must be an object");
+    }
+    const std::string phase = daemon.value("phase", "stopped");
+    const bool has_active = daemon.contains("active");
+    const bool has_process_alive = daemon.contains("processAlive");
+    const bool has_stale = daemon.contains("stale");
+    if ((has_active && !daemon.at("active").is_boolean()) ||
+        (has_process_alive && !daemon.at("processAlive").is_boolean()) ||
+        (has_stale && !daemon.at("stale").is_boolean())) {
+        throw std::runtime_error(
+            "provider daemon liveness fields must be booleans");
+    }
+    const bool liveness_declared =
+        has_active && has_process_alive && has_stale;
+    const bool process_alive =
+        liveness_declared && daemon.at("processAlive").get<bool>();
+    const bool stale =
+        liveness_declared && daemon.at("stale").get<bool>();
+    const bool phase_can_be_active =
+        !phase.empty() && phase != "stopped" && phase != "failed";
+    const bool derived_active =
+        liveness_declared && process_alive && !stale && phase_can_be_active;
+    const bool reported_active =
+        liveness_declared && daemon.at("active").get<bool>();
+    const bool inconsistent_liveness =
+        liveness_declared && reported_active != derived_active;
+    const bool active =
+        manager_process_running || (reported_active && derived_active);
+    const bool degraded =
+        phase == "failed" || !last_error.empty() || inconsistent_liveness;
+
+    ProviderRuntimeProjection projection;
+    projection.observed_state =
+        degraded ? "degraded" :
+        active && paused ? "paused" :
+        active ? "running" : "stopped";
+    projection.health_state =
+        degraded ? "degraded" :
+        !manager_process_running && !liveness_declared ? "unknown" : "healthy";
+    if (phase == "failed") {
+        projection.health_reason =
+            last_error.empty() ? "provider daemon failed" : last_error;
+    } else if (!last_error.empty()) {
+        projection.health_reason = last_error;
+    } else if (inconsistent_liveness) {
+        projection.health_reason =
+            "provider daemon liveness fields contradict one another";
+    } else if (!manager_process_running && !liveness_declared) {
+        projection.health_reason =
+            "provider status omitted authoritative daemon liveness";
+    } else if (!active) {
+        projection.health_reason =
+            "provider reports no live daemon; API contracts validated";
+    } else {
+        projection.health_reason = healthy_reason;
+    }
+    return projection;
+}
+
 struct RenderedReportArtifact final {
     std::string format;
     std::string extension;
@@ -2806,35 +2878,22 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                             "daemon", json::object());
                     const bool paused =
                         control.value("paused", false);
-                    const std::string daemon_phase =
-                        daemon.value("phase", "stopped");
                     const std::string last_error =
                         daemon.value(
                             "lastError",
                             daemon.value("last_error", ""));
-                    const bool daemon_active =
-                        process_supervisor_.running(id) ||
-                        (!daemon.value("stale", false) &&
-                         daemon_phase != "stopped" &&
-                         daemon_phase != "failed" &&
-                         !daemon_phase.empty());
-                    const bool degraded =
-                        daemon_phase == "failed" ||
-                        !last_error.empty();
+                    const ProviderRuntimeProjection runtime =
+                        project_provider_runtime(
+                            daemon,
+                            paused,
+                            process_supervisor_.running(id),
+                            last_error,
+                            "Manager service API contracts validated");
                     data["integration_state"] = "available";
-                    data["observed_state"] =
-                        degraded ? "degraded" :
-                        paused ? "paused" :
-                        daemon_active ? "running" : "stopped";
+                    data["observed_state"] = runtime.observed_state;
                     data["health"] = {
-                        {"state",
-                         degraded ? "degraded" : "healthy"},
-                        {"reason",
-                         degraded
-                             ? (last_error.empty()
-                                    ? "service daemon failed"
-                                    : last_error)
-                             : "Manager service API contracts validated"},
+                        {"state", runtime.health_state},
+                        {"reason", runtime.health_reason},
                         {"observed_at", domain::utc_now()},
                     };
                     data["manager_api_projection"] = {
@@ -3068,33 +3127,26 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                         const json daemon =
                             status_payload.value("daemon", json::object());
                         const bool paused = control.value("paused", false);
-                        const std::string daemon_phase =
-                            daemon.value("phase", "stopped");
                         const std::string last_error =
                             daemon.value("lastError", "");
-                        const bool daemon_active =
-                            process_supervisor_.running(id) ||
-                            (!daemon.value("stale", false) &&
-                             daemon_phase != "stopped" &&
-                             daemon_phase != "failed" &&
-                             !daemon_phase.empty());
-                        const bool degraded =
-                            daemon_phase == "failed" || !last_error.empty();
+                        const ProviderRuntimeProjection runtime =
+                            project_provider_runtime(
+                                daemon,
+                                paused,
+                                process_supervisor_.running(id),
+                                last_error,
+                                "Evidence Service status and dataset contracts validated");
                         data["integration_state"] = "available";
-                        data["observed_state"] =
-                            degraded ? "degraded" :
-                            paused ? "paused" :
-                            daemon_active ? "running" : "stopped";
+                        data["observed_state"] = runtime.observed_state;
                         data["health"] = {
-                            {"state", degraded ? "degraded" : "healthy"},
+                            {"state", runtime.health_state},
                             {"reason",
-                             degraded ?
-                                 last_error.empty() ?
-                                     "Evidence Service daemon failed" :
-                                     last_error :
-                                 collection.value(
-                                     "reason",
-                                     "Evidence Service status and dataset contracts validated")},
+                             runtime.health_state == "healthy" &&
+                                     runtime.observed_state != "stopped"
+                                 ? collection.value(
+                                       "reason",
+                                       runtime.health_reason)
+                                 : runtime.health_reason},
                             {"observed_at", domain::utc_now()},
                         };
                         data["output_integration"] = {
@@ -3159,29 +3211,26 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                                  {"published_at",
                                   channel.value("published_at", "")}});
                         }
+                        const json control =
+                            status_payload.value("control", json::object());
+                        const json daemon =
+                            status_payload.value("daemon", json::object());
+                        const std::string last_error =
+                            daemon.value(
+                                "lastError",
+                                daemon.value("last_error", ""));
+                        const ProviderRuntimeProjection runtime =
+                            project_provider_runtime(
+                                daemon,
+                                control.value("paused", false),
+                                process_supervisor_.running(id),
+                                last_error,
+                                "Book Forge status and snapshot contracts validated");
                         data["integration_state"] = "available";
-                        data["observed_state"] =
-                            status_payload.value("control", json::object())
-                                    .value("paused", false)
-                                ? "paused"
-                                : process_supervisor_.running(id) ||
-                                          (!status_payload
-                                                .value("daemon", json::object())
-                                                .value("stale", false) &&
-                                           status_payload
-                                                   .value("daemon", json::object())
-                                                   .value("phase", "stopped") !=
-                                               "stopped" &&
-                                           status_payload
-                                                   .value("daemon", json::object())
-                                                   .value("phase", "failed") !=
-                                               "failed")
-                                      ? "running"
-                                      : "stopped";
+                        data["observed_state"] = runtime.observed_state;
                         data["health"] = {
-                            {"state", "healthy"},
-                            {"reason",
-                             "Book Forge status and snapshot contracts validated"},
+                            {"state", runtime.health_state},
+                            {"reason", runtime.health_reason},
                             {"observed_at", domain::utc_now()},
                         };
                         data["output_integration"] = {

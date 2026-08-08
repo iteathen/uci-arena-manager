@@ -123,9 +123,11 @@ common_contract:
       contract even when component digests are unchanged, so output
       integrations and observed state cannot remain stale across an installer
       restart.
-    - A provider daemon reported active and non-stale by its public status
-      contract is observed as running even when the Manager process supervisor
-      did not launch that per-user startup instance.
+    - A provider daemon reported explicitly active, process-alive, and non-stale
+      by its public status contract is observed as running even when the Manager
+      process supervisor did not launch that per-user startup instance. A
+      remembered phase, pid, heartbeat, startup registration, or desired state
+      is not live runtime authority.
     - Per-user provider startup registrations remain provider-owned. Manager
       never starts a duplicate daemon when startup_installed is true; status,
       pause, and resume remain available, while process start/stop/restart are
@@ -146,6 +148,10 @@ common_contract:
       - A provider status payload whose daemon phase is stopped, failed, empty,
         or stale cannot be projected as running solely because desired_state
         is running or a launch request returned successfully.
+      - Provider-owned runtime status without explicit daemon active,
+        process-alive, and stale booleans fails closed to stopped with unknown
+        health. Validated output projections remain available, but they never
+        substitute for live process authority.
       - Compatible saved, environment, PATH, and receipt hints are merged into
         complete candidates before partial candidates are returned.
       - Describe, status, and configuration probes use the normal bounded
