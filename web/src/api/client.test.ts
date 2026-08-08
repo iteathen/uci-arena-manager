@@ -314,15 +314,34 @@ describe('native desktop typed setup', () => {
           },
         ),
       )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            schema: 'arena_install_inventory_v1',
+            operation: 'discover',
+            discovery: {},
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
+      )
 
     await exchangePairingToken()
     const { discoverLocalAssets } = await import('./client')
     await discoverLocalAssets()
+    await discoverLocalAssets(['E:\\retained evidence'])
 
     expect(fetchMock.mock.calls[1]?.[0]).toBe('http://127.0.0.1:47832/v1/setup-plan')
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
       schema: 'arena_ui_setup_request_v1',
       operation: 'discover',
+    })
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({
+      schema: 'arena_ui_setup_request_v1',
+      operation: 'discover',
+      roots: ['E:\\retained evidence'],
     })
     fetchMock.mockRestore()
   })

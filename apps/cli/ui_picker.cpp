@@ -53,6 +53,7 @@ struct SetupRequest {
     std::string asset_kind;
     std::string component_id;
     std::filesystem::path path;
+    std::vector<std::filesystem::path> roots;
     bool managed_copy{};
 };
 
@@ -150,9 +151,28 @@ SetupRequest parse_setup_request(const drogon::HttpRequestPtr& request) {
     SetupRequest result;
     result.operation = input.value("operation", "");
     if (result.operation == "discover") {
-        if (input.size() != 2) {
+        if (input.size() < 2 || input.size() > 3 ||
+            (input.size() == 3 && !input.contains("roots")) ||
+            (input.contains("roots") &&
+             (!input.at("roots").is_array() || input.at("roots").size() > 8))) {
             throw std::invalid_argument(
-                "discover setup accepts no additional fields");
+                "discover setup accepts at most eight absolute roots");
+        }
+        if (input.contains("roots")) {
+            for (const auto& value : input.at("roots")) {
+                if (!value.is_string()) {
+                    throw std::invalid_argument(
+                        "discover roots must be absolute path strings");
+                }
+                const std::string root = value.get<std::string>();
+                const std::filesystem::path path(root);
+                if (root.empty() || root.size() > 32767 ||
+                    root.find('\0') != std::string::npos || !path.is_absolute()) {
+                    throw std::invalid_argument(
+                        "discover roots must be bounded absolute paths");
+                }
+                result.roots.push_back(path.lexically_normal());
+            }
         }
         return result;
     }
@@ -451,6 +471,10 @@ json run_setup(
     };
     if (request.operation == "discover") {
         arguments.push_back("inventory");
+        for (const auto& root : request.roots) {
+            arguments.push_back("--scan-root");
+            arguments.push_back(root.string());
+        }
     } else if (request.operation == "component") {
         if (apply && !per_user_install) {
             arguments.push_back("--restart-manager-service");

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { locationHasPairingToken, pageFromLocation } from './App'
+import { locationHasPairingToken, pageFromLocation } from './components/pageNavigation'
 
 afterEach(() => {
   history.replaceState(null, '', window.location.pathname)

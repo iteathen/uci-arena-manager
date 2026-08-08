@@ -37,7 +37,9 @@ export async function submitCompetitionLifecycleAction<T>(
       if (!isRevisionConflict(error) || attempt === 2) throw error
       const refreshed = await operations.refresh()
       if (!refreshed) {
-        throw new Error('Competition no longer exists; refresh the tournament list.')
+        throw new Error('Competition no longer exists; refresh the tournament list.', {
+          cause: error,
+        })
       }
       current = refreshed
     }

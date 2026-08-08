@@ -373,10 +373,11 @@ evidence_service_experience:
 knowledge_asset_setup:
   location: configuration
   requirements:
-    - Offer one Auto-detect large local assets action for opening books,
-      Syzygy tables, and timing evidence. The native host delegates this
-      read-only operation to the adjacent Installer-owned arena-setup binary;
-      Manager does not duplicate file-index or package-discovery mechanism.
+    - Offer one Auto-detect retained assets action for opening books, Syzygy
+      tables, timing evidence, and Lichess single-game, capacity, and transport
+      profiles. The native host delegates this read-only operation to the
+      adjacent Installer-owned arena-setup binary; Manager does not duplicate
+      file-index, content-inspection, or package-discovery mechanism.
     - Auto-detect uses the operating-system file index with a bounded result
       count and time budget. It never starts a recursive whole-volume walk,
       never writes a locator, and never enables a discovered asset.
@@ -384,13 +385,21 @@ knowledge_asset_setup:
       and validation classification. An unavailable, stale, timed-out, empty,
       or partially populated index is a visible non-blocking result and keeps
       every manual browse and signed-download alternative available.
+    - Offer a folder-assisted bounded fallback when useful assets are outside
+      the operating-system index. The interactive helper forwards only the
+      explicitly selected absolute roots, with at most eight roots per request,
+      as repeated typed scan-root arguments; the
+      Installer inspects the selected root and its direct children without a
+      recursive drive crawl or mutation.
     - Discovery is deliberately permissive: partial Syzygy WDL or DTZ sets,
       standalone or sidecar-backed opening books, and parseable legacy,
       incomplete, or runtime-mismatched timing evidence remain catalogued.
       Exact qualification and identity are checked only when the operator asks
       to apply an asset to a runtime or make a protected-live safety claim.
-    - Every discovered path has an explicit Review import action. Discovery
-      itself never implies compatibility, installation, selection, or trust.
+    - Every discovered path has an explicit Review import action. The selected
+      candidate and all retained alternatives remain visible with provenance
+      and classification. Discovery itself never implies compatibility,
+      installation, selection, or trust.
     - Offer browse-assisted opening-book, Syzygy directory, and Lichess
       token-file-reference selection with format-specific hints and filters.
     - Offer browse-assisted qualified timing, Lichess single-game, Lichess

@@ -96,6 +96,7 @@ export async function exchangePairingToken(): Promise<boolean> {
 export type LocalSetupRequest =
   | {
       operation: 'discover'
+      roots?: string[]
     }
   | {
       operation: 'import'
@@ -224,8 +225,10 @@ export function planLocalSetup(request: LocalSetupRequest) {
   })
 }
 
-export function discoverLocalAssets() {
-  return planLocalSetup({ operation: 'discover' })
+export function discoverLocalAssets(roots: string[] = []) {
+  return planLocalSetup(
+    roots.length > 0 ? { operation: 'discover', roots } : { operation: 'discover' },
+  )
 }
 
 export function applyLocalSetup(request: LocalSetupRequest) {

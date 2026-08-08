@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { setupCommitNotice } from './ComponentSetupButton'
+import { setupCommitNotice } from './configurationModel'
 
 describe('component setup confirmation', () => {
   it('does not claim that a personal install requires elevation', () => {

@@ -11,7 +11,7 @@ import {
   Text,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { api } from '../api/client'
 import type { EngineData, GameData, Resource } from '../api/types'
 import { Chessboard } from '../components/Chessboard'
@@ -42,7 +42,6 @@ function GameCard({
 }) {
   const maximumPly = Math.min(game.data.uci_moves.length, game.data.per_ply_fen.length)
   const [ply, setPly] = useState(maximumPly)
-  useEffect(() => setPly(maximumPly), [maximumPly])
   const shownPly = replay ? Math.min(ply, maximumPly) : maximumPly
   const fen = shownPly === 0
     ? game.data.starting_fen
