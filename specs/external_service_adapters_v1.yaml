@@ -349,8 +349,15 @@ profiles:
           kind; service-specific schema and identity remain in the typed
           compatibility projection.
         - Manager stores only a bounded allowlisted projection of dataset identity, campaign, state, target identity, authority, observation count, and timestamps; unknown fields are discarded and sensitive-looking nested fields are redacted.
-        - Every timing-profile output retains its path, digest, exact runtime identity, permissions, publication source, and service-publication metadata.
-        - A timing profile is visible but remains non-consumable by an engine whose exact identity does not match; Manager never rewrites profile identity or permissions.
+        - Every timing-profile output retains its path, digest, semantic timing
+          identity, qualified and current engine-build provenance, permissions,
+          publication source, and service-publication metadata.
+        - A timing profile is visible but remains non-consumable when its
+          timing-relevant identity does not match the configured time and
+          search contract, model semantics, provider and runtime, hardware, or
+          search topology. An engine-build digest mismatch alone remains
+          visible provenance and does not block reuse. Manager never decides
+          compatibility or rewrites profile identity or permissions.
         - Manager never requests or stores raw observations and never reads the service SQLite catalog.
         - Waiting for a target and an empty dataset set remain healthy.
         - A dataset schema or identity mismatch marks the integration incompatible.

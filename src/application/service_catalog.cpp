@@ -1905,7 +1905,8 @@ json ServiceCatalog::discover_bot(
         configured_path_matches(
             {"engine", "time_profile"}, timing),
         "bot_timing_profile_unavailable",
-        "Import an exact qualified timing profile for the installed engine and model.");
+        "Import a provider-safety-qualified timing profile whose semantic timing identity "
+        "matches the configured model, provider/runtime, hardware, and search topology.");
     project_bot_prerequisite(
         readiness,
         issues,

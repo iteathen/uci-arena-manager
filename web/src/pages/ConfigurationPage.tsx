@@ -466,7 +466,7 @@ export function ConfigurationPage({ navigate }: { navigate: (page: string) => vo
             <Stack>
               <PathPickerInput
                 label="Qualified UCI timing profile"
-                description="Select the exact provider-safety-qualified v3 timing profile for this engine, model, provider, and hardware."
+                description="Select a provider-safety-qualified v3 profile matching the model, provider/runtime, hardware, and search topology. Engine build differences remain visible provenance unless timing-relevant identity changed."
                 placeholder="D:\Chess\profiles\uci_time_profile_v3.json"
                 value={timingProfilePath}
                 onChange={setTimingProfilePath}
