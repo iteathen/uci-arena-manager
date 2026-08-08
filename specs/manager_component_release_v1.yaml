@@ -49,6 +49,9 @@ producer_contract:
     - The provider result binds exact source, target, artifact, manifest,
       dependency-lock, test, SBOM, license, and workflow identities.
     - A release requires a clean tracked tree and the exact declared test set.
+    - The explicitly dispatched signing job publishes the verified archive,
+      provider result, and Sigstore bundle directly to one private immutable
+      candidate prerelease. Actions artifact storage is not candidate transport.
 
 installer_input_projection:
   consumed_interfaces:

@@ -143,5 +143,11 @@ test("only the manual Manager component workflow remains a release authority", (
   assert.match(workflow, /cosign-release:\s*v3\.0\.6/u);
   assert.match(workflow, /sigstore-provenance\.mjs prepare-provider/u);
   assert.match(workflow, /sigstore-provenance\.mjs verify-bundle/u);
+  assert.match(workflow, /contents:\s*write/u);
+  assert.doesNotMatch(workflow, /actions\/(?:upload|download)-artifact/u);
+  assert.match(workflow, /Expected exactly three candidate assets/u);
+  assert.match(workflow, /gh release create[\s\S]*?--target \$env:GITHUB_SHA/u);
+  assert.ok(workflow.indexOf("sigstore-provenance.mjs verify-bundle")
+    < workflow.indexOf("gh release create"));
   assert.doesNotMatch(workflow, /prepare-managed|prepare-manager|suite release/u);
 });
