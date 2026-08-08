@@ -341,9 +341,10 @@ TEST_CASE("explicit bounded roots discover renamed engine executables") {
              .get<std::string>()
              .empty());
     REQUIRE(discovered.at("explicit_root_inspection").at("complete") == true);
-    REQUIRE(
-        fs::path(candidate.at("executable").get<std::string>()) ==
-        fs::weakly_canonical(executable));
+    const fs::path candidate_executable =
+        candidate.at("executable").get<std::string>();
+    REQUIRE(candidate_executable.is_absolute());
+    REQUIRE(fs::equivalent(candidate_executable, executable));
 
     fs::remove_all(root);
 }

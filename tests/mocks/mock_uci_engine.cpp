@@ -1,5 +1,6 @@
 #include <iostream>
 #include <chrono>
+#include <filesystem>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -49,9 +50,13 @@ int main(int argc, char** argv) {
             }
             std::cout << "uciok\n" << std::flush;
         } else if (line.starts_with("setoption name ModelRoot value ")) {
-            model_root_ready =
-                line.substr(std::string("setoption name ModelRoot value ").size()) ==
-                required_model_root;
+            const std::filesystem::path supplied_model_root = line.substr(
+                std::string("setoption name ModelRoot value ").size());
+            std::error_code equivalent_error;
+            model_root_ready = std::filesystem::equivalent(
+                supplied_model_root,
+                std::filesystem::path(required_model_root),
+                equivalent_error);
         } else if (line == "isready") {
             if (!required_model_root.empty() && model_root_ready) {
                 std::cout << "info string model loaded:backend:onnx:path:fixture:fingerprint:8104116015256418347:provider:cpu:provider_numeric_fingerprint:5805769137532863231\n";
