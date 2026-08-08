@@ -3037,17 +3037,17 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                         }
                         json profile_projection = json::array();
                         json selected_profile = nullptr;
-                        for (const auto& profile : profiles) {
+                        for (const auto& profile_entry : profiles) {
                             const std::string source =
-                                required_string(profile, "source");
+                                required_string(profile_entry, "source");
                             const std::string path =
-                                required_string(profile, "path");
+                                required_string(profile_entry, "path");
                             const std::string sha256 =
-                                required_string(profile, "sha256");
+                                required_string(profile_entry, "sha256");
                             const std::string identity_sha256 =
                                 required_string(
-                                    profile, "identitySha256");
-                            if (profile.value("schema", "") !=
+                                    profile_entry, "identitySha256");
+                            if (profile_entry.value("schema", "") !=
                                     "uci_arena_evidence_profile_v1" ||
                                 (source != "service_live_cache" &&
                                  source != "explicit_import") ||
@@ -3060,16 +3060,16 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                                     }) ||
                                 identity_sha256.size() != 71 ||
                                 !identity_sha256.starts_with("sha256:") ||
-                                profile.value("qualified", false) != true ||
-                                !profile.contains("targetIdentity") ||
-                                !profile.at("targetIdentity").is_object() ||
-                                !profile.contains("permissions") ||
-                                !profile.at("permissions").is_object()) {
+                                profile_entry.value("qualified", false) != true ||
+                                !profile_entry.contains("targetIdentity") ||
+                                !profile_entry.at("targetIdentity").is_object() ||
+                                !profile_entry.contains("permissions") ||
+                                !profile_entry.at("permissions").is_object()) {
                                 throw std::runtime_error(
                                     "Evidence Service timing-profile identity contract mismatch");
                             }
                             const json permissions =
-                                profile.at("permissions");
+                                profile_entry.at("permissions");
                             for (const auto* field :
                                  {"provider_safety_qualified",
                                   "forecast_shadow_qualified",
@@ -3087,21 +3087,21 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                                 {"path", path},
                                 {"sha256", sha256},
                                 {"profile_schema",
-                                 profile.value("profileSchema", "")},
+                                 profile_entry.value("profileSchema", "")},
                                 {"qualified", true},
                                 {"published_at",
-                                 profile.value("publishedAt", "")},
+                                 profile_entry.value("publishedAt", "")},
                                 {"identity_sha256", identity_sha256},
                                 {"target_identity",
                                  bounded_redacted_external_value(
-                                     profile.at("targetIdentity"),
+                                     profile_entry.at("targetIdentity"),
                                      64 * 1024,
                                      "Evidence timing-profile target identity")},
                                 {"permissions", permissions},
                                 {"service_publication",
-                                 profile.contains("servicePublication")
+                                 profile_entry.contains("servicePublication")
                                      ? bounded_redacted_external_value(
-                                           profile.at("servicePublication"),
+                                           profile_entry.at("servicePublication"),
                                            64 * 1024,
                                            "Evidence timing-profile publication")
                                      : json(nullptr)},
