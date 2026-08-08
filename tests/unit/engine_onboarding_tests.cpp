@@ -121,6 +121,7 @@ TEST_CASE("installed engine receipts resolve provider-declared UCI entrypoints")
     REQUIRE(discovered.at("candidates").size() == 1);
     const json& candidate = discovered.at("candidates").at(0);
     REQUIRE(candidate.at("source") == "install_receipt");
+    REQUIRE(candidate.at("authority") == "verified_component_inventory");
     REQUIRE(candidate.at("state") == "ready_to_probe");
     REQUIRE(candidate.at("component_id") == "example.engine");
     REQUIRE(
@@ -332,10 +333,149 @@ TEST_CASE("explicit bounded roots discover renamed engine executables") {
     REQUIRE(discovered.at("candidates").size() == 1);
     const json& candidate = discovered.at("candidates").at(0);
     REQUIRE(candidate.at("source") == "discovered");
+    REQUIRE(candidate.at("authority") == "discovery_hint");
     REQUIRE(candidate.at("state") == "ready_to_probe");
+    REQUIRE(candidate.at("observation").at("path_kind") == "regular_file");
+    REQUIRE(
+        !candidate.at("observation").at("object_identity")
+             .get<std::string>()
+             .empty());
+    REQUIRE(discovered.at("explicit_root_inspection").at("complete") == true);
     REQUIRE(
         fs::path(candidate.at("executable").get<std::string>()) ==
         fs::weakly_canonical(executable));
 
+    fs::remove_all(root);
+}
+
+TEST_CASE("an explicitly selected executable is inspected without traversal") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-engine-selected-file-" + arena::domain::uuid_v7());
+    const fs::path executable = executable_path(root, "selected-engine");
+    write_executable(executable);
+
+    const json discovered = arena::application::EngineOnboarding::discover(
+        root / "data", {executable}, false);
+    REQUIRE(discovered.at("candidates").size() == 1);
+    REQUIRE(
+        fs::path(
+            discovered.at("candidates").at(0).at("executable")
+                .get<std::string>()) ==
+        fs::absolute(executable).lexically_normal());
+    REQUIRE(
+        discovered.at("explicit_root_inspection").at("work").at("entries") ==
+        0);
+    REQUIRE(
+        discovered.at("explicit_root_inspection")
+                .at("work")
+                .at("metadata_calls") == 1);
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("explicit-root entry budget counts rejected entries and fails closed") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-engine-root-budget-" + arena::domain::uuid_v7());
+    const fs::path selected = root / "selected";
+    fs::create_directories(selected / "directory-a");
+    fs::create_directories(selected / "directory-b");
+    fs::create_directories(selected / "directory-c");
+    write_executable(executable_path(selected, "would-be-candidate"));
+
+    arena::application::EngineDiscoveryOptions options;
+    options.max_total_entries = 2;
+    const json discovered = arena::application::EngineOnboarding::discover(
+        root / "data", {selected}, false, options);
+    const json& inspection = discovered.at("explicit_root_inspection");
+    REQUIRE(inspection.at("complete") == false);
+    REQUIRE(inspection.at("work").at("entries") == 3);
+    REQUIRE(discovered.at("candidates").empty());
+    REQUIRE(
+        inspection.at("diagnostics").at(0).at("code") ==
+        "entry_budget_exceeded");
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("explicit-root cancellation prevents filesystem traversal") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-engine-root-cancel-" + arena::domain::uuid_v7());
+    const fs::path selected = root / "selected";
+    write_executable(executable_path(selected, "candidate"));
+
+    std::stop_source cancellation;
+    cancellation.request_stop();
+    arena::application::EngineDiscoveryOptions options;
+    options.cancellation = cancellation.get_token();
+    const json discovered = arena::application::EngineOnboarding::discover(
+        root / "data", {selected}, false, options);
+    const json& inspection = discovered.at("explicit_root_inspection");
+    REQUIRE(inspection.at("complete") == false);
+    REQUIRE(inspection.at("cancelled") == true);
+    REQUIRE(inspection.at("work").at("entries") == 0);
+    REQUIRE(inspection.at("work").at("metadata_calls") == 0);
+    REQUIRE(discovered.at("candidates").empty());
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("explicit-root deadline exhaustion prevents filesystem traversal") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-engine-root-deadline-" + arena::domain::uuid_v7());
+    const fs::path selected = root / "selected";
+    write_executable(executable_path(selected, "candidate"));
+
+    arena::application::EngineDiscoveryOptions options;
+    options.max_elapsed = std::chrono::milliseconds{0};
+    const json discovered = arena::application::EngineOnboarding::discover(
+        root / "data", {selected}, false, options);
+    const json& inspection = discovered.at("explicit_root_inspection");
+    REQUIRE(inspection.at("complete") == false);
+    REQUIRE(inspection.at("cancelled") == false);
+    REQUIRE(inspection.at("work").at("entries") == 0);
+    REQUIRE(inspection.at("work").at("metadata_calls") == 0);
+    REQUIRE(discovered.at("candidates").empty());
+    REQUIRE(
+        inspection.at("diagnostics").at(0).at("code") ==
+        "discovery_deadline_exceeded");
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("explicit-root link targets are never executable hints") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-engine-root-link-" + arena::domain::uuid_v7());
+    const fs::path external = root / "external";
+    const fs::path executable = executable_path(external, "external-engine");
+    write_executable(executable);
+    const fs::path selected = root / "selected";
+    fs::create_directories(selected);
+    const fs::path link = executable_path(selected, "linked-engine");
+    std::error_code error;
+    fs::create_symlink(executable, link, error);
+    if (error) {
+        fs::remove_all(root);
+        SKIP("platform could not create a symbolic link: " << error.message());
+    }
+    const json directory_discovery =
+        arena::application::EngineOnboarding::discover(
+            root / "data", {selected}, false);
+    REQUIRE(directory_discovery.at("candidates").empty());
+    REQUIRE(
+        directory_discovery.at("explicit_root_inspection").at("complete") ==
+        true);
+
+    const json direct_discovery =
+        arena::application::EngineOnboarding::discover(
+            root / "data", {link}, false);
+    REQUIRE(direct_discovery.at("candidates").empty());
+    REQUIRE(
+        direct_discovery.at("explicit_root_inspection").at("complete") ==
+        true);
     fs::remove_all(root);
 }

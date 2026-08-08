@@ -1,10 +1,12 @@
 #include "arena/application/engine_onboarding.hpp"
+#include "arena/platform/path_inspection.hpp"
 
 #include <sodium.h>
 
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -24,7 +26,7 @@ using nlohmann::json;
 
 constexpr std::uintmax_t max_metadata_bytes = 1024 * 1024;
 constexpr std::size_t max_receipts = 1024;
-constexpr std::size_t max_discovered_executables = 512;
+constexpr std::size_t max_diagnostic_path_characters = 512;
 
 json read_json_bounded(const fs::path& path) {
     std::error_code error;
@@ -57,6 +59,12 @@ bool safe_relative_path(const fs::path& value) {
     return std::none_of(
         value.begin(), value.end(),
         [](const fs::path& part) { return part == "." || part == ".."; });
+}
+
+fs::path lexical_absolute(const fs::path& value) {
+    std::error_code error;
+    const fs::path absolute = fs::absolute(value, error);
+    return (error ? value : absolute).lexically_normal();
 }
 
 std::string sha256_file(const fs::path& path) {
@@ -185,33 +193,13 @@ bool verified_manifest_file(
 }
 
 bool usable_executable(const fs::path& value) {
-    std::error_code error;
-    if (!fs::is_regular_file(value, error) || error ||
-        fs::is_symlink(value, error) || error) {
-        return false;
-    }
-#ifdef _WIN32
-    std::string extension = value.extension().string();
-    std::ranges::transform(
-        extension, extension.begin(),
-        [](const unsigned char character) {
-            return static_cast<char>(std::tolower(character));
-        });
-    return extension == ".exe";
-#else
-    const auto permissions = fs::status(value, error).permissions();
-    if (error) {
-        return false;
-    }
-    using fs::perms;
-    return (permissions &
-            (perms::owner_exec | perms::group_exec | perms::others_exec)) !=
-           perms::none;
-#endif
+    const auto observation = platform::inspect_path_no_follow(value);
+    return observation.kind == platform::PathEntryKind::regular_file &&
+           observation.executable;
 }
 
 std::string path_key(const fs::path& value) {
-    std::string key = normalized_absolute(value).generic_string();
+    std::string key = lexical_absolute(value).generic_string();
 #ifdef _WIN32
     std::ranges::transform(
         key, key.begin(),
@@ -248,13 +236,17 @@ void add_candidate(
     const fs::path& executable,
     const fs::path& working_directory,
     const std::string& display_name,
-    const json& metadata = json::object()) {
-    const fs::path normalized_executable = normalized_absolute(executable);
+    const json& metadata = json::object(),
+    const std::optional<bool> observed_usable = std::nullopt) {
+    const fs::path normalized_executable = observed_usable.has_value()
+        ? lexical_absolute(executable)
+        : normalized_absolute(executable);
     if (!seen.insert(path_key(normalized_executable)).second) {
         return;
     }
     json issues = json::array();
-    const bool usable = usable_executable(normalized_executable);
+    const bool usable = observed_usable.value_or(
+        usable_executable(normalized_executable));
     if (!usable) {
         issues.push_back({
             {"code", "engine_executable_unavailable"},
@@ -273,9 +265,13 @@ void add_candidate(
                                 display_name},
         {"executable", normalized_executable.string()},
         {"working_directory",
-         normalized_absolute(working_directory).string()},
+         (observed_usable.has_value()
+              ? lexical_absolute(working_directory)
+              : normalized_absolute(working_directory))
+             .string()},
         {"arguments", json::array()},
         {"uci_options", json::object()},
+        {"authority", "discovery_hint"},
         {"issues", std::move(issues)},
     };
     for (const auto& [key, value] : metadata.items()) {
@@ -361,6 +357,7 @@ void append_receipt_candidates(
             }
             const fs::path executable = active_root / *relative;
             json metadata{
+                {"authority", "verified_component_inventory"},
                 {"component_id", component_id},
                 {"component_version",
                  receipt.value("component_version", "")},
@@ -435,7 +432,7 @@ void append_saved_locator(
             normalized_absolute(locator.at("path").get<std::string>());
         const json validation =
             locator.value("validation", json::object());
-        json metadata = json::object();
+        json metadata{{"authority", "retained_locator_hint"}};
         if (validation.contains("fingerprint") &&
             validation.at("fingerprint").is_string()) {
             metadata["fingerprint"] = validation.at("fingerprint");
@@ -449,62 +446,254 @@ void append_saved_locator(
     }
 }
 
+class ExplicitDiscoveryWork final {
+  public:
+    explicit ExplicitDiscoveryWork(const EngineDiscoveryOptions& requested)
+        : limits_(bounded(requested)), started_(Clock::now()) {}
+
+    [[nodiscard]] const EngineDiscoveryOptions& limits() const noexcept {
+        return limits_;
+    }
+
+    [[nodiscard]] bool active() {
+        if (halted_) {
+            return false;
+        }
+        if (limits_.cancellation.stop_requested()) {
+            cancelled_ = true;
+            fail("discovery_cancelled", {});
+            return false;
+        }
+        if (Clock::now() - started_ >= limits_.max_elapsed) {
+            fail("discovery_deadline_exceeded", {});
+            return false;
+        }
+        return true;
+    }
+
+    [[nodiscard]] bool consume_entry(const fs::path& path) {
+        if (!active()) {
+            return false;
+        }
+        ++entries_;
+        if (entries_ > limits_.max_total_entries) {
+            fail("entry_budget_exceeded", path);
+            return false;
+        }
+        return true;
+    }
+
+    [[nodiscard]] std::optional<platform::PathObservation> inspect(
+        const fs::path& path) {
+        if (!active()) {
+            return std::nullopt;
+        }
+        ++metadata_calls_;
+        if (metadata_calls_ > limits_.max_metadata_calls) {
+            fail("metadata_budget_exceeded", path);
+            return std::nullopt;
+        }
+        const auto observation = platform::inspect_path_no_follow(path);
+        if (observation.kind == platform::PathEntryKind::missing) {
+            fail("entry_disappeared", path, observation.platform_error);
+            return std::nullopt;
+        }
+        if (observation.kind == platform::PathEntryKind::inaccessible) {
+            fail("entry_inaccessible", path, observation.platform_error);
+            return std::nullopt;
+        }
+        return observation;
+    }
+
+    [[nodiscard]] bool reserve_candidate(const fs::path& path) {
+        if (!active()) {
+            return false;
+        }
+        ++candidates_;
+        if (candidates_ > limits_.max_candidates) {
+            fail("candidate_budget_exceeded", path);
+            return false;
+        }
+        return true;
+    }
+
+    void fail(
+        const std::string& code,
+        const fs::path& path,
+        const std::uint32_t platform_error = 0) {
+        complete_ = false;
+        halted_ = code == "discovery_cancelled" ||
+                  code == "discovery_deadline_exceeded" ||
+                  code == "entry_budget_exceeded" ||
+                  code == "metadata_budget_exceeded" ||
+                  code == "candidate_budget_exceeded" ||
+                  code == "explicit_root_budget_exceeded";
+        if (diagnostics_.size() >= limits_.max_diagnostics) {
+            return;
+        }
+        std::string rendered = path.generic_string();
+        rendered.resize(std::min(rendered.size(), max_diagnostic_path_characters));
+        json diagnostic{{"code", code}};
+        if (!rendered.empty()) {
+            diagnostic["path"] = rendered;
+        }
+        if (platform_error != 0) {
+            diagnostic["platform_error"] = platform_error;
+        }
+        diagnostics_.push_back(std::move(diagnostic));
+    }
+
+    [[nodiscard]] json projection() const {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            Clock::now() - started_);
+        return {
+            {"authority", "discovery_hint"},
+            {"complete", complete_},
+            {"cancelled", cancelled_},
+            {"work",
+             {{"entries", entries_},
+              {"metadata_calls", metadata_calls_},
+              {"candidates", candidates_},
+              {"elapsed_ms", elapsed.count()}}},
+            {"limits",
+             {{"max_roots", limits_.max_explicit_roots},
+              {"max_depth_below_root", limits_.max_depth_below_root},
+              {"max_total_entries", limits_.max_total_entries},
+              {"max_metadata_calls", limits_.max_metadata_calls},
+              {"max_candidates", limits_.max_candidates},
+              {"max_elapsed_ms", limits_.max_elapsed.count()},
+              {"max_diagnostics", limits_.max_diagnostics}}},
+            {"diagnostics", diagnostics_},
+        };
+    }
+
+  private:
+    using Clock = std::chrono::steady_clock;
+
+    static EngineDiscoveryOptions bounded(
+        const EngineDiscoveryOptions& requested) {
+        const EngineDiscoveryOptions maximum{};
+        EngineDiscoveryOptions result = requested;
+        result.max_explicit_roots =
+            std::min(result.max_explicit_roots, maximum.max_explicit_roots);
+        result.max_depth_below_root =
+            std::min(result.max_depth_below_root, maximum.max_depth_below_root);
+        result.max_total_entries =
+            std::min(result.max_total_entries, maximum.max_total_entries);
+        result.max_metadata_calls =
+            std::min(result.max_metadata_calls, maximum.max_metadata_calls);
+        result.max_candidates =
+            std::min(result.max_candidates, maximum.max_candidates);
+        result.max_elapsed = std::clamp(
+            result.max_elapsed, std::chrono::milliseconds{0},
+            maximum.max_elapsed);
+        result.max_diagnostics =
+            std::min(result.max_diagnostics, maximum.max_diagnostics);
+        return result;
+    }
+
+    EngineDiscoveryOptions limits_;
+    Clock::time_point started_;
+    std::size_t entries_{0};
+    std::size_t metadata_calls_{0};
+    std::size_t candidates_{0};
+    bool complete_{true};
+    bool cancelled_{false};
+    bool halted_{false};
+    json diagnostics_ = json::array();
+};
+
+void append_observed_candidate(
+    const fs::path& path,
+    const platform::PathObservation& observation,
+    json& candidates,
+    std::set<std::string>& seen,
+    ExplicitDiscoveryWork& work) {
+    if (!observation.executable || !work.reserve_candidate(path)) {
+        return;
+    }
+    add_candidate(
+        candidates, seen, "discovered", path, path.parent_path(),
+        display_name_for(path),
+        {
+            {"authority", "discovery_hint"},
+            {"observation",
+             {{"object_identity", observation.object_identity},
+              {"size_bytes", observation.size_bytes},
+              {"path_kind", "regular_file"}}},
+        },
+        true);
+}
+
+void scan_explicit_directory(
+    const fs::path& directory,
+    const std::size_t depth,
+    json& candidates,
+    std::set<std::string>& seen,
+    ExplicitDiscoveryWork& work) {
+    if (!work.active()) {
+        return;
+    }
+    std::error_code error;
+    fs::directory_iterator iterator(directory, fs::directory_options::none, error);
+    if (error) {
+        work.fail("directory_iterator_open_failed", directory, error.value());
+        return;
+    }
+    std::vector<fs::path> entries;
+    const fs::directory_iterator end;
+    while (iterator != end) {
+        const fs::path entry_path = iterator->path();
+        if (!work.consume_entry(entry_path)) {
+            return;
+        }
+        entries.push_back(entry_path);
+        iterator.increment(error);
+        if (error) {
+            work.fail("directory_iterator_increment_failed", directory, error.value());
+            return;
+        }
+    }
+    std::ranges::sort(entries, [](const fs::path& left, const fs::path& right) {
+        return left.generic_string() < right.generic_string();
+    });
+    for (const auto& entry_path : entries) {
+        const auto observation = work.inspect(entry_path);
+        if (!observation) {
+            if (!work.active()) {
+                return;
+            }
+            continue;
+        }
+        if (observation->kind == platform::PathEntryKind::regular_file) {
+            append_observed_candidate(
+                entry_path, *observation, candidates, seen, work);
+        } else if (
+            observation->kind == platform::PathEntryKind::directory &&
+            depth < work.limits().max_depth_below_root) {
+            scan_explicit_directory(
+                entry_path, depth + 1, candidates, seen, work);
+        }
+        if (!work.active()) {
+            return;
+        }
+    }
+}
+
 void append_explicit_root(
     const fs::path& supplied_root,
     json& candidates,
-    std::set<std::string>& seen) {
-    const fs::path root = normalized_absolute(supplied_root);
-    std::error_code error;
-    if (fs::is_symlink(root, error)) {
+    std::set<std::string>& seen,
+    ExplicitDiscoveryWork& work) {
+    const fs::path root = lexical_absolute(supplied_root);
+    const auto observation = work.inspect(root);
+    if (!observation) {
         return;
     }
-    if (fs::is_regular_file(root, error)) {
-        add_candidate(
-            candidates, seen, "discovered", root, root.parent_path(),
-            display_name_for(root));
-        return;
-    }
-    if (!fs::is_directory(root, error)) {
-        return;
-    }
-    std::size_t inspected = 0;
-    fs::recursive_directory_iterator iterator(
-        root, fs::directory_options::skip_permission_denied, error);
-    const fs::recursive_directory_iterator end;
-    for (; iterator != end && inspected < max_discovered_executables;
-         iterator.increment(error)) {
-        if (error) {
-            error.clear();
-            continue;
-        }
-        const bool is_dir = iterator->is_directory(error);
-        if (error) {
-            error.clear();
-            continue;
-        }
-        if (iterator.depth() >= 1 && is_dir) {
-            iterator.disable_recursion_pending();
-        }
-        const bool is_sym = iterator->is_symlink(error);
-        if (error) {
-            error.clear();
-            continue;
-        }
-        const bool is_reg = iterator->is_regular_file(error);
-        if (error) {
-            error.clear();
-            continue;
-        }
-        if (iterator.depth() > 1 || is_sym || !is_reg) {
-            continue;
-        }
-        ++inspected;
-        if (usable_executable(iterator->path())) {
-            add_candidate(
-                candidates, seen, "discovered", iterator->path(),
-                iterator->path().parent_path(),
-                display_name_for(iterator->path()));
-        }
+    if (observation->kind == platform::PathEntryKind::regular_file) {
+        append_observed_candidate(root, *observation, candidates, seen, work);
+    } else if (observation->kind == platform::PathEntryKind::directory) {
+        scan_explicit_directory(root, 0, candidates, seen, work);
     }
 }
 
@@ -544,13 +733,29 @@ void append_path_candidates(
 json EngineOnboarding::discover(
     const fs::path& manager_data_root,
     const std::vector<fs::path>& explicit_roots,
-    const bool include_path_candidates) {
+    const bool include_path_candidates,
+    const EngineDiscoveryOptions& options) {
     json candidates = json::array();
     std::set<std::string> seen;
     append_receipt_candidates(manager_data_root, candidates, seen);
     append_saved_locator(manager_data_root, candidates, seen);
-    for (const auto& root : explicit_roots) {
-        append_explicit_root(root, candidates, seen);
+    ExplicitDiscoveryWork explicit_work(options);
+    if (explicit_roots.size() >
+        explicit_work.limits().max_explicit_roots) {
+        explicit_work.fail("explicit_root_budget_exceeded", {});
+    } else {
+        std::vector<fs::path> ordered_roots = explicit_roots;
+        std::ranges::sort(
+            ordered_roots,
+            [](const fs::path& left, const fs::path& right) {
+                return left.generic_string() < right.generic_string();
+            });
+        for (const auto& root : ordered_roots) {
+            append_explicit_root(root, candidates, seen, explicit_work);
+            if (!explicit_work.active()) {
+                break;
+            }
+        }
     }
     if (include_path_candidates) {
         append_path_candidates(candidates, seen);
@@ -561,6 +766,7 @@ json EngineOnboarding::discover(
         {"precedence",
          {"install_receipt", "saved_locator", "provider_manifest",
           "discovered"}},
+        {"explicit_root_inspection", explicit_work.projection()},
         {"candidates", std::move(candidates)},
     };
 }

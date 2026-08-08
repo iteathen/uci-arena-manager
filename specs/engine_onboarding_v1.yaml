@@ -25,9 +25,50 @@ sources:
     - Additional discovery is restricted to an explicitly selected file or
       bounded root, exact well-known names on PATH, and bounded platform
       application locations.
+    - A filesystem-discovered path is an advisory discovery_hint only. It is
+      never process-launch, registration, component, or installation authority.
+    - The platform path-inspection adapter owns no-follow link/reparse
+      classification and returns only Manager-owned path-observation types.
     - Whole-disk recursive discovery is forbidden.
     - Symbolic links, missing files, unsafe relative entrypoints, malformed
       receipts, and malformed manifests are never returned as ready candidates.
+
+explicit_root_budget:
+  max_roots: 8
+  max_depth_below_root: 1
+  max_total_entries: 4096
+  max_metadata_calls: 8192
+  max_candidates: 512
+  max_elapsed_ms: 2000
+  max_diagnostics: 16
+  behavior:
+    - Every observed entry consumes the total-entry budget before classification.
+    - Directories, links, special files, rejected executables, disappearing
+      entries, and classification failures consume the same work budget as
+      accepted executable hints.
+    - A classification failure never permits recursion into that entry.
+    - Iterator or classification failure marks explicit-root inspection
+      incomplete with a bounded typed diagnostic; partial hints remain
+      explicitly non-authoritative.
+    - Cancellation or deadline exhaustion stops additional traversal and marks
+      the inspection incomplete.
+    - A selected regular executable file is inspected directly without a
+      directory traversal.
+
+candidate_authority:
+  discovered:
+    value: discovery_hint
+    rules:
+      - The candidate includes the observed platform object identity only as
+        race-detection evidence for the current observation.
+      - The identity is not retained as launch authority and cannot replace a
+        full UCI probe.
+      - The candidate state ready_to_probe means only that probing may be
+        attempted; it never means launch-safe, registered, or trusted.
+  installed_receipt:
+    value: verified_component_inventory
+  saved_locator:
+    value: retained_locator_hint
 
 probe:
   authority: manager_service
@@ -55,6 +96,9 @@ registration:
     - The dashboard requires a successful probe before enabling registration.
     - Registration probes again to close the probe-to-register race and then
       persists through the existing transactional command path.
+    - Discovery identity is never trusted across the probe or registration
+      boundary. Registration persists the fingerprint produced by its own full
+      process probe.
     - Existing raw launch-spec registration remains compatible for automation.
     - Dashboard registration binds to a successful short-lived probe id,
       repeats the probe, and retains verified installed-component provenance.
@@ -97,6 +141,12 @@ acceptance:
   - Both candidates can be probed, explicitly registered, and recovered after
     a Manager service restart.
   - A renamed UCI executable under an explicitly selected root is discoverable.
+  - More than 4096 irrelevant entries cannot extend traversal or masquerade as
+    a complete discovery result.
+  - Link, junction, reparse, disappearing-entry, permission, iterator,
+    cancellation, and deadline cases fail closed with bounded diagnostics.
+  - A discovered candidate is visibly a discovery_hint and replacement after
+    discovery cannot bypass the registration-time UCI probe.
   - A path usable by the interactive user but unavailable to the service fails
     during probe with no persisted engine resource.
   - Selecting one external executable automatically derives its display name
