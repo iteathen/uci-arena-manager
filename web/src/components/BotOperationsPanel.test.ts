@@ -4,6 +4,7 @@ import {
   changeOutboundBehavior,
   needsOutboundConfirmation,
   needsRatedConfirmation,
+  optionUpdateAuthorityMessage,
   outboundBehavior,
   schedulerAuthorityState,
 } from './botOperationsModel'
@@ -131,5 +132,12 @@ describe('Lichess option confirmation policy', () => {
     expect(schedulerAuthorityState(false, false)).toBe('disabled')
     expect(schedulerAuthorityState(true, true)).toBe('paused')
     expect(schedulerAuthorityState(true, false)).toBe('active')
+  })
+
+  it('never claims a saved option changed a running provider', () => {
+    expect(optionUpdateAuthorityMessage(true)).toContain('next-start authority')
+    expect(optionUpdateAuthorityMessage(true)).toContain('keeps its current settings')
+    expect(optionUpdateAuthorityMessage(false)).toContain('when the provider next starts')
+    expect(optionUpdateAuthorityMessage(undefined)).toContain('Refresh startup status')
   })
 })

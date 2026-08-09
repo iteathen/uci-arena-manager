@@ -102,7 +102,7 @@ function renderPanel() {
   return render(
     <MantineProvider>
       <QueryClientProvider client={client}>
-        <BotOperationsPanel installed navigate={vi.fn()} />
+        <BotOperationsPanel installed providerActive={false} navigate={vi.fn()} />
       </QueryClientProvider>
     </MantineProvider>,
   )

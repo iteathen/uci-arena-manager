@@ -3,6 +3,16 @@ import type { BotOptions, BotOptionsUpdate } from '../api/types'
 export type OutboundBehavior = 'wait' | 'active'
 export type SchedulerAuthorityState = 'checking' | 'disabled' | 'paused' | 'active'
 
+export function optionUpdateAuthorityMessage(active: boolean | undefined) {
+  if (active === true) {
+    return 'Adapter options were validated and saved as next-start authority. The running bot keeps its current settings until its next provider start.'
+  }
+  if (active === false) {
+    return 'Adapter options were validated and saved atomically. They will be used when the provider next starts.'
+  }
+  return 'Adapter options were validated and saved as next-start authority. Refresh startup status to determine whether a running bot still has the prior settings.'
+}
+
 export function schedulerAuthorityState(
   enabled: boolean | undefined,
   paused: boolean | undefined,

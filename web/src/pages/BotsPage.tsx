@@ -299,6 +299,7 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
           <Stack mt="lg">
             <BotOperationsPanel
               installed={candidate?.package_state === 'installed'}
+              providerActive={observedStartup?.active}
               navigate={navigate}
             />
           </Stack>

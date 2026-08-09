@@ -156,6 +156,10 @@ options:
       fields are excluded.
     - A provider rejection leaves the prior configuration authoritative and is
       returned as an actionable error; React state cannot fabricate a save.
+    - A running provider keeps its start-of-process configuration so active
+      games are never interrupted by an options write. Manager labels a
+      successful write as next-start authority and does not claim it changed
+      the currently effective runtime.
 
 readiness:
   required:

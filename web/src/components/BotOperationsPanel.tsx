@@ -28,6 +28,7 @@ import {
   changeOutboundBehavior,
   needsOutboundConfirmation,
   needsRatedConfirmation,
+  optionUpdateAuthorityMessage,
   outboundBehavior,
   schedulerAuthorityState,
 } from './botOperationsModel'
@@ -56,9 +57,11 @@ function numberValue(value: string | number, fallback: number) {
 
 export function BotOperationsPanel({
   installed,
+  providerActive,
   navigate,
 }: {
   installed: boolean
+  providerActive: boolean | undefined
   navigate: (page: string) => void
 }) {
   const queryClient = useQueryClient()
@@ -449,7 +452,9 @@ export function BotOperationsPanel({
               />
             )}
             {save.error && <Alert color="red">{save.error.message}</Alert>}
-            {save.isSuccess && <Alert color="green">Adapter options were validated and saved atomically.</Alert>}
+            {save.isSuccess && (
+              <Alert color="green">{optionUpdateAuthorityMessage(providerActive)}</Alert>
+            )}
             <Group justify="flex-end">
               <Button variant="default" onClick={() => setForm(null)}>
                 Reset unsaved changes
