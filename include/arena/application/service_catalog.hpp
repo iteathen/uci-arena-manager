@@ -6,10 +6,27 @@
 #include <filesystem>
 #include <functional>
 #include <nlohmann/json.hpp>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace arena::application {
+
+class BotQualificationFailure final : public std::runtime_error {
+  public:
+    BotQualificationFailure(
+        const std::string& code,
+        const std::string& stage,
+        const std::string& detail);
+    [[nodiscard]] const std::string& code() const noexcept;
+    [[nodiscard]] const std::string& stage() const noexcept;
+    [[nodiscard]] const std::string& detail() const noexcept;
+
+  private:
+    std::string code_;
+    std::string stage_;
+    std::string detail_;
+};
 
 class ServiceCatalog final {
   public:

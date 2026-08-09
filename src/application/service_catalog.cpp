@@ -689,6 +689,32 @@ const json& required_object(
     return value.at(field);
 }
 
+bool valid_qualification_failure_detail(const std::string_view value) {
+    if (value.empty() || value.size() > 1024U ||
+        value.find('/') != std::string_view::npos ||
+        value.find('\\') != std::string_view::npos ||
+        std::ranges::any_of(value, [](const unsigned char character) {
+            return std::iscntrl(character) != 0;
+        })) {
+        return false;
+    }
+    std::string lowercase(value);
+    std::ranges::transform(lowercase, lowercase.begin(), [](const unsigned char value) {
+        return static_cast<char>(std::tolower(value));
+    });
+    return std::ranges::none_of(
+        std::array{
+            std::string_view{"authorization"},
+            std::string_view{"bearer"},
+            std::string_view{"password"},
+            std::string_view{"secret"},
+            std::string_view{"token"},
+        },
+        [&lowercase](const std::string_view marker) {
+            return lowercase.find(marker) != std::string::npos;
+        });
+}
+
 bool valid_prefixed_sha256(const std::string& value) {
     return value.size() == 71U && value.starts_with("sha256:") &&
            std::ranges::all_of(
@@ -1312,6 +1338,24 @@ SavedServiceLocator saved_service_locator(
 }
 
 }  // namespace
+
+BotQualificationFailure::BotQualificationFailure(
+    const std::string& code,
+    const std::string& stage,
+    const std::string& detail)
+    : std::runtime_error(detail), code_(code), stage_(stage), detail_(detail) {}
+
+const std::string& BotQualificationFailure::code() const noexcept {
+    return code_;
+}
+
+const std::string& BotQualificationFailure::stage() const noexcept {
+    return stage_;
+}
+
+const std::string& BotQualificationFailure::detail() const noexcept {
+    return detail_;
+}
 
 json ServiceCatalog::profiles() {
     return json::array({book_forge_profile(), evidence_service_profile()});
@@ -2089,6 +2133,32 @@ json ServiceCatalog::qualify_bot(
         arguments,
         std::chrono::minutes(20));
 
+    if (result.is_object() && result.size() == 3U &&
+        result.value("schema", "") ==
+            "uci_arena_lichess_qualification_result_v1" &&
+        result.value("status", "") == "failed" &&
+        result.contains("failure") && result.at("failure").is_object()) {
+        const json& failure = result.at("failure");
+        const std::string code = failure.value("code", "");
+        const std::string stage = failure.value("stage", "");
+        const std::string detail = failure.value("detail", "");
+        const std::set<std::string> stages{
+            "startup_safety",
+            "preflight",
+            "complete_game",
+            "single_game_publication",
+            "capacity_probe",
+            "commit",
+        };
+        if (failure.size() != 3U || !valid_contract_identifier(code) ||
+            !stages.contains(stage) ||
+            code != "qualification_" + stage + "_failed" ||
+            !valid_qualification_failure_detail(detail)) {
+            throw std::runtime_error(
+                "the provider returned an invalid qualification failure");
+        }
+        throw BotQualificationFailure(code, stage, detail);
+    }
     if (!result.is_object() || result.dump().size() > 16U * 1024U ||
         result.size() > 32U ||
         result.value("schema", "") !=

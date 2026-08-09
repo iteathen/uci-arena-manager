@@ -168,6 +168,15 @@ installed_qualification:
     - The browser receives only bounded qualification state, identity,
       concurrency, reuse, and import-completion fields. Credentials, paths,
       commands, configuration, and raw evidence are excluded.
+    - A provider-declared qualification failure is accepted only as the closed
+      uci_arena_lichess_qualification_result_v1 failure variant with one bounded
+      identifier code, one known stage, and one single-line redacted detail.
+      Manager projects that detail for remediation without interpreting provider
+      semantics; invalid, path-bearing, credential-bearing, or unstructured
+      diagnostics collapse to Manager-owned generic failure text.
+    - Provider transport launch, timeout, output-limit, and invalid-JSON failures
+      remain distinct Manager-owned failures and never expose raw child output.
+      No failure variant commits or changes either profile locator.
 
 options:
   schema: uci_arena_lichess_manager_options_v1
@@ -285,6 +294,9 @@ acceptance:
   - Installed-engine requalification is available without a terminal, accepts
     no browser-supplied path or command, retains compatible timing authority,
     and imports exact current single-game and capacity evidence before startup.
+  - Installed-engine qualification failures name the provider stage and bounded
+    safe diagnostic when the provider returns its valid failure contract; fake
+    provider tests prove path-bearing and malformed diagnostics do not escape.
   - A stale installer receipt cannot make active provider startup appear
     disabled after helper status succeeds.
   - Every missing safety prerequisite is visible before startup.

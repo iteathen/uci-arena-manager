@@ -1365,6 +1365,16 @@ void run_ui_picker(
                             "Installed BOT qualification request is invalid"),
                         drogon::k400BadRequest,
                         dashboard_origin));
+                } catch (
+                    const arena::application::BotQualificationFailure& error) {
+                    callback(json_response(
+                        problem(
+                            error.code(),
+                            "Installed Engine qualification did not commit during " +
+                                error.stage() + ": " + error.detail() +
+                                ". No profile locators changed. Correct the reported provider condition and retry."),
+                        drogon::k422UnprocessableEntity,
+                        dashboard_origin));
                 } catch (const std::exception&) {
                     callback(json_response(
                         problem(

@@ -1198,6 +1198,77 @@ TEST_CASE("Lichess installed qualification uses only the published provider oper
     fs::remove_all(root);
 }
 
+TEST_CASE("Lichess installed qualification projects only a closed provider failure") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-bot-qualification-failure-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(root, "node", false, true);
+
+    try {
+        static_cast<void>(arena::application::ServiceCatalog::qualify_bot(
+            root / "data",
+            [](const fs::path&,
+               const fs::path&,
+               const std::vector<std::string>&,
+               const std::chrono::milliseconds) {
+                return json{
+                    {"schema", "uci_arena_lichess_qualification_result_v1"},
+                    {"status", "failed"},
+                    {"failure",
+                     {
+                         {"code", "qualification_complete_game_failed"},
+                         {"stage", "complete_game"},
+                         {"detail",
+                          "Complete-game matrix rejected cache authority"},
+                     }},
+                };
+            }));
+        FAIL("provider qualification failure was accepted as success");
+    } catch (const arena::application::BotQualificationFailure& error) {
+        REQUIRE(error.code() == "qualification_complete_game_failed");
+        REQUIRE(error.stage() == "complete_game");
+        REQUIRE(
+            error.detail() ==
+            "Complete-game matrix rejected cache authority");
+    }
+    fs::remove_all(root);
+}
+
+TEST_CASE("Lichess installed qualification rejects path-bearing provider diagnostics") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-bot-qualification-redaction-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(root, "node", false, true);
+
+    try {
+        static_cast<void>(arena::application::ServiceCatalog::qualify_bot(
+            root / "data",
+            [](const fs::path&,
+               const fs::path&,
+               const std::vector<std::string>&,
+               const std::chrono::milliseconds) {
+                return json{
+                    {"schema", "uci_arena_lichess_qualification_result_v1"},
+                    {"status", "failed"},
+                    {"failure",
+                     {
+                         {"code", "qualification_preflight_failed"},
+                         {"stage", "preflight"},
+                         {"detail", "failed at C:\\private\\engine.exe"},
+                     }},
+                };
+            }));
+        FAIL("path-bearing provider diagnostic escaped validation");
+    } catch (const arena::application::BotQualificationFailure&) {
+        FAIL("invalid provider diagnostic became operator-visible");
+    } catch (const std::runtime_error& error) {
+        REQUIRE(
+            std::string(error.what()) ==
+            "the provider returned an invalid qualification failure");
+    }
+    fs::remove_all(root);
+}
+
 TEST_CASE("Lichess installed qualification rejects output outside the provider workspace") {
     const fs::path root =
         fs::temp_directory_path() /
