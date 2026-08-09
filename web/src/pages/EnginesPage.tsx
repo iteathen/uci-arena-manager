@@ -226,15 +226,14 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
               </Text>
             </div>
             <Badge variant="light">
-              {candidates.data?.candidates.length ?? 0} candidates
+              {candidates.isLoading
+                ? 'Checking'
+                : candidates.error
+                  ? 'Unavailable'
+                  : `${candidates.data?.candidates.length ?? 0} candidates`}
             </Badge>
           </Group>
 
-          {candidates.error && (
-            <Alert color="red" mb="md">
-              {candidates.error.message}
-            </Alert>
-          )}
           {scanError && <Alert color="red" mb="md">{scanError}</Alert>}
           {refreshMessage && <Alert color="blue" mb="md">{refreshMessage}</Alert>}
           {scanRoot && (
@@ -269,7 +268,11 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
               </Stack>
             </Alert>
           )}
-          {!candidates.isLoading && !candidates.data?.candidates.length ? (
+          {candidates.isLoading ? (
+            <Alert color="blue">Checking installed engine receipts and saved locators…</Alert>
+          ) : candidates.error ? (
+            <Alert color="red">Engine discovery is unavailable: {candidates.error.message}</Alert>
+          ) : !candidates.data?.candidates.length ? (
             <Alert color="gray">
               No installed engine receipts or saved engine locators were found. Scan a
               selected folder or add an external engine.
@@ -396,7 +399,13 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
         </Paper>
 
         <Paper withBorder className="panel" p={0}>
-          {!engines.data?.length ? (
+          {engines.isLoading ? (
+            <Alert color="blue" m="lg">Checking registered engines…</Alert>
+          ) : engines.error ? (
+            <Alert color="red" m="lg">
+              Registered engine inventory is unavailable: {engines.error.message}
+            </Alert>
+          ) : !engines.data?.length ? (
             <EmptyState
               title="No engines registered"
               detail="Register a detected engine above or add an external UCI executable."
