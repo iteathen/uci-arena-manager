@@ -637,6 +637,33 @@ TEST_CASE("Book Forge and Evidence outputs cross only validated public contracts
     fs::remove_all(root);
 }
 
+TEST_CASE("cancelled Evidence datasets remain compatible retained evidence") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-service-cancelled-dataset-" + arena::domain::uuid_v7());
+    fs::create_directories(root);
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(
+            root / "arena.db");
+        arena::application::ControlPlane control_plane(store);
+        control_plane.initialize();
+
+        const json evidence = register_installed_evidence_and_status(
+            control_plane,
+            store,
+            root,
+            "evidence-cancelled-dataset.mjs");
+        const json& data = evidence.at("resource").at("data");
+        REQUIRE(data.at("integration_state") == "available");
+        REQUIRE(data.at("observed_state") == "running");
+        const json& dataset =
+            data.at("output_integration").at("datasets").at(0);
+        REQUIRE(dataset.at("state") == "cancelled");
+        REQUIRE(dataset.at("observation_count") == 12);
+    }
+    fs::remove_all(root);
+}
+
 TEST_CASE("Manager service API rejects an unknown major before output integration") {
     const fs::path root =
         fs::temp_directory_path() /

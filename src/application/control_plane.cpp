@@ -2708,7 +2708,10 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                                              "collecting" &&
                                          output.at("state").value(
                                              "lifecycle", "") !=
-                                             "completed") ||
+                                             "completed" &&
+                                         output.at("state").value(
+                                             "lifecycle", "") !=
+                                             "cancelled") ||
                                         !output.contains("summary") ||
                                         !output.at("summary").is_object() ||
                                         !output.at("summary").contains(

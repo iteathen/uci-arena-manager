@@ -156,6 +156,13 @@ int main(int argc, char** argv) {
             "C:/signed/book-snapshot",
             "/signed/book-snapshot");
 #endif
+        if (evidence &&
+            cli.find("cancelled-dataset") != std::string::npos) {
+            replace_all(
+                response,
+                R"("lifecycle":"completed")",
+                R"("lifecycle":"cancelled")");
+        }
         std::cout << response << '\n';
         return 0;
     }

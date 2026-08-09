@@ -354,6 +354,10 @@ profiles:
           kind; service-specific schema and identity remain in the typed
           compatibility projection.
         - Manager stores only a bounded allowlisted projection of dataset identity, campaign, state, target identity, authority, observation count, and timestamps; unknown fields are discarded and sensitive-looking nested fields are redacted.
+        - Dataset lifecycle is provider-authoritative and accepts collecting,
+          completed, and cancelled. A cancelled dataset remains valid retained
+          evidence and must not make the complete Evidence integration
+          incompatible.
         - Every timing-profile output retains its path, digest, semantic timing
           identity, qualified and current engine-build provenance, permissions,
           publication source, and service-publication metadata.
