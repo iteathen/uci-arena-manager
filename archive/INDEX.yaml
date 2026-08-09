@@ -1,0 +1,19 @@
+archive_schema: project_evidence_archive_v1
+records:
+  - archived_at: 2026-08-09
+    original_path: AGENTS.md
+    archive_path: archive/2026-08-09/AGENTS.md.archived
+    reason: >-
+      Preserve the pre-unification Manager agent contract after moving reusable
+      operating doctrine into the shared core standard while keeping Manager
+      state-authority, broker-security, process, and contract rules in the
+      current overlay.
+    superseded_by:
+      - AGENTS.md
+      - .agents/core-standard.md
+    removed_from_active_authority: >-
+      Root startup now uses the common operating standard plus the compact
+      Manager-specific overlay; the archived file is historical evidence only.
+    source_revision: 5c91f4167168208862af5926d9285b11438b86ad
+    source_blob: 6863df73f5a0ea492282839892205e9100d6eddf
+    change_reference: PR-82
