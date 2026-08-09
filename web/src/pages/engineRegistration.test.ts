@@ -13,7 +13,9 @@ function candidate(): EngineCandidate {
     executable: 'C:\\Program Files\\UCI Arena\\engine.exe',
     working_directory: 'C:\\Program Files\\UCI Arena',
     arguments: [],
-    uci_options: { SearchCore: 'mcgs', OpeningBook: 'book.bin' },
+    uci_options: {
+      SearchCore: 'mcgs', OpeningBook: 'book.bin', Threads: 3, Ponder: false,
+    },
     component_id: 'uci_arena.engine',
     component_version: '2.0.0',
     recommended: true,
@@ -38,7 +40,9 @@ function registered(source = candidate()): Resource<EngineData> {
     labels: {},
     data: {
       ...engineRegistrationParameters(source),
-      option_overrides: source.uci_options,
+      option_overrides: Object.fromEntries(
+        Object.entries(source.uci_options).map(([name, value]) => [name, String(value)]),
+      ),
       launch_profile: source.launch_profile,
       component_id: source.component_id,
       component_version: source.component_version,
@@ -73,6 +77,12 @@ describe('managed Engine registration state', () => {
       },
     }
     expect(candidateRegistration(updated, [registered()]).state).toBe('refresh_required')
+  })
+
+  it('requires one refresh for a retained non-canonical option map', () => {
+    const legacy = registered()
+    legacy.data.option_overrides = candidate().uci_options
+    expect(candidateRegistration(candidate(), [legacy]).state).toBe('refresh_required')
   })
 
   it('refreshes the same managed component across immutable version roots', () => {

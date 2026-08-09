@@ -134,7 +134,11 @@ registration:
       diagnostics but does not authorize or replace that current probe.
     - The public uci_options request field is persisted as option_overrides;
       the legacy option_overrides spelling remains input-compatible for
-      existing automation but cannot conflict with uci_options.
+      existing automation but cannot conflict with uci_options. String,
+      boolean, and integer inputs are normalized once to UCI strings before
+      persistence and every later launch uses those exact values. Retained
+      pre-normalization registrations are accepted through the same bounded
+      conversion and become canonical on explicit refresh.
     - Registrations retained from an earlier Manager version may lack the
       receipt-derived ModelRoot override. When such a resource still carries
       verified install_receipt provenance and a safe default_model.root,

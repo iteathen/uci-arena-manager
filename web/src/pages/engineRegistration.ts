@@ -37,6 +37,19 @@ function sameValue(left: unknown, right: unknown): boolean {
   return false
 }
 
+function normalizedCandidateOptions(values: Record<string, unknown> | undefined) {
+  return Object.fromEntries(Object.entries(values ?? {}).map(([name, value]) => [
+    name,
+    typeof value === 'boolean' || (typeof value === 'number' && Number.isInteger(value))
+      ? String(value)
+      : value,
+  ]))
+}
+
+function storedOptionsAreCanonical(values: Record<string, unknown> | undefined) {
+  return Object.values(values ?? {}).every((value) => typeof value === 'string')
+}
+
 export type CandidateRegistration = {
   state: 'unregistered' | 'registered' | 'refresh_required'
   engine?: Resource<EngineData>
@@ -79,7 +92,11 @@ export function candidateRegistration(
     current.component_version === candidate.component_version &&
     samePath(current.working_directory, candidate.working_directory) &&
     sameValue(current.arguments ?? [], candidate.arguments) &&
-    sameValue(current.option_overrides ?? {}, candidate.uci_options) &&
+    storedOptionsAreCanonical(current.option_overrides) &&
+    sameValue(
+      current.option_overrides ?? {},
+      normalizedCandidateOptions(candidate.uci_options),
+    ) &&
     sameValue(current.launch_profile ?? null, candidate.launch_profile ?? null) &&
     sameValue(current.default_model ?? null, candidate.default_model ?? null)
   return { state: currentMatches ? 'registered' : 'refresh_required', engine }

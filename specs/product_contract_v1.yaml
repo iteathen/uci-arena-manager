@@ -135,6 +135,12 @@ engine_contract:
       - A successful registration copied from a verified installation receipt
         persists component_id, onboarding_source, recommended, and
         default_model as non-authoritative discovery provenance.
+      - UCI option scalars are normalized to bounded string values at the
+        registration boundary and that canonical map is reused for every
+        tournament, Evidence, and bot-facing launch.
+      - Tournament participant selectors distinguish duplicate display names
+        with component version and stable resource identity while retaining
+        the preferred-engine indicator.
       - A registration without component_id remains usable but cannot become
         preferred by matching its display name, reported engine name,
         executable stem, or persisted creation order.

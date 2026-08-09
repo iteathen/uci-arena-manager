@@ -27,11 +27,13 @@ TEST_CASE("UCI probe discovers identity options and a legal bestmove") {
     REQUIRE(result.engine_name == "Arena Mock Engine");
     REQUIRE(result.engine_author == "UCI Arena Manager");
     REQUIRE(result.bestmove == "e2e4");
-    REQUIRE(result.options.size() == 2);
+    REQUIRE(result.options.size() == 3);
     REQUIRE(result.options.front().name == "Threads");
     REQUIRE(result.options.front().type == "spin");
     REQUIRE(result.options.front().minimum == 1);
     REQUIRE(result.options.front().maximum == 16);
+    REQUIRE(result.options.at(1).name == "Ponder");
+    REQUIRE(result.options.at(1).type == "check");
     REQUIRE(result.fingerprint.size() == 64);
     REQUIRE(result.runtime_model_fingerprint == "8104116015256418347");
     REQUIRE(result.runtime_provider == "cpu");
@@ -140,7 +142,10 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
           {"arguments", {"--require-model-root", model_root.string()}}}},
         {"state", "qualified_timing"},
         {"enabled", true},
-        {"uci_options", {{"ModelRoot", fs::weakly_canonical(model_root).string()}}},
+        {"uci_options",
+         {{"ModelRoot", fs::weakly_canonical(model_root).string()},
+          {"Threads", 2},
+          {"Ponder", false}}},
         {"expected_runtime",
          {{"timing_contract_version",
            "persistent_mcgs_relative_clock_temporal_v4"},
@@ -248,6 +253,8 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                 verified.at("option_overrides")
                     .at("ModelRoot")
                     .get<std::string>()) == fs::weakly_canonical(model_root));
+        REQUIRE(verified.at("option_overrides").at("Threads") == "2");
+        REQUIRE(verified.at("option_overrides").at("Ponder") == "false");
         REQUIRE(
             verified.at("runtime_model_identity")
                 .at("model_fingerprint") == "8104116015256418347");
@@ -310,7 +317,7 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
         const json refreshed = refresh(registered.at("revision")).at("resource");
         REQUIRE(refreshed.at("id") == registered.at("id"));
         REQUIRE(refreshed.at("revision") == 2);
-        REQUIRE(refreshed.at("data").at("option_overrides").at("Threads") == 2);
+        REQUIRE(refreshed.at("data").at("option_overrides").at("Threads") == "2");
 
         auto prior_version = store->get_resource(
             "engine", registered.at("id").get<std::string>()).value();

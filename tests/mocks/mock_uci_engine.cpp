@@ -42,6 +42,7 @@ int main(int argc, char** argv) {
             std::cout << "id name Arena Mock Engine\n"
                       << "id author UCI Arena Manager\n"
                       << "option name Threads type spin default 1 min 1 max 16\n"
+                      << "option name Ponder type check default false\n"
                       << "option name Style type combo default Normal var Solid var Normal var Risky\n";
             if (!required_model_root.empty()) {
                 std::cout << "option name ModelRoot type string default missing\n";

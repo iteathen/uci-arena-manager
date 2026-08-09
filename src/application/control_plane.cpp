@@ -3,6 +3,7 @@
 #include "arena/adapters/report_renderer.hpp"
 #include "arena/adapters/uci_process.hpp"
 #include "arena/application/engine_onboarding.hpp"
+#include "arena/application/engine_option_values.hpp"
 #include "arena/application/service_catalog.hpp"
 #include "arena/domain/match_planner.hpp"
 #include "arena/domain/uuid.hpp"
@@ -263,44 +264,11 @@ std::vector<std::string> string_array(const json& object, const char* name) {
 
 std::map<std::string, std::string> uci_option_overrides(
     const json& value) {
-    if (!value.is_object() || value.size() > 128) {
-        throw CommandFailure(
-            "invalid_engine_options",
-            "registered engine option overrides must be an object with at most 128 entries",
-            422);
+    try {
+        return normalize_engine_option_values(value);
+    } catch (const std::invalid_argument& error) {
+        throw CommandFailure("invalid_engine_options", error.what(), 422);
     }
-    std::map<std::string, std::string> result;
-    for (const auto& [name, raw] : value.items()) {
-        if (name.empty() || name.size() > 128 ||
-            std::ranges::any_of(name, [](const unsigned char character) {
-                return character < 0x20 || character == 0x7f;
-            })) {
-            throw CommandFailure(
-                "invalid_engine_options", "registered UCI option name is invalid", 422);
-        }
-        std::string text;
-        if (raw.is_string()) {
-            text = raw.get<std::string>();
-        } else if (raw.is_boolean()) {
-            text = raw.get<bool>() ? "true" : "false";
-        } else if (raw.is_number_integer()) {
-            text = std::to_string(raw.get<std::int64_t>());
-        } else if (raw.is_number_unsigned()) {
-            text = std::to_string(raw.get<std::uint64_t>());
-        } else {
-            throw CommandFailure(
-                "invalid_engine_options",
-                "registered UCI option values must be strings, booleans, or integers",
-                422);
-        }
-        if (text.size() > 512 || text.find('\n') != std::string::npos ||
-            text.find('\r') != std::string::npos || text.find('\0') != std::string::npos) {
-            throw CommandFailure(
-                "invalid_engine_options", "registered UCI option value is invalid", 422);
-        }
-        result.emplace(name, std::move(text));
-    }
-    return result;
 }
 
 json labels_from(const json& parameters) {
@@ -999,6 +967,7 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
         ? parameters.at("uci_options")
         : parameters.value("option_overrides", json::object());
     const auto option_overrides = uci_option_overrides(raw_options);
+    const json normalized_options = engine_option_values_json(option_overrides);
     json expected_runtime = nullptr;
     json selected_candidate = nullptr;
     if (parameters.contains("candidate_id") &&
@@ -1099,7 +1068,7 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
         {"executable", std::filesystem::absolute(executable).string()},
         {"working_directory", std::filesystem::absolute(working_directory).string()},
         {"arguments", arguments},
-        {"option_overrides", raw_options},
+        {"option_overrides", normalized_options},
         {"discovered_options", options},
         {"engine_name", probe.engine_name},
         {"engine_author", probe.engine_author},

@@ -197,7 +197,7 @@ TEST_CASE("legacy receipt engines launch tournaments with their packaged default
             {"executable", executable.string()},
             {"working_directory", engine_root.string()},
             {"arguments", {"--require-model-root", model_root.string()}},
-            {"option_overrides", json::object()},
+            {"option_overrides", {{"Threads", 2}, {"Ponder", false}}},
             {"fingerprint", probe.fingerprint},
             {"onboarding_source", "install_receipt"},
             {"default_model",
@@ -244,6 +244,12 @@ TEST_CASE("legacy receipt engines launch tournaments with their packaged default
                 games.at(0).at("data").at("black_engine").at("options")
                     .at("ModelRoot").get<std::string>()) ==
             fs::weakly_canonical(model_root));
+        REQUIRE(
+            games.at(0).at("data").at("white_engine").at("options")
+                .at("Threads") == "2");
+        REQUIRE(
+            games.at(0).at("data").at("black_engine").at("options")
+                .at("Ponder") == "false");
     }
     fs::remove_all(root);
 }

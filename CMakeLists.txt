@@ -58,6 +58,7 @@ add_library(arena_core
   src/domain/match_planner.cpp
   src/application/control_plane.cpp
   src/application/engine_onboarding.cpp
+  src/application/engine_option_values.cpp
   src/application/local_auth.cpp
   src/application/broker_policy.cpp
   src/application/service_catalog.cpp

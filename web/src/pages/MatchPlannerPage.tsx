@@ -22,6 +22,7 @@ import type { EngineData, MatchPlanData, Resource } from '../api/types'
 import { CompetitionList } from '../components/CompetitionList'
 import { PathPickerInput } from '../components/PathPickerInput'
 import {
+  competitionEngineOptions,
   competitionPairingPreview,
   competitionPlanTarget,
   competitionScheduleSize,
@@ -58,27 +59,7 @@ export function MatchPlannerPage({ navigate }: { navigate: (page: string) => voi
   const [beta, setBeta] = useState<number | string>(0.05)
   const [engineOverrides, setEngineOverrides] = useState<Record<string, Record<string, string>>>({})
   const [dryRunPreview, setDryRunPreview] = useState<MatchPlanData | null>(null)
-  const options = useMemo(
-    () =>
-      [...(engines.data ?? [])]
-        .sort((left, right) => {
-          const leftPreferred =
-            left.data.component_id === 'uci_arena.engine' && left.data.recommended === true
-          const rightPreferred =
-            right.data.component_id === 'uci_arena.engine' && right.data.recommended === true
-          if (leftPreferred !== rightPreferred) return leftPreferred ? -1 : 1
-          return left.data.display_name.localeCompare(right.data.display_name)
-        })
-        .map((engine) => ({
-          value: engine.id,
-          label:
-            engine.data.component_id === 'uci_arena.engine' &&
-            engine.data.recommended === true
-              ? `${engine.data.display_name} · preferred`
-              : engine.data.display_name,
-        })),
-    [engines.data],
-  )
+  const options = useMemo(() => competitionEngineOptions(engines.data ?? []), [engines.data])
   const scheduledGames = competitionScheduleSize(
     format,
     selected.length,

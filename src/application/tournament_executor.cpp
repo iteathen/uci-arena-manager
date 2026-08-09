@@ -3,6 +3,7 @@
 #include "arena/adapters/uci_game_runner.hpp"
 #include "arena/adapters/uci_process.hpp"
 #include "arena/application/engine_onboarding.hpp"
+#include "arena/application/engine_option_values.hpp"
 #include "arena/domain/uuid.hpp"
 
 #include <chess.hpp>
@@ -255,17 +256,7 @@ json engine_data(
 }
 
 std::map<std::string, std::string> string_map(const json& value) {
-    std::map<std::string, std::string> result;
-    if (!value.is_object()) {
-        return result;
-    }
-    for (const auto& [key, item] : value.items()) {
-        if (!item.is_string()) {
-            throw std::runtime_error("engine option override values must be strings");
-        }
-        result.emplace(key, item.get<std::string>());
-    }
-    return result;
+    return normalize_engine_option_values(value);
 }
 
 void add_receipt_default_model_option(
