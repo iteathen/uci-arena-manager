@@ -225,6 +225,11 @@ readiness:
     rules:
       - Every required dimension is returned independently; a generic blocked
         state cannot replace the per-dimension evidence.
+      - A selected capacity-profile path is only configured until the verified
+        provider's typed options projection reports qualified capacity
+        evidence. Manager projects ready only from that provider-owned
+        qualified boolean, treats rejected or unavailable evidence as blocked,
+        and never interprets the profile file itself.
       - ready_to_probe requires only a verified compatible adapter and runtime,
         a readable provider configuration, and an external token reference.
         Engine, model, knowledge, and performance qualification do not block
@@ -300,6 +305,8 @@ acceptance:
   - A stale installer receipt cannot make active provider startup appear
     disabled after helper status succeeds.
   - Every missing safety prerequisite is visible before startup.
+  - A configured capacity-profile locator whose provider-owned evidence is
+    rejected never appears ready and cannot authorize startup.
   - No happy-path bot setup step requires a terminal command.
   - Automated HTTP integration uses a loopback fake Lichess API with a
     non-secret fixture token and never requires an operator credential.

@@ -1595,7 +1595,8 @@ json ControlPlane::bot_profiles() const {
 }
 
 json ControlPlane::bot_candidates() const {
-    return ServiceCatalog::discover_bot(manager_data_root_);
+    return ServiceCatalog::discover_bot(
+        manager_data_root_, process_supervisor_);
 }
 
 json ControlPlane::generate_report(const json& request, const std::string& actor) {

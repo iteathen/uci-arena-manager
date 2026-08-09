@@ -689,6 +689,24 @@ const json& required_object(
     return value.at(field);
 }
 
+bool bot_live_prerequisites_ready(const json& readiness) {
+    static constexpr std::array required{
+        "verified_adapter",
+        "adapter_runtime",
+        "verified_uci_arena_engine",
+        "active_model",
+        "opening_book",
+        "syzygy",
+        "timing_profile",
+        "single_game_profile",
+        "capacity_profile",
+        "token_reference",
+    };
+    return std::ranges::all_of(required, [&readiness](const char* dimension) {
+        return readiness.value(dimension, "missing") == "ready";
+    });
+}
+
 bool valid_qualification_failure_detail(const std::string_view value) {
     if (value.empty() || value.size() > 1024U ||
         value.find('/') != std::string_view::npos ||
@@ -1977,15 +1995,16 @@ json ServiceCatalog::discover_bot(
         single_game_ready,
         "bot_single_game_profile_unavailable",
         "Import an exact qualified Lichess single-game profile.");
-    const bool capacity_ready = configured_path_matches(
+    const bool capacity_configured = configured_path_matches(
         {"capacity", "capacity_profile"}, capacity);
-    project_bot_prerequisite(
-        readiness,
-        issues,
-        "capacity_profile",
-        capacity_ready,
-        "bot_capacity_profile_unavailable",
-        "Import a qualified Lichess capacity profile for this runtime.");
+    readiness["capacity_profile"] =
+        capacity_configured ? "configured" : "missing";
+    if (!capacity_configured) {
+        issues.push_back({
+            {"code", "bot_capacity_profile_unavailable"},
+            {"detail", "Import a qualified Lichess capacity profile for this runtime."},
+        });
+    }
     const bool transport_ready = configured_path_matches(
         {"timing", "transport_profile_path"}, transport);
     readiness["transport_profile"] =
@@ -2017,12 +2036,9 @@ json ServiceCatalog::discover_bot(
     candidate["issues"] = issues;
     const bool probe_ready =
         adapter_ready && runtime_ready && configuration_ready && token_ready;
-    const bool startup_ready =
-        probe_ready && engine_ready && model_ready && opening_book_ready &&
-        syzygy_ready && timing_ready && single_game_ready && capacity_ready;
     candidate["state"] = probe_ready ? "ready_to_probe" : "blocked";
     candidate["startup_eligibility"] =
-        startup_ready ? "ready" : "blocked";
+        bot_live_prerequisites_ready(readiness) ? "ready" : "blocked";
     return {
         {"schema", "arena_bot_candidates_v1"},
         {"schema_version", 1},
@@ -2110,6 +2126,63 @@ json ServiceCatalog::qualify_bot(
             return process_supervisor.run_json(
                 executable, working_directory, arguments, timeout);
         });
+}
+
+json ServiceCatalog::discover_bot(
+    const fs::path& manager_data_root,
+    const ProcessSupervisor& process_supervisor) {
+    return discover_bot(
+        manager_data_root,
+        [&process_supervisor](
+            const fs::path& executable,
+            const fs::path& working_directory,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds timeout) {
+            return process_supervisor.run_json(
+                executable, working_directory, arguments, timeout);
+        });
+}
+
+json ServiceCatalog::discover_bot(
+    const fs::path& manager_data_root,
+    const BotCommandRunner& command_runner) {
+    json discovery = discover_bot(manager_data_root);
+    if (!discovery.contains("candidates") ||
+        !discovery.at("candidates").is_array() ||
+        discovery.at("candidates").empty()) {
+        return discovery;
+    }
+    json& candidate = discovery.at("candidates").at(0);
+    json& readiness = candidate.at("readiness");
+    if (readiness.value("capacity_profile", "missing") != "configured") {
+        return discovery;
+    }
+
+    try {
+        const json options = bot_options(manager_data_root, command_runner);
+        const json& evidence =
+            options.at("capacity").at("evidence");
+        if (evidence.at("qualified").get<bool>()) {
+            readiness["capacity_profile"] = "ready";
+        } else {
+            candidate.at("issues").push_back({
+                {"code", "bot_capacity_profile_unqualified"},
+                {"detail",
+                 "The Lichess provider rejected the configured capacity evidence. "
+                 "Requalify the installed engine before enabling startup."},
+            });
+        }
+    } catch (const std::exception&) {
+        candidate.at("issues").push_back({
+            {"code", "bot_capacity_profile_status_unavailable"},
+            {"detail",
+             "The Lichess provider could not verify the configured capacity evidence. "
+             "Refresh provider options or requalify the installed engine."},
+        });
+    }
+    candidate["startup_eligibility"] =
+        bot_live_prerequisites_ready(readiness) ? "ready" : "blocked";
+    return discovery;
 }
 
 json ServiceCatalog::qualify_bot(
@@ -2290,7 +2363,7 @@ json ServiceCatalog::control_bot(
         provider_operation,
         action == "enable_startup" ? "external_file_path_only" : "forbidden");
     if (action == "enable_startup") {
-        if (discover_bot(manager_data_root)
+        if (discover_bot(manager_data_root, command_runner)
                 .at("candidates")
                 .at(0)
                 .at("startup_eligibility") != "ready") {

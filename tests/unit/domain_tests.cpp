@@ -1055,8 +1055,24 @@ TEST_CASE("Lichess bot discovery becomes probe-ready only with exact visible pre
     receipt["configuration_path"] = configuration.string();
     write_json(data / "receipts" / "lichess.adapter.json", receipt);
 
-    const json candidate =
+    const json configured_candidate =
         arena::application::ServiceCatalog::discover_bot(data)
+            .at("candidates")
+            .at(0);
+    REQUIRE(
+        configured_candidate.at("readiness").at("capacity_profile") ==
+        "configured");
+    REQUIRE(configured_candidate.at("startup_eligibility") == "blocked");
+
+    const json candidate =
+        arena::application::ServiceCatalog::discover_bot(
+            data,
+            [](const fs::path&,
+               const fs::path&,
+               const std::vector<std::string>&,
+               const std::chrono::milliseconds) {
+                return manager_bot_options_fixture();
+            })
             .at("candidates")
             .at(0);
     REQUIRE(candidate.at("state") == "ready_to_probe");
@@ -1080,6 +1096,56 @@ TEST_CASE("Lichess bot discovery becomes probe-ready only with exact visible pre
     REQUIRE(
         candidate.at("default_model").at("display_name") ==
         "Qualified Model");
+
+    const json rejected =
+        arena::application::ServiceCatalog::discover_bot(
+            data,
+            [](const fs::path&,
+               const fs::path&,
+               const std::vector<std::string>&,
+               const std::chrono::milliseconds) {
+                json options = manager_bot_options_fixture();
+                options["capacity"]["evidence"] = {
+                    {"status", "rejected"},
+                    {"qualified", false},
+                    {"maximum_concurrency", nullptr},
+                };
+                return options;
+            })
+            .at("candidates")
+            .at(0);
+    REQUIRE(rejected.at("readiness").at("capacity_profile") == "configured");
+    REQUIRE(rejected.at("startup_eligibility") == "blocked");
+    REQUIRE(
+        rejected.at("issues").dump().find(
+            "bot_capacity_profile_unqualified") != std::string::npos);
+
+    std::size_t rejected_startup_calls = 0;
+    try {
+        static_cast<void>(arena::application::ServiceCatalog::control_bot(
+            data,
+            [&rejected_startup_calls](
+                const fs::path&,
+                const fs::path&,
+                const std::vector<std::string>&,
+                const std::chrono::milliseconds) {
+                ++rejected_startup_calls;
+                json options = manager_bot_options_fixture();
+                options["capacity"]["evidence"] = {
+                    {"status", "rejected"},
+                    {"qualified", false},
+                    {"maximum_concurrency", nullptr},
+                };
+                return options;
+            },
+            "enable_startup"));
+        FAIL("rejected provider capacity must block startup");
+    } catch (const std::runtime_error& error) {
+        REQUIRE(
+            std::string(error.what()).find("live-play readiness") !=
+            std::string::npos);
+    }
+    REQUIRE(rejected_startup_calls == 1);
     fs::remove_all(root);
 }
 
@@ -1334,7 +1400,14 @@ TEST_CASE("Lichess BOT control re-probes identity and returns only sanitized sta
     provider_configuration["timing"]["transport_profile_path"] = nullptr;
     write_json(configuration, provider_configuration);
     const json bootstrap_candidate =
-        arena::application::ServiceCatalog::discover_bot(root / "data")
+        arena::application::ServiceCatalog::discover_bot(
+            root / "data",
+            [](const fs::path&,
+               const fs::path&,
+               const std::vector<std::string>&,
+               const std::chrono::milliseconds) {
+                return manager_bot_options_fixture();
+            })
             .at("candidates")
             .at(0);
     REQUIRE(
@@ -1349,6 +1422,10 @@ TEST_CASE("Lichess BOT control re-probes identity and returns only sanitized sta
             const std::vector<std::string>& arguments,
             const std::chrono::milliseconds) {
             calls.push_back(arguments);
+            if (arguments.size() > 2 && arguments.at(1) == "config" &&
+                arguments.at(2) == "get") {
+                return manager_bot_options_fixture();
+            }
             if (arguments.size() > 1 && arguments.at(1) == "probe") {
                 return json{
                     {"status", "ready"},
@@ -1390,16 +1467,18 @@ TEST_CASE("Lichess BOT control re-probes identity and returns only sanitized sta
     REQUIRE(result.dump().find("MUST_NOT_ESCAPE") == std::string::npos);
     REQUIRE(result.at("provider_state") == "ready");
     REQUIRE(result.at("provider_ready") == true);
-    REQUIRE(calls.size() == 3);
-    REQUIRE(calls.at(0).at(1) == "probe");
-    REQUIRE(calls.at(1).at(1) == "startup");
-    REQUIRE(calls.at(1).at(2) == "install");
-    REQUIRE(calls.at(2).at(1) == "status");
+    REQUIRE(calls.size() == 4);
+    REQUIRE(calls.at(0).at(1) == "config");
+    REQUIRE(calls.at(0).at(2) == "get");
+    REQUIRE(calls.at(1).at(1) == "probe");
+    REQUIRE(calls.at(2).at(1) == "startup");
+    REQUIRE(calls.at(2).at(2) == "install");
+    REQUIRE(calls.at(3).at(1) == "status");
     REQUIRE(
         std::find(
-            calls.at(1).begin(),
-            calls.at(1).end(),
-            "VerifiedArenaBot") != calls.at(1).end());
+            calls.at(2).begin(),
+            calls.at(2).end(),
+            "VerifiedArenaBot") != calls.at(2).end());
     fs::remove_all(root);
 }
 
