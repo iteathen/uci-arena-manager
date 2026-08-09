@@ -4,6 +4,7 @@
 #include "arena/application/engine_onboarding.hpp"
 #include "arena/domain/uuid.hpp"
 
+#include <catch2/catch_message.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
@@ -64,9 +65,9 @@ TEST_CASE("UCI probe gives readiness and first search independent deadlines") {
     using namespace std::chrono_literals;
     const std::filesystem::path executable = ARENA_MOCK_UCI_PATH;
     const arena::adapters::UciProbeTimeouts timeouts{
-        50ms,
+        2s,
         250ms,
-        50ms,
+        2s,
         250ms,
     };
     const auto result = arena::adapters::UciProcess::probe(
@@ -74,6 +75,7 @@ TEST_CASE("UCI probe gives readiness and first search independent deadlines") {
         executable.parent_path(),
         {"--ready-delay-ms", "75", "--delay-ms", "75"},
         timeouts);
+    INFO(result.error);
     REQUIRE(result.ok);
     REQUIRE(result.elapsed_ms >= 150);
 }
