@@ -110,7 +110,7 @@ test("Manager component workflow pins dependencies and bounds each release gate"
   }
   assert.match(workflow, /--clean-first --parallel 4/u);
   assert.match(workflow, /--output-on-failure --timeout 300/u);
-  assert.match(workflow, /VCPKG_BINARY_SOURCES = 'clear'/u);
+  assert.doesNotMatch(workflow, /\$env:VCPKG_BINARY_SOURCES\s*=/u);
   assert.match(workflow, /--overlay-triplets=\$overlayTriplets/u);
   assert.match(workflow, /--x-install-root=\$installRoot/u);
   assert.match(workflow, /x64-windows-release/u);

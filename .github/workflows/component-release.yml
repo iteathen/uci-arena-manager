@@ -100,7 +100,6 @@ jobs:
           $vcpkg = Join-Path $env:VCPKG_ROOT $(if ($IsWindows) { 'vcpkg.exe' } else { 'vcpkg' })
           $installRoot = Join-Path $PWD "build/$preset/vcpkg_installed"
           $overlayTriplets = Join-Path $PWD 'cmake/triplets'
-          $env:VCPKG_BINARY_SOURCES = 'clear'
           & $vcpkg install `
             --triplet $triplet `
             "--overlay-triplets=$overlayTriplets" `

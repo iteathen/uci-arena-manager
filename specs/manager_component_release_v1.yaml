@@ -59,6 +59,10 @@ producer_contract:
       bounds so a stalled runner cannot consume unbounded private-repository
       minutes or hide which brick stalled. Deprecated or unavailable binary
       cache backends never masquerade as restored dependency authority.
+    - Candidate dependency materialization reuses the workflow adapter's
+      content-addressed, ABI-keyed vcpkg binary cache when available. The
+      install step must not replace that declared cache source with an
+      unconditional uncached mode; a cache miss remains an exact source build.
     - The explicitly dispatched signing job publishes the verified archive,
       provider result, and Sigstore bundle directly to one private immutable
       candidate prerelease. Actions artifact storage is not candidate transport.
