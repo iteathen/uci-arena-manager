@@ -59,6 +59,20 @@ test("direct Lichess credential entry is a write-only native transaction", () =>
   assert.match(helper, /lichess_token_path/);
   assert.match(helper, /consumer_configuration_regenerated/);
   assert.doesNotMatch(helper, /arguments\.push_back\(credential\)/);
+  const materializeCredential = helper.slice(
+    helper.indexOf("json materialize_lichess_credential"),
+    helper.indexOf("#ifdef _WIN32", helper.indexOf("json materialize_lichess_credential")),
+  );
+  assert.match(
+    materializeCredential,
+    /ServiceCatalog::control_bot\([\s\S]*"status"\)[\s\S]*status\.value\("installed", false\)/u,
+  );
+  assert.ok(
+    materializeCredential.indexOf("ServiceCatalog::control_bot") <
+      materializeCredential.indexOf("OperatorCredentialFileUpdate"),
+    "startup authority must be checked before credential mutation",
+  );
+  assert.doesNotMatch(materializeCredential, /saved_locator/);
   const applyHandler = helper.slice(
     helper.indexOf('"/v1/bot-credential-apply"'),
     helper.indexOf("const auto register_setup_handler"),

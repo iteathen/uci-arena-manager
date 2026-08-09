@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { BotOptions, BotOptionsUpdate } from '../api/types'
 import {
+  changeOutboundBehavior,
   needsOutboundConfirmation,
   needsRatedConfirmation,
+  outboundBehavior,
+  schedulerAuthorityState,
 } from './botOperationsModel'
 
 function fixture(): BotOptions {
@@ -95,5 +98,38 @@ describe('Lichess option confirmation policy', () => {
     alreadyEnabled.scheduler.enabled = true
     alreadyEnabled.capacity.bot.target_active = 1
     expect(needsOutboundConfirmation(alreadyEnabled, editable(alreadyEnabled))).toBe(false)
+  })
+
+  it('projects active play only when the scheduler has a positive outbound target', () => {
+    const proposed = editable(fixture())
+    proposed.scheduler.enabled = true
+    proposed.capacity.bot.target_active = 0
+    expect(outboundBehavior(proposed)).toBe('wait')
+
+    const active = changeOutboundBehavior(proposed, 'active')
+    expect(active.scheduler.enabled).toBe(true)
+    expect(active.capacity.bot.target_active).toBe(1)
+    expect(outboundBehavior(active)).toBe('active')
+
+    const waiting = changeOutboundBehavior(active, 'wait')
+    expect(waiting.scheduler.enabled).toBe(false)
+    expect(outboundBehavior(waiting)).toBe('wait')
+  })
+
+  it('cannot project active play without a bot slot', () => {
+    const proposed = editable(fixture())
+    proposed.capacity.bot.slots = 0
+    proposed.capacity.bot.target_active = 0
+    const result = changeOutboundBehavior(proposed, 'active')
+    expect(result.scheduler.enabled).toBe(false)
+    expect(result.capacity.bot.target_active).toBe(0)
+    expect(outboundBehavior(result)).toBe('wait')
+  })
+
+  it('distinguishes configured scheduler authority from its durable pause bit', () => {
+    expect(schedulerAuthorityState(undefined, false)).toBe('checking')
+    expect(schedulerAuthorityState(false, false)).toBe('disabled')
+    expect(schedulerAuthorityState(true, true)).toBe('paused')
+    expect(schedulerAuthorityState(true, false)).toBe('active')
   })
 })

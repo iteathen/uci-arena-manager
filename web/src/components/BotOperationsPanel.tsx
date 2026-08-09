@@ -25,8 +25,11 @@ import {
 } from '../api/client'
 import type { BotAccountAction, BotOptions, BotOptionsUpdate } from '../api/types'
 import {
+  changeOutboundBehavior,
   needsOutboundConfirmation,
   needsRatedConfirmation,
+  outboundBehavior,
+  schedulerAuthorityState,
 } from './botOperationsModel'
 
 const speeds = ['ultraBullet', 'bullet', 'blitz', 'rapid', 'classical', 'correspondence']
@@ -125,6 +128,10 @@ export function BotOperationsPanel({
     (outboundConfirmationRequired && !confirmOutbound)
   const reservation = account.data?.reservation.reservation
   const schedulerPaused = account.data?.scheduler.scheduler?.paused
+  const schedulerState = schedulerAuthorityState(
+    options.data?.scheduler.enabled,
+    schedulerPaused,
+  )
 
   if (!installed) {
     return (
@@ -270,16 +277,25 @@ export function BotOperationsPanel({
             <Fieldset legend="Scheduler authority">
               <Group justify="space-between">
                 <Group>
-                  <Badge color={schedulerPaused ? 'orange' : 'teal'}>
-                    {schedulerPaused ? 'PAUSED' : 'ACTIVE'}
+                  <Badge color={
+                    schedulerState === 'active'
+                      ? 'teal'
+                      : schedulerState === 'paused'
+                        ? 'orange'
+                        : 'gray'
+                  }>
+                    {schedulerState.toUpperCase()}
                   </Badge>
                   <Text size="sm">
-                    Pausing stops new outbound scheduling; it does not terminate active games.
+                    {schedulerState === 'disabled'
+                      ? 'Active play is disabled in provider options; incoming challenges remain separately controlled.'
+                      : 'Pausing stops new outbound scheduling; it does not terminate active games.'}
                   </Text>
                 </Group>
                 <Button
                   variant="default"
                   loading={accountControl.isPending}
+                  disabled={schedulerState === 'checking' || schedulerState === 'disabled'}
                   onClick={() => accountControl.mutate({
                     action: schedulerPaused ? 'scheduler_resume' : 'scheduler_pause',
                   })}
@@ -373,13 +389,17 @@ export function BotOperationsPanel({
                     description="Choose whether to seek games or only wait for incoming challenges."
                     data={[
                       { value: 'wait', label: 'Wait for incoming challenges' },
-                      { value: 'active', label: 'Actively seek bot games' },
+                      {
+                        value: 'active',
+                        label: 'Actively seek bot games',
+                        disabled: form.capacity.bot.slots === 0,
+                      },
                     ]}
-                    value={form.scheduler.enabled ? 'active' : 'wait'}
-                    onChange={(value) => setForm({
-                      ...form,
-                      scheduler: { ...form.scheduler, enabled: value === 'active' },
-                    })}
+                    value={outboundBehavior(form)}
+                    onChange={(value) => value && setForm(changeOutboundBehavior(
+                      form,
+                      value as 'wait' | 'active',
+                    ))}
                   />
                   <Select label="Preferred color" data={['random', 'white', 'black']} value={form.outbound_challenge.color}
                     onChange={(value) => value && setForm({ ...form, outbound_challenge: { ...form.outbound_challenge, color: value as 'random' | 'white' | 'black' } })} />

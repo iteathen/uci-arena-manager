@@ -1,5 +1,48 @@
 import type { BotOptions, BotOptionsUpdate } from '../api/types'
 
+export type OutboundBehavior = 'wait' | 'active'
+export type SchedulerAuthorityState = 'checking' | 'disabled' | 'paused' | 'active'
+
+export function schedulerAuthorityState(
+  enabled: boolean | undefined,
+  paused: boolean | undefined,
+): SchedulerAuthorityState {
+  if (enabled === undefined || paused === undefined) return 'checking'
+  if (!enabled) return 'disabled'
+  return paused ? 'paused' : 'active'
+}
+
+export function outboundBehavior(
+  options: Pick<BotOptionsUpdate, 'capacity' | 'scheduler'>,
+): OutboundBehavior {
+  return options.scheduler.enabled && options.capacity.bot.target_active > 0
+    ? 'active'
+    : 'wait'
+}
+
+export function changeOutboundBehavior(
+  options: BotOptionsUpdate,
+  behavior: OutboundBehavior,
+): BotOptionsUpdate {
+  const active = behavior === 'active' && options.capacity.bot.slots > 0
+  return {
+    ...options,
+    capacity: {
+      ...options.capacity,
+      bot: {
+        ...options.capacity.bot,
+        target_active: active
+          ? Math.max(1, options.capacity.bot.target_active)
+          : options.capacity.bot.target_active,
+      },
+    },
+    scheduler: {
+      ...options.scheduler,
+      enabled: active,
+    },
+  }
+}
+
 export function needsRatedConfirmation(
   current: BotOptions,
   proposed: BotOptionsUpdate,

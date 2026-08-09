@@ -604,17 +604,12 @@ json materialize_lichess_credential(
             "the API key must be one bounded value without whitespace");
     }
 
-    const std::filesystem::path saved_locator =
-        manager_data_root / "locators" / "lichess_token_path.json";
-    if (std::filesystem::is_regular_file(saved_locator) &&
-        !std::filesystem::is_symlink(saved_locator)) {
-        arena::application::ProcessSupervisor process;
-        const json status = arena::application::ServiceCatalog::control_bot(
-            manager_data_root, process, "status");
-        if (status.value("installed", false)) {
-            throw std::runtime_error(
-                "Disable Lichess Bot startup before replacing its API key");
-        }
+    arena::application::ProcessSupervisor process;
+    const json status = arena::application::ServiceCatalog::control_bot(
+        manager_data_root, process, "status");
+    if (status.value("installed", false)) {
+        throw std::runtime_error(
+            "Disable Lichess Bot startup before replacing its API key");
     }
 
     const std::filesystem::path destination =
