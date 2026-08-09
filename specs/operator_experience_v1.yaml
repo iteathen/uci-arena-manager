@@ -301,6 +301,10 @@ bot_experience:
     - Offer typed Refresh status, Enable startup, and Disable startup controls
       without a terminal. Enablement performs a fresh BOT probe and never lets
       the browser provide the account identity.
+    - While the installed adapter's Bots surface is open, sample the same
+      credential-free provider/startup status on a bounded five-second interval.
+      Manual Refresh remains available; polling never reads the token or contacts
+      Lichess and never converts missing query data into an inactive conclusion.
     - Explain that closing the desktop helper removes account-control
       authority but does not stop provider-owned startup.
     - Every readiness blocker links to the owning Engines, Services, Reports,

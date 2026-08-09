@@ -197,6 +197,9 @@ readiness:
       - Credential-free provider status is sampled with startup status and
         independently projects active, ready, stream connectivity, and bounded
         blockers. Startup registration alone never implies an active bot.
+      - The open Bots surface refreshes that same credential-free status every
+        five seconds while the adapter is installed, so startup transitions and
+        stream health do not remain stale until manual interaction.
   rule: Missing readiness never appears as active.
   evidence_contract:
     current_capacity_schema: uci_arena_lichess_capacity_profile_v2

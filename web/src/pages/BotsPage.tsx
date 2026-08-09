@@ -8,7 +8,7 @@ import { PageHeader } from '../components/PageHeader'
 import { ComponentSetupButton } from '../components/ComponentSetupButton'
 import { BotOperationsPanel } from '../components/BotOperationsPanel'
 import { LichessCredentialSetup } from '../components/LichessCredentialSetup'
-import { canEnableBotStartup, canProbeBot } from './botAdmission'
+import { botStatusRefreshInterval, canEnableBotStartup, canProbeBot } from './botAdmission'
 
 export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
   const queryClient = useQueryClient()
@@ -26,6 +26,8 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
     queryFn: () => controlLocalBot('status'),
     enabled: candidate?.package_state === 'installed',
     retry: false,
+    refetchInterval: botStatusRefreshInterval(candidate?.package_state === 'installed'),
+    refetchIntervalInBackground: false,
   })
   const startupControl = useMutation({
     mutationFn: controlLocalBot,
