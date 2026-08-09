@@ -109,6 +109,10 @@ engine_contract:
         Refresh repeats the same full candidate and runtime-identity probe,
         updates that existing resource by revision, and is rejected while a
         running or paused competition or active game references the engine.
+        A new immutable root or version for the same verified component id is
+        such a refresh; it must not create a second managed Engine authority.
+        Removing an idle Engine resource removes Manager registration state
+        only and never deletes installed or preserved component data.
         Provider-output adoption never silently rewrites a registered engine.
   naming_boundary:
     product_engine_executable: uci_arena_engine

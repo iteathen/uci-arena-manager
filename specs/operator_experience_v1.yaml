@@ -88,6 +88,14 @@ engine_identity_experience:
       explicit Use this engine action; that action performs the complete
       bounded UCI interrogation before creating the registration and does not
       require a redundant probe-confirm-register sequence.
+    - When that current receipt replaces an older immutable component root,
+      present one Refresh configuration action for the existing managed Engine
+      resource instead of creating a second registration.
+    - Show an explicitly confirmed Remove registration action for stopped
+      engines. Explain that it removes only Manager registration state, retains
+      installed files and valuable data, and report active-use conflicts.
+    - A successful retry clears the prior failure for that exact engine action;
+      stale error text must not remain beside a successful current state.
     - Auto-detect searches only receipts, saved locators, provider manifests,
       PATH, and bounded standard roots. Scan folder uses the native picker and
       inspects only the selected root and direct children.

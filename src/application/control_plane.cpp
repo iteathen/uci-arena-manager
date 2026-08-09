@@ -1052,9 +1052,7 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
     if (refresh &&
         (selected_candidate.is_null() ||
          selected_candidate.value("source", "") != "install_receipt" ||
-         selected_candidate.value("component_id", "") != "uci_arena.engine" ||
-         selected_candidate.value("candidate_id", "") !=
-             existing_engine_data.value("candidate_id", ""))) {
+         selected_candidate.value("component_id", "") != "uci_arena.engine")) {
         throw CommandFailure(
             "engine_refresh_candidate_changed",
             "the registered managed Engine no longer matches the current verified candidate",
@@ -3452,6 +3450,55 @@ json ControlPlane::remove_resource(const json& request, const std::string& actor
                 "service_active",
                 "stop the manual service before removing its locator",
                 409);
+        }
+    }
+    if (kind == "engine") {
+        const json data = json::parse(existing->data_json);
+        const std::string observed = data.value("observed_state", "stopped");
+        if (observed != "stopped") {
+            throw CommandFailure(
+                "engine_active",
+                "stop the engine before removing its Manager registration",
+                409);
+        }
+        for (const auto* competition_kind : {"match_plan", "tournament"}) {
+            for (const auto& competition :
+                 store_->list_resources(competition_kind, 10'000, 0)) {
+                const json competition_data = json::parse(competition.data_json);
+                const std::string lifecycle =
+                    competition_data.value("lifecycle", "planned");
+                if (lifecycle != "running" && lifecycle != "paused") {
+                    continue;
+                }
+                const json engine_ids =
+                    competition_data.value("engine_ids", json::array());
+                if (engine_ids.is_array() && std::ranges::any_of(
+                        engine_ids,
+                        [&id](const json& value) {
+                            return value.is_string() && value == id;
+                        })) {
+                    throw CommandFailure(
+                        "engine_in_use",
+                        "stop or cancel the active competition before removing this engine registration",
+                        409);
+                }
+            }
+        }
+        for (const auto& game : store_->list_resources("game", 10'000, 0)) {
+            const json game_data = json::parse(game.data_json);
+            if (game_data.value("lifecycle", "") != "running") {
+                continue;
+            }
+            const auto uses_engine = [&id](const json& identity) {
+                return identity.is_object() && identity.value("id", "") == id;
+            };
+            if (uses_engine(game_data.value("white_engine", json::object())) ||
+                uses_engine(game_data.value("black_engine", json::object()))) {
+                throw CommandFailure(
+                    "engine_in_use",
+                    "wait for the active game to finish before removing this engine registration",
+                    409);
+            }
         }
     }
     if (kind == "match_plan" || kind == "tournament") {

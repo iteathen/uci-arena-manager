@@ -117,15 +117,21 @@ registration:
   confirmation: explicit_only
   behavior:
     - Candidate discovery never creates or updates an engine resource.
-    - The dashboard requires a successful probe before enabling registration.
-    - Registration probes again to close the probe-to-register race and then
-      persists through the existing transactional command path.
+    - The dashboard's explicit Use or Register action performs the complete
+      probe and persists through the existing transactional command path in
+      one operator action. Test only remains an optional non-mutating preview;
+      it is not a second confirmation prerequisite.
+    - Test only forwards the exact candidate identity into the same dry-run
+      registration path, including qualified runtime-status matching. A
+      successful preview is correlation evidence only; the mutating action
+      probes again and never treats an earlier result as current authority.
     - Discovery identity is never trusted across the probe or registration
       boundary. Registration persists the fingerprint produced by its own full
       process probe.
     - Existing raw launch-spec registration remains compatible for automation.
-    - Dashboard registration binds to a successful short-lived probe id,
-      repeats the probe, and retains verified installed-component provenance.
+    - Dashboard registration repeats the probe at mutation time and retains
+      verified installed-component provenance. The preview probe id correlates
+      diagnostics but does not authorize or replace that current probe.
     - The public uci_options request field is persisted as option_overrides;
       the legacy option_overrides spelling remains input-compatible for
       existing automation but cannot conflict with uci_options.
@@ -138,12 +144,18 @@ registration:
     - A current receipt-managed candidate whose launch arguments, options, or
       managed-profile identity differ from an existing registration is shown
       as needing refresh rather than merely registered by executable path.
+      A new receipt version or immutable root for the same component identity
+      also refreshes that managed resource instead of creating a duplicate.
       Refresh targets that exact resource revision, repeats the complete
       candidate probe including qualified runtime-status matching, and keeps
       the prior registration authoritative on failure.
     - Refresh is rejected while a running or paused competition or active game
       references the engine so one persisted competition cannot silently
       change topology, timing evidence, or knowledge bindings between games.
+    - A stopped engine registration may be explicitly removed when no active
+      game or running or paused competition references it. Removing a Manager
+      registration never removes an installed component, executable, model,
+      knowledge asset, receipt, or preserved state.
 
 recommendation:
   component_id: uci_arena.engine

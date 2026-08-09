@@ -252,15 +252,28 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
             verified.at("runtime_model_identity")
                 .at("model_fingerprint") == "8104116015256418347");
 
-        const json forged =
-            registration("engcand-forged")
-                .at("resource")
-                .at("data");
+        const json forged_resource =
+            registration("engcand-forged").at("resource");
+        const json forged = forged_resource.at("data");
         REQUIRE_FALSE(forged.contains("candidate_id"));
         REQUIRE_FALSE(forged.contains("component_id"));
         REQUIRE_FALSE(forged.contains("component_version"));
         REQUIRE_FALSE(forged.contains("recommended"));
         REQUIRE_FALSE(forged.contains("default_model"));
+        static_cast<void>(control_plane.submit(
+            {
+                {"schema_version", 1},
+                {"request_id", arena::domain::uuid_v7()},
+                {"idempotency_key", arena::domain::uuid_v7()},
+                {"target",
+                 {{"kind", "engine"}, {"id", forged_resource.at("id")}}},
+                {"action", "resource.remove"},
+                {"expected_revision", forged_resource.at("revision")},
+                {"dry_run", false},
+                {"parameters", json::object()},
+            },
+            "test"));
+        REQUIRE(fs::is_regular_file(executable));
 
         launch_profile["uci_options"]["Threads"] = 2;
         std::ofstream(configuration, std::ios::trunc)
@@ -299,11 +312,53 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
         REQUIRE(refreshed.at("revision") == 2);
         REQUIRE(refreshed.at("data").at("option_overrides").at("Threads") == 2);
 
+        auto prior_version = store->get_resource(
+            "engine", registered.at("id").get<std::string>()).value();
+        json prior_version_data = json::parse(prior_version.data_json);
+        prior_version_data["candidate_id"] = "engcand-prior-immutable-root";
+        prior_version_data["component_version"] = "1.2.2";
+        prior_version.revision += 1;
+        prior_version.updated_at = arena::domain::utc_now();
+        prior_version.data_json = prior_version_data.dump();
+        const std::string migration_command_id = arena::domain::uuid_v7();
+        store->update_resource(
+            prior_version,
+            refreshed.at("revision"),
+            {
+                migration_command_id,
+                arena::domain::uuid_v7(),
+                arena::domain::uuid_v7(),
+                "test.prior-engine-version",
+                "completed",
+                "{}",
+                prior_version.updated_at,
+            },
+            {
+                0,
+                arena::domain::uuid_v7(),
+                prior_version.updated_at,
+                "state",
+                "engine.test_prior_version",
+                "engine",
+                prior_version.id,
+                prior_version.revision,
+                migration_command_id,
+                "{}",
+            });
+        const json version_refreshed =
+            refresh(prior_version.revision).at("resource");
+        REQUIRE(version_refreshed.at("id") == registered.at("id"));
+        REQUIRE(version_refreshed.at("revision") == 4);
+        REQUIRE(
+            version_refreshed.at("data").at("candidate_id") == candidate_id);
+        REQUIRE(
+            version_refreshed.at("data").at("component_version") == "1.2.3");
+
         launch_profile["expected_runtime"]["hardware_driver_fingerprint"] =
             "15113055170282736144";
         std::ofstream(configuration, std::ios::trunc)
             << launch_profile.dump(2);
-        REQUIRE_THROWS(refresh(refreshed.at("revision")));
+        REQUIRE_THROWS(refresh(version_refreshed.at("revision")));
         json after_failed_refresh = nullptr;
         for (const auto& engine : control_plane.list("engine")) {
             if (engine.at("id") == registered.at("id")) {
@@ -312,10 +367,12 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
             }
         }
         REQUIRE_FALSE(after_failed_refresh.is_null());
-        REQUIRE(after_failed_refresh.at("revision") == refreshed.at("revision"));
+        REQUIRE(
+            after_failed_refresh.at("revision") ==
+            version_refreshed.at("revision"));
         REQUIRE(
             after_failed_refresh.at("data").at("launch_profile") ==
-            refreshed.at("data").at("launch_profile"));
+            version_refreshed.at("data").at("launch_profile"));
 
         launch_profile["expected_runtime"]["hardware_driver_fingerprint"] =
             "15113055170282736143";
@@ -359,7 +416,22 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                 command_id,
                 "{}",
             });
-        REQUIRE_THROWS(refresh(refreshed.at("revision")));
+        REQUIRE_THROWS(refresh(version_refreshed.at("revision")));
+        REQUIRE_THROWS_AS(
+            control_plane.submit(
+                {
+                    {"schema_version", 1},
+                    {"request_id", arena::domain::uuid_v7()},
+                    {"idempotency_key", arena::domain::uuid_v7()},
+                    {"target",
+                     {{"kind", "engine"}, {"id", registered.at("id")}}},
+                    {"action", "resource.remove"},
+                    {"expected_revision", version_refreshed.at("revision")},
+                    {"dry_run", false},
+                    {"parameters", json::object()},
+                },
+                "test"),
+            arena::application::CommandFailure);
     }
 
     fs::remove_all(root);

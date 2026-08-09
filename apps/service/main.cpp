@@ -318,7 +318,7 @@ int run_control_plane(const Options& options) {
                     const json body = parse_body(request);
                     json parameters = json::object();
                     for (const auto* field :
-                         {"display_name", "executable", "working_directory",
+                         {"candidate_id", "display_name", "executable", "working_directory",
                           "arguments", "uci_options",
                           "environment_references"}) {
                         if (body.contains(field)) {

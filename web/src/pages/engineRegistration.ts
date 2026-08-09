@@ -52,9 +52,16 @@ export function candidateRegistration(
   const pathMatches = engines.filter(
     (engine) => samePath(engine.data.executable, candidate.executable),
   )
+  const managedComponentMatches = candidate.source === 'install_receipt' &&
+      candidate.component_id === 'uci_arena.engine'
+    ? engines.filter(
+        (engine) => engine.data.onboarding_source === 'install_receipt' &&
+          engine.data.component_id === candidate.component_id,
+      )
+    : []
   const engine = exact[0] ?? (
     candidate.source === 'install_receipt'
-      ? pathMatches.find(
+      ? managedComponentMatches[0] ?? pathMatches.find(
           (entry) => entry.data.onboarding_source === 'install_receipt' &&
             entry.data.component_id === candidate.component_id,
         )

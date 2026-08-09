@@ -1,4 +1,4 @@
-import { IconCpu, IconFolderSearch, IconPlus, IconRefresh } from '@tabler/icons-react'
+import { IconCpu, IconFolderSearch, IconPlus, IconRefresh, IconTrash } from '@tabler/icons-react'
 import {
   Alert,
   Badge,
@@ -50,6 +50,7 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
   const [manualProbeId, setManualProbeId] = useState('')
   const [scanError, setScanError] = useState('')
   const [refreshMessage, setRefreshMessage] = useState('')
+  const [engineToRemove, setEngineToRemove] = useState<Resource<EngineData> | null>(null)
 
   const probeCandidate = useMutation({
     mutationFn: (candidate: EngineCandidate) =>
@@ -99,6 +100,27 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
         ),
       ),
     onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['resources', 'engine'] }),
+        queryClient.invalidateQueries({ queryKey: ['engine-candidates'] }),
+      ])
+    },
+  })
+
+  const removeEngine = useMutation({
+    mutationFn: (engine: Resource<EngineData>) =>
+      api.command(
+        makeCommand(
+          'resource.remove',
+          'engine',
+          {},
+          false,
+          engine.id,
+          engine.revision,
+        ),
+      ),
+    onSuccess: async () => {
+      setEngineToRemove(null)
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['resources', 'engine'] }),
         queryClient.invalidateQueries({ queryKey: ['engine-candidates'] }),
@@ -340,7 +362,11 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
                           variant="default"
                           loading={probing}
                           disabled={candidate.state !== 'ready_to_probe' || registered}
-                          onClick={() => probeCandidate.mutate(candidate)}
+                          onClick={() => {
+                            registerCandidate.reset()
+                            refreshCandidate.reset()
+                            probeCandidate.mutate(candidate)
+                          }}
                         >
                           Test only
                         </Button>
@@ -348,6 +374,7 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
                           loading={registering || refreshing}
                           disabled={candidate.state !== 'ready_to_probe' || registered}
                           onClick={() => {
+                            probeCandidate.reset()
                             if (refreshRequired && registration.engine) {
                               refreshCandidate.mutate({ candidate, engine: registration.engine })
                             } else {
@@ -386,6 +413,7 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
                     <Table.Th>Identity</Table.Th>
                     <Table.Th>Options</Table.Th>
                     <Table.Th>Fingerprint</Table.Th>
+                    <Table.Th>Actions</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
@@ -425,6 +453,20 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
                       <Table.Td>{engine.data.discovered_options.length}</Table.Td>
                       <Table.Td>
                         <Code>{engine.data.fingerprint.slice(0, 12)}</Code>
+                      </Table.Td>
+                      <Table.Td>
+                        <Button
+                          size="compact-sm"
+                          variant="subtle"
+                          color="red"
+                          leftSection={<IconTrash size={14} />}
+                          onClick={() => {
+                            removeEngine.reset()
+                            setEngineToRemove(engine)
+                          }}
+                        >
+                          Remove registration
+                        </Button>
                       </Table.Td>
                     </Table.Tr>
                   ))}
@@ -488,7 +530,10 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
               variant="default"
               loading={probeManual.isPending}
               disabled={!executable}
-              onClick={() => probeManual.mutate()}
+              onClick={() => {
+                registerManual.reset()
+                probeManual.mutate()
+              }}
             >
               Test engine
             </Button>
@@ -498,6 +543,36 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
               onClick={() => registerManual.mutate()}
             >
               Register
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      <Modal
+        opened={engineToRemove !== null}
+        onClose={() => setEngineToRemove(null)}
+        title="Remove engine registration?"
+      >
+        <Stack>
+          <Text>
+            Remove {engineToRemove?.data.display_name ?? 'this engine'} from Manager?
+          </Text>
+          <Alert color="blue">
+            Installed files, models, opening books, tablebases, timing evidence, receipts,
+            and external data are kept. The detected installed engine can be registered again.
+          </Alert>
+          {removeEngine.error && <Alert color="red">{removeEngine.error.message}</Alert>}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setEngineToRemove(null)}>
+              Keep registration
+            </Button>
+            <Button
+              color="red"
+              loading={removeEngine.isPending}
+              disabled={!engineToRemove}
+              onClick={() => engineToRemove && removeEngine.mutate(engineToRemove)}
+            >
+              Remove registration
             </Button>
           </Group>
         </Stack>

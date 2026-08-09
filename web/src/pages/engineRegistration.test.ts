@@ -75,6 +75,15 @@ describe('managed Engine registration state', () => {
     expect(candidateRegistration(updated, [registered()]).state).toBe('refresh_required')
   })
 
+  it('refreshes the same managed component across immutable version roots', () => {
+    const prior = candidate()
+    prior.candidate_id = 'engcand-prior-root'
+    prior.component_version = '1.9.0'
+    prior.executable = 'C:\\Program Files\\UCI Arena\\components\\engine\\1.9.0\\engine.exe'
+    prior.working_directory = 'C:\\Program Files\\UCI Arena\\components\\engine\\1.9.0'
+    expect(candidateRegistration(candidate(), [registered(prior)]).state).toBe('refresh_required')
+  })
+
   it('does not let a manual registration hide a receipt-managed candidate', () => {
     const manual = registered()
     manual.data.candidate_id = undefined
