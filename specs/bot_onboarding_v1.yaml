@@ -109,8 +109,11 @@ account_control:
   rules:
     - Status and disable resolve only receipt-verified adapter and runtime
       entrypoints and never require or open the token file.
-    - Enable requires every non-probe readiness dimension and performs a fresh
+    - Enable requires every live-play readiness dimension and performs a fresh
       BOT-only account probe before installing provider-owned per-user startup.
+      Missing learned transport evidence is not a live-play blocker because the
+      provider owns a conservative bootstrap reserve until qualified evidence
+      is available.
     - The account identity passed to startup comes only from that fresh probe;
       the dashboard cannot supply or override it.
     - Provider startup output is reduced to the output allowlist. Raw task,
@@ -168,13 +171,20 @@ readiness:
     - token_reference
     - bot_account_probe
   projection:
-    prerequisite_states: [ready, missing]
+    prerequisite_states: [ready, configured, bootstrap, missing]
     account_probe_states: [not_verified, verified]
     startup_states: [disabled, enabled]
+    startup_eligibility_states: [ready, blocked]
     rules:
       - Every required dimension is returned independently; a generic blocked
         state cannot replace the per-dimension evidence.
-      - ready_to_probe requires every prerequisite except bot_account_probe.
+      - ready_to_probe requires only a verified compatible adapter and runtime,
+        a readable provider configuration, and an external token reference.
+        Engine, model, knowledge, and performance qualification do not block
+        the provider-owned BOT account probe.
+      - startup_eligibility is ready only when every live-play prerequisite is
+        ready. The transport_profile states configured and bootstrap are both
+        explicitly eligible; neither is a Manager claim of qualified evidence.
       - The interactive probe result may project bot_account_probe as verified
         for the current launcher session, but it does not enable startup.
       - Provider-reported helper status is the live startup authority for the
@@ -194,6 +204,11 @@ readiness:
       - Manager never promotes, rewrites, or invalidates timing evidence from
         its filename or age. The verified Lichess provider remains authority
         for profile schema, qualification, compatibility, and effective use.
+      - When no transport profile is selected, Manager projects bootstrap
+        without a readiness issue. A selected path is only configured; the
+        provider remains responsible for treating missing, incompatible,
+        invalid, or unqualified content as bootstrap. It owns the conservative
+        reserve and learns replacement evidence only from completed games.
 
 lifecycle:
   startup_owner: provider_per_user

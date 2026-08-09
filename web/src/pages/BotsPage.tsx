@@ -8,6 +8,7 @@ import { PageHeader } from '../components/PageHeader'
 import { ComponentSetupButton } from '../components/ComponentSetupButton'
 import { BotOperationsPanel } from '../components/BotOperationsPanel'
 import { LichessCredentialSetup } from '../components/LichessCredentialSetup'
+import { canEnableBotStartup, canProbeBot } from './botAdmission'
 
 export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
   const queryClient = useQueryClient()
@@ -231,7 +232,7 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
               </Button>
               <Button
                 loading={probe.isPending}
-                disabled={candidate?.state !== 'ready_to_probe'}
+                disabled={!canProbeBot(candidate)}
                 onClick={() => probe.mutate()}
               >
                 Verify BOT account
@@ -248,11 +249,7 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
               </Button>
               <Button
                 loading={startupControl.isPending}
-                disabled={
-                  !observedStartup ||
-                  candidate?.state !== 'ready_to_probe' ||
-                  startupInstalled
-                }
+                disabled={!canEnableBotStartup(candidate, Boolean(observedStartup), startupInstalled)}
                 onClick={() => startupControl.mutate('enable_startup')}
               >
                 Enable startup
@@ -269,18 +266,21 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
           <Title order={3}>Readiness and options</Title>
           <Text size="sm" c="dimmed" mt="xs">
             Package, configuration, timing evidence, engine identity, knowledge,
-            capacity, transport, credential reference, and startup must all be ready
-            before activation.
+            capacity, credential reference, and startup eligibility remain explicit.
+            Transport uses the provider's conservative bootstrap reserve until qualified
+            evidence is learned from completed games.
           </Text>
           <SimpleGrid cols={{ base: 1, sm: 2 }} mt="md">
             {Object.entries(readinessLabels).map(([key, label]) => {
               const state = readiness[key] ?? 'missing'
               const ready = state === 'ready' || state === 'verified' || state === 'enabled'
+              const bootstrap = state === 'bootstrap'
+              const configured = state === 'configured'
               return (
                 <Paper withBorder p="sm" key={key}>
                   <Text size="xs" c="dimmed">{label}</Text>
-                  <Badge color={ready ? 'teal' : state === 'not_verified' ? 'blue' : 'orange'}>
-                    {state.replaceAll('_', ' ')}
+                  <Badge color={ready ? 'teal' : bootstrap || configured || state === 'not_verified' ? 'blue' : 'orange'}>
+                    {bootstrap ? 'bootstrap reserve' : configured ? 'profile configured' : state.replaceAll('_', ' ')}
                   </Badge>
                 </Paper>
               )

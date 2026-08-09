@@ -1898,39 +1898,38 @@ json ServiceCatalog::discover_bot(
         return fs::absolute(current->get<std::string>()).lexically_normal() ==
                fs::absolute(*locator).lexically_normal();
     };
+    const bool timing_ready = configured_path_matches(
+        {"engine", "time_profile"}, timing);
     project_bot_prerequisite(
         readiness,
         issues,
         "timing_profile",
-        configured_path_matches(
-            {"engine", "time_profile"}, timing),
+        timing_ready,
         "bot_timing_profile_unavailable",
         "Import a provider-safety-qualified timing profile whose semantic timing identity "
         "matches the configured model, provider/runtime, hardware, and search topology.");
+    const bool single_game_ready = configured_path_matches(
+        {"engine", "single_game_profile"}, single_game);
     project_bot_prerequisite(
         readiness,
         issues,
         "single_game_profile",
-        configured_path_matches(
-            {"engine", "single_game_profile"}, single_game),
+        single_game_ready,
         "bot_single_game_profile_unavailable",
         "Import an exact qualified Lichess single-game profile.");
+    const bool capacity_ready = configured_path_matches(
+        {"capacity", "capacity_profile"}, capacity);
     project_bot_prerequisite(
         readiness,
         issues,
         "capacity_profile",
-        configured_path_matches(
-            {"capacity", "capacity_profile"}, capacity),
+        capacity_ready,
         "bot_capacity_profile_unavailable",
         "Import a qualified Lichess capacity profile for this runtime.");
-    project_bot_prerequisite(
-        readiness,
-        issues,
-        "transport_profile",
-        configured_path_matches(
-            {"timing", "transport_profile_path"}, transport),
-        "bot_transport_profile_unavailable",
-        "Import a qualified Lichess transport profile.");
+    const bool transport_ready = configured_path_matches(
+        {"timing", "transport_profile_path"}, transport);
+    readiness["transport_profile"] =
+        transport_ready ? "configured" : "bootstrap";
 
     const auto token_reference = saved_locator_reference(
         manager_data_root, "lichess_token_path");
@@ -1956,8 +1955,14 @@ json ServiceCatalog::discover_bot(
     readiness["bot_account_probe"] = "not_verified";
     candidate["readiness"] = readiness;
     candidate["issues"] = issues;
-    candidate["state"] =
-        issues.empty() ? "ready_to_probe" : "blocked";
+    const bool probe_ready =
+        adapter_ready && runtime_ready && configuration_ready && token_ready;
+    const bool startup_ready =
+        probe_ready && engine_ready && model_ready && opening_book_ready &&
+        syzygy_ready && timing_ready && single_game_ready && capacity_ready;
+    candidate["state"] = probe_ready ? "ready_to_probe" : "blocked";
+    candidate["startup_eligibility"] =
+        startup_ready ? "ready" : "blocked";
     return {
         {"schema", "arena_bot_candidates_v1"},
         {"schema_version", 1},
@@ -2071,10 +2076,12 @@ json ServiceCatalog::control_bot(
         provider_operation,
         action == "enable_startup" ? "external_file_path_only" : "forbidden");
     if (action == "enable_startup") {
-        if (discover_bot(manager_data_root).at("candidates").at(0).at("state") !=
-            "ready_to_probe") {
+        if (discover_bot(manager_data_root)
+                .at("candidates")
+                .at(0)
+                .at("startup_eligibility") != "ready") {
             throw std::runtime_error(
-                "every BOT readiness prerequisite is required before startup");
+                "every BOT live-play readiness prerequisite is required before startup");
         }
         const json probe = probe_bot(manager_data_root, command_runner);
         account_name = probe.at("account_name").get<std::string>();

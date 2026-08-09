@@ -278,6 +278,10 @@ bot_experience:
       show its model package separately.
     - Show every engine, knowledge, evidence, capacity, transport, credential,
       and startup blocker without claiming the bot is active.
+    - Show absent learned transport evidence as a visible provider bootstrap
+      reserve rather than a blocker or a qualified profile. Account verification
+      remains available before engine qualification, while startup remains
+      gated by the separately projected live-play prerequisites.
     - Show provider-owned startup as disabled, enabled, active, or unavailable
       from the authenticated interactive-user helper; do not infer live state
       from catalog availability or a stale installer receipt.

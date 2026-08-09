@@ -836,7 +836,8 @@ TEST_CASE("Lichess bot discovery projects every missing readiness dimension") {
     const json discovered =
         arena::application::ServiceCatalog::discover_bot(data);
     const json& candidate = discovered.at("candidates").at(0);
-    REQUIRE(candidate.at("state") == "blocked");
+    REQUIRE(candidate.at("state") == "ready_to_probe");
+    REQUIRE(candidate.at("startup_eligibility") == "blocked");
     REQUIRE(candidate.at("package_state") == "installed");
     REQUIRE(candidate.at("token_reference_available") == true);
     REQUIRE(candidate.at("options_state") == "interactive_helper_required");
@@ -852,13 +853,54 @@ TEST_CASE("Lichess bot discovery projects every missing readiness dimension") {
     REQUIRE(candidate.at("readiness").at("timing_profile") == "missing");
     REQUIRE(candidate.at("readiness").at("single_game_profile") == "missing");
     REQUIRE(candidate.at("readiness").at("capacity_profile") == "missing");
-    REQUIRE(candidate.at("readiness").at("transport_profile") == "missing");
+    REQUIRE(candidate.at("readiness").at("transport_profile") == "bootstrap");
     REQUIRE(candidate.at("readiness").at("token_reference") == "ready");
     REQUIRE(
         candidate.at("readiness").at("bot_account_probe") ==
         "not_verified");
     REQUIRE(candidate.at("readiness").at("startup") == "disabled");
+    REQUIRE(candidate.at("issues").dump().find(
+                "bot_transport_profile_unavailable") == std::string::npos);
     REQUIRE(discovered.dump().find(sentinel) == std::string::npos);
+    std::size_t probe_calls = 0;
+    const json probe = arena::application::ServiceCatalog::probe_bot(
+        data,
+        [&probe_calls](
+            const fs::path&,
+            const fs::path&,
+            const std::vector<std::string>&,
+            const std::chrono::milliseconds) {
+            ++probe_calls;
+            return json{
+                {"status", "ready"},
+                {"account", "EngineIndependentBot"},
+                {"is_bot", true},
+                {"games", 0U},
+            };
+        });
+    REQUIRE(probe.at("account_name") == "EngineIndependentBot");
+    REQUIRE(probe_calls == 1);
+    std::size_t startup_calls = 0;
+    try {
+        static_cast<void>(
+            arena::application::ServiceCatalog::control_bot(
+                data,
+                [&startup_calls](
+                    const fs::path&,
+                    const fs::path&,
+                    const std::vector<std::string>&,
+                    const std::chrono::milliseconds) {
+                    ++startup_calls;
+                    return json::object();
+                },
+                "enable_startup"));
+        FAIL("startup must remain blocked without live-play readiness");
+    } catch (const std::runtime_error& error) {
+        REQUIRE(
+            std::string(error.what()).find("live-play readiness") !=
+            std::string::npos);
+    }
+    REQUIRE(startup_calls == 0);
     fs::remove_all(root);
 }
 
@@ -964,15 +1006,19 @@ TEST_CASE("Lichess bot discovery becomes probe-ready only with exact visible pre
             .at("candidates")
             .at(0);
     REQUIRE(candidate.at("state") == "ready_to_probe");
+    REQUIRE(candidate.at("startup_eligibility") == "ready");
     REQUIRE(candidate.at("options_state") == "interactive_helper_required");
     REQUIRE_FALSE(candidate.contains("options"));
     for (const auto& dimension :
          {"verified_adapter", "adapter_runtime",
           "verified_uci_arena_engine", "active_model", "opening_book",
           "syzygy", "timing_profile", "single_game_profile",
-          "capacity_profile", "transport_profile", "token_reference"}) {
+          "capacity_profile", "token_reference"}) {
         REQUIRE(candidate.at("readiness").at(dimension) == "ready");
     }
+    REQUIRE(
+        candidate.at("readiness").at("transport_profile") ==
+        "configured");
     REQUIRE(
         candidate.at("readiness").at("bot_account_probe") ==
         "not_verified");
@@ -1006,6 +1052,23 @@ TEST_CASE("Lichess BOT control re-probes identity and returns only sanitized sta
         fs::temp_directory_path() /
         ("arena-bot-control-" + arena::domain::uuid_v7());
     write_ready_bot_fixture(root);
+    fs::remove(
+        root / "data" / "locators" /
+        "lichess_transport_profile.json");
+    fs::remove(root / "transport_profile_v2.json");
+    const fs::path configuration =
+        root / "workspaces" / "lichess-adapter" / "manager-config.json";
+    json provider_configuration = read_json(configuration);
+    provider_configuration["timing"]["transport_profile_path"] = nullptr;
+    write_json(configuration, provider_configuration);
+    const json bootstrap_candidate =
+        arena::application::ServiceCatalog::discover_bot(root / "data")
+            .at("candidates")
+            .at(0);
+    REQUIRE(
+        bootstrap_candidate.at("readiness").at("transport_profile") ==
+        "bootstrap");
+    REQUIRE(bootstrap_candidate.at("startup_eligibility") == "ready");
     std::vector<std::vector<std::string>> calls;
     const auto runner =
         [&calls](

@@ -417,6 +417,7 @@ export interface BotCandidate {
   token_reference_available: boolean
   startup_state: 'installed' | 'disabled'
   state: 'ready_to_probe' | 'blocked'
+  startup_eligibility: 'ready' | 'blocked'
   options_state: 'interactive_helper_required'
   default_model?: {
     model_id: string
@@ -425,7 +426,7 @@ export interface BotCandidate {
   }
   readiness: Record<
     string,
-    'ready' | 'missing' | 'not_verified' | 'verified' | 'disabled' | 'enabled'
+    'ready' | 'configured' | 'bootstrap' | 'missing' | 'not_verified' | 'verified' | 'disabled' | 'enabled'
   >
   issues: Array<{ code: string; detail: string }>
 }
