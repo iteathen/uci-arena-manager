@@ -110,7 +110,14 @@ test("Manager component workflow pins dependencies and bounds each release gate"
   }
   assert.match(workflow, /--clean-first --parallel 4/u);
   assert.match(workflow, /--output-on-failure --timeout 300/u);
-  assert.doesNotMatch(workflow, /\$env:VCPKG_BINARY_SOURCES\s*=/u);
+  assert.match(
+    workflow,
+    /uses: actions\/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9/u,
+  );
+  assert.match(workflow, /path: \$\{\{ runner\.temp \}\}\/vcpkg-binary-cache/u);
+  assert.match(workflow, /manager-vcpkg-v1-/u);
+  assert.match(workflow, /VCPKG_BINARY_SOURCES: "clear;default,readwrite"/u);
+  assert.doesNotMatch(workflow, /x-gha/u);
   assert.match(workflow, /--overlay-triplets=\$overlayTriplets/u);
   assert.match(workflow, /--x-install-root=\$installRoot/u);
   assert.match(workflow, /x64-windows-release/u);
@@ -138,6 +145,15 @@ test("Manager component workflow pins dependencies and bounds each release gate"
   for (const stale of ["libarchive", "tomlplusplus", "zstd"]) {
     assert.equal(dependencyNames.includes(stale), false);
   }
+  assert.match(
+    workflow,
+    /- name: Upload signed assets to pre-provisioned private candidate/u,
+  );
+  assert.match(workflow, /gh release view \$tag/u);
+  assert.match(workflow, /\$release\.targetCommitish -ne \$env:GITHUB_SHA/u);
+  assert.match(workflow, /\$release\.assets\)\.Count -ne 0/u);
+  assert.match(workflow, /gh release upload \$tag @assetPaths/u);
+  assert.doesNotMatch(workflow, /gh release create/u);
   assert.doesNotMatch(workflow, /- name: Build and verify exact Manager source/u);
 });
 

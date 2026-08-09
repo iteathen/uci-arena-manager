@@ -131,7 +131,7 @@ test("bundle payload verification requires certificate log proof and exact state
   }
 });
 
-test("only the manual Manager component workflow remains a release authority", () => {
+test("only the manual Manager component workflow uploads signed candidate assets", () => {
   const workflow = readFileSync(
     new URL("../../.github/workflows/component-release.yml", import.meta.url),
     "utf8",
@@ -146,8 +146,12 @@ test("only the manual Manager component workflow remains a release authority", (
   assert.match(workflow, /contents:\s*write/u);
   assert.doesNotMatch(workflow, /actions\/(?:upload|download)-artifact/u);
   assert.match(workflow, /Expected exactly three candidate assets/u);
-  assert.match(workflow, /gh release create[\s\S]*?--target \$env:GITHUB_SHA/u);
+  assert.match(workflow, /gh release view \$tag/u);
+  assert.match(workflow, /\$release\.targetCommitish -ne \$env:GITHUB_SHA/u);
+  assert.match(workflow, /\$release\.assets\)\.Count -ne 0/u);
+  assert.match(workflow, /gh release upload \$tag @assetPaths/u);
+  assert.doesNotMatch(workflow, /gh release create/u);
   assert.ok(workflow.indexOf("sigstore-provenance.mjs verify-bundle")
-    < workflow.indexOf("gh release create"));
+    < workflow.indexOf("gh release upload"));
   assert.doesNotMatch(workflow, /prepare-managed|prepare-manager|suite release/u);
 });
