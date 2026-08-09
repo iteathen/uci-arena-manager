@@ -601,6 +601,16 @@ TEST_CASE("Book Forge and Evidence outputs cross only validated public contracts
             target.at("resource").at("data")
                 .at("last_control_result").at("target").at("model_id") ==
             "example_model_v1");
+        const json explicit_campaign = control_plane.submit(
+            command(
+                "service.evidence_campaign_enqueue",
+                {{"kind", "managed_service"}, {"id", evidence_id}},
+                {{"target_id", "123e4567-e89b-42d3-a456-426614174001"}}),
+            "test");
+        REQUIRE(
+            explicit_campaign.at("resource").at("data")
+                .at("last_control_result").at("target_id") ==
+            "123e4567-e89b-42d3-a456-426614174001");
         const json campaign = control_plane.submit(
             command(
                 "service.evidence_campaign_enqueue",
@@ -612,8 +622,7 @@ TEST_CASE("Book Forge and Evidence outputs cross only validated public contracts
             "time_control_curve_v1");
         REQUIRE(
             campaign.at("resource").at("data")
-                .at("last_control_result").at("target_id") ==
-            "123e4567-e89b-42d3-a456-426614174001");
+                .at("last_control_result").at("target_id").is_null());
         const json cancelled = control_plane.submit(
             command(
                 "service.evidence_job_cancel",

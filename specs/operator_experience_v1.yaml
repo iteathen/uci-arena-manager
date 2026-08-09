@@ -373,8 +373,10 @@ evidence_service_experience:
       counts, individual safe job summaries, datasets, and qualified timing
       profiles from provider-authoritative projections.
     - A configured compatible Evidence Service exposes one guided action to
-      enqueue its built-in first campaign; an absent exact target explains how
-      to start or register a compatible model deployment before collecting.
+      enqueue its built-in first campaign against the provider-owned default;
+      retained historical targets never silently replace the active deployment.
+      An absent exact target explains how to start or register a compatible
+      model deployment before collecting.
     - When no target exists, the Services surface offers one guided Use
       preferred engine action if a receipt-verified UCI Arena Engine with
       default-model metadata is registered. The action repeats the full UCI

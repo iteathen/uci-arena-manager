@@ -2290,15 +2290,6 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                         422);
                 }
                 selected_target = target_id;
-            } else if (projected_targets.size() == 1 &&
-                       projected_targets.front().is_object() &&
-                       uuid_v4(projected_targets.front().value("id", ""))) {
-                selected_target = projected_targets.front().at("id").get<std::string>();
-            } else if (projected_targets.size() > 1) {
-                throw CommandFailure(
-                    "evidence_target_selection_required",
-                    "Evidence campaign enqueue requires one projected target selection",
-                    422);
             }
             if (selected_target.has_value()) {
                 operation_arguments.insert(
