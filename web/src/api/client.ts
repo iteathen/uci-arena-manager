@@ -6,6 +6,7 @@ import type {
   BotControlAction,
   BotControlResult,
   BotProbeResult,
+  BotQualificationResult,
   BotOptions,
   BotOptionsUpdate,
   BotProfile,
@@ -460,6 +461,14 @@ export async function controlLocalBot(action: BotControlAction): Promise<BotCont
     )
   }
   return body
+}
+
+export function qualifyLocalBot(): Promise<BotQualificationResult> {
+  return interactiveBotRequest<BotQualificationResult>(
+    '/v1/bot-qualification',
+    { schema: 'arena_ui_bot_qualification_request_v1' },
+    'Installed Engine qualification did not complete',
+  )
 }
 
 async function interactiveBotRequest<T>(

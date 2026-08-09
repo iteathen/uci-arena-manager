@@ -196,6 +196,15 @@ account name. Status and disable do not open the token file. Closing the
 desktop helper removes control authority but does not stop provider-owned
 startup that is already enabled.
 
+When an Engine upgrade makes exact single-game or capacity evidence stale,
+disable BOT startup and choose **Requalify installed engine** on the Bots page.
+The desktop helper invokes the provider's fixed receipt-verified qualification
+operation; the dashboard cannot supply an executable, path, command, option, or
+credential. Compatible timing evidence remains the timing authority while fresh
+complete-game, single-game, and capacity evidence bind the installed Engine.
+Successful outputs are imported through adjacent Suite Setup and the dashboard
+returns only model, provider, search-core, concurrency, and completion status.
+
 Provider-owned behavior controls on the same page cover qualified connection
 capacity, human and bot slots, accepted inbound speeds and casual/rated modes,
 base and increment limits, public-human and bot challenge policy, outbound

@@ -9,6 +9,7 @@ import {
   pickLocalPath,
   planLocalLichessCredential,
   probeLocalBot,
+  qualifyLocalBot,
   updateLocalBotOptions,
 } from './client'
 
@@ -460,5 +461,34 @@ describe('native desktop typed setup', () => {
         ...request,
       })
     }
+  })
+
+  it('starts installed qualification without accepting paths or commands from the browser', async () => {
+    sessionStorage.setItem('arena.picker.port', '47832')
+    sessionStorage.setItem('arena.picker.token', 'f'.repeat(64))
+    const result = {
+      schema: 'arena_bot_qualification_result_v1' as const,
+      schema_version: 1 as const,
+      state: 'committed' as const,
+      single_game_profile_imported: true as const,
+      capacity_profile_imported: true as const,
+      reused: false,
+      maximum_concurrency: 2,
+      search_core: 'mcgs' as const,
+      model_id: 'compact_chessformer_gab_v1',
+      provider: 'directml' as const,
+      timing_identity_sha256: `sha256:${'a'.repeat(64)}`,
+    }
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify(result), { status: 200 }),
+    )
+
+    await expect(qualifyLocalBot()).resolves.toEqual(result)
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:47832/v1/bot-qualification',
+      expect.objectContaining({
+        body: JSON.stringify({ schema: 'arena_ui_bot_qualification_request_v1' }),
+      }),
+    )
   })
 })

@@ -2,7 +2,7 @@ import { IconRefresh, IconRobot } from '@tabler/icons-react'
 import { Alert, Badge, Button, Code, Group, Paper, SimpleGrid, Stack, Text, ThemeIcon, Title } from '@mantine/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { api, controlLocalBot, probeLocalBot } from '../api/client'
+import { api, controlLocalBot, probeLocalBot, qualifyLocalBot } from '../api/client'
 import type { BotCandidate } from '../api/types'
 import { PageHeader } from '../components/PageHeader'
 import { ComponentSetupButton } from '../components/ComponentSetupButton'
@@ -20,6 +20,12 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
   )
   const [detectionMessage, setDetectionMessage] = useState('')
   const probe = useMutation({ mutationFn: probeLocalBot })
+  const qualification = useMutation({
+    mutationFn: qualifyLocalBot,
+    onSuccess: async () => {
+      await candidates.refetch()
+    },
+  })
   const candidate = candidates.data?.candidates[0]
   const startup = useQuery({
     queryKey: ['bot-startup'],
@@ -63,7 +69,11 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
     if (code.includes('engine') || code.includes('model')) {
       return { page: 'engines', label: 'Open Engines' }
     }
-    if (code.includes('timing_profile')) {
+    if (
+      code.includes('timing_profile') ||
+      code.includes('single_game_profile') ||
+      code.includes('capacity_profile')
+    ) {
       return { page: 'reports', label: 'Review evidence' }
     }
     if (code.includes('adapter')) {
@@ -210,6 +220,24 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
             {startupControl.error && (
               <Alert color="red">{startupControl.error.message}</Alert>
             )}
+            {qualification.error && (
+              <Alert color="red" title="Installed qualification failed">
+                <Stack gap="xs">
+                  <Text size="sm">{qualification.error.message}</Text>
+                  <Group gap="xs">
+                    <Button size="xs" variant="subtle" onClick={() => navigate('engines')}>
+                      Engines
+                    </Button>
+                    <Button size="xs" variant="subtle" onClick={() => navigate('reports')}>
+                      Evidence reports
+                    </Button>
+                    <Button size="xs" variant="subtle" onClick={() => navigate('services')}>
+                      Services
+                    </Button>
+                  </Group>
+                </Stack>
+              </Alert>
+            )}
             {probe.data && (
               <Alert color="green" title="BOT account verified">
                 {probe.data.account_name} · {probe.data.games} games
@@ -220,6 +248,35 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
                 {startupControl.data.account_name}
               </Alert>
             )}
+            {qualification.data && (
+              <Alert color="green" title="Installed Engine qualified">
+                {qualification.data.model_id} · {qualification.data.provider} ·{' '}
+                {qualification.data.search_core.toUpperCase()} · concurrency{' '}
+                {qualification.data.maximum_concurrency}
+                {qualification.data.reused ? ' · reused exact completed evidence' : ''}
+              </Alert>
+            )}
+            <Group justify="space-between" align="center">
+              <div>
+                <Text size="sm" fw={500}>Installed Engine evidence</Text>
+                <Text size="xs" c="dimmed">
+                  Retains compatible timing authority and rebuilds exact single-game and capacity evidence.
+                </Text>
+              </div>
+              <Button
+                variant="light"
+                loading={qualification.isPending}
+                disabled={
+                  candidate?.package_state !== 'installed' ||
+                  candidate?.qualification_state !== 'available' ||
+                  !observedStartup ||
+                  startupInstalled
+                }
+                onClick={() => qualification.mutate()}
+              >
+                Requalify installed engine
+              </Button>
+            </Group>
             <Group justify="space-between">
               <Button
                 variant="default"

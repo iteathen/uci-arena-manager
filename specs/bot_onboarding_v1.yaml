@@ -135,6 +135,40 @@ account_control:
     - A generic bot.register command is forbidden because it could create
       account state without the verified adapter probe.
 
+installed_qualification:
+  owner: verified_lichess_provider
+  transport: authenticated_ephemeral_loopback_helper
+  operation: qualification_run
+  input_schema: arena_ui_bot_qualification_request_v1
+  output_schema: arena_bot_qualification_result_v1
+  rules:
+    - The packaged Lichess provider must publish this additive operation. A
+      compatible replacement provider that omits it remains usable for already
+      qualified configurations, while Manager projects qualification as
+      unavailable instead of rejecting the provider's whole v1 contract.
+    - The dashboard supplies no path, executable, command, UCI option,
+      credential, evidence identity, or concurrency value. Manager resolves the
+      fixed credential-free operation from the receipt-verified provider
+      operation catalog and supplies only the receipt-owned configuration and
+      provider workspace paths.
+    - Qualification is unavailable while provider startup is enabled. The
+      provider reuses the selected timing profile as semantic timing authority
+      and owns fresh complete-game, exact single-game, and concurrent-capacity
+      evidence for the installed Engine generation.
+    - Provider output paths are accepted only when they are absolute regular
+      non-link files beneath the receipt-owned provider workspace and their
+      reported digests match the files. Raw paths and provider output never
+      reach the browser.
+    - The interactive helper commits the two validated profile locators only
+      through the adjacent Installer-owned import operation, using a managed
+      copy for single-game evidence and an in-place reference for provider-owned
+      capacity evidence. A failed or partial locator commit cannot enable
+      provider startup and the same content-addressed qualification remains
+      safely retryable.
+    - The browser receives only bounded qualification state, identity,
+      concurrency, reuse, and import-completion fields. Credentials, paths,
+      commands, configuration, and raw evidence are excluded.
+
 options:
   schema: uci_arena_lichess_manager_options_v1
   groups:
@@ -230,6 +264,7 @@ lifecycle:
     - manage_reservation
     - pause_or_resume_scheduler
     - edit_schema_backed_options
+    - requalify_installed_engine
   duplicate_daemon: forbidden
 
 acceptance:
@@ -247,6 +282,9 @@ acceptance:
     account name from the browser.
   - Startup status, enable, and disable remain available without a terminal
     while the authenticated desktop helper is running.
+  - Installed-engine requalification is available without a terminal, accepts
+    no browser-supplied path or command, retains compatible timing authority,
+    and imports exact current single-game and capacity evidence before startup.
   - A stale installer receipt cannot make active provider startup appear
     disabled after helper status succeeds.
   - Every missing safety prerequisite is visible before startup.
@@ -254,5 +292,5 @@ acceptance:
   - Automated HTTP integration uses a loopback fake Lichess API with a
     non-secret fixture token and never requires an operator credential.
   - A fake conforming provider with a different executable layout proves that
-    startup, status, options, and account controls resolve the published
+    startup, status, qualification, options, and account controls resolve the published
     operation catalog rather than hardcoded provider verbs or source paths.

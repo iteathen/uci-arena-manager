@@ -69,6 +69,7 @@ x-interactive-helper-contract:
     - bot_credential_materialize
     - bot_probe
     - bot_startup_control
+    - bot_installed_qualification
     - bot_options_get
     - bot_options_update
     - bot_local_account_control
@@ -89,6 +90,10 @@ x-interactive-helper-contract:
     - Local account control carries one fixed action and its bounded typed
       scalar parameters. It never accepts paths, executable names, argv arrays,
       shell strings, token material, or raw provider configuration.
+    - Installed qualification accepts only its schema marker. The helper
+      resolves the fixed credential-free provider operation and receipt-owned
+      paths, validates provider-owned outputs, commits their locators through
+      adjacent Installer authority, and returns no path or raw evidence.
     - The helper resolves provider command prefixes from the exact
       receipt-verified operation catalog. Its response separates startup
       registration from provider activity, readiness, stream connectivity,

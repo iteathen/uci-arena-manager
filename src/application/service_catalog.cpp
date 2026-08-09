@@ -689,6 +689,16 @@ const json& required_object(
     return value.at(field);
 }
 
+bool valid_prefixed_sha256(const std::string& value) {
+    return value.size() == 71U && value.starts_with("sha256:") &&
+           std::ranges::all_of(
+               std::string_view(value).substr(7),
+               [](const unsigned char character) {
+                   return std::isdigit(character) != 0 ||
+                          (character >= 'a' && character <= 'f');
+               });
+}
+
 void require_exact_fields(
     const json& source,
     const std::initializer_list<std::string_view> fields) {
@@ -1701,8 +1711,8 @@ json ServiceCatalog::bot_profiles() {
             {"optional", true},
             {"capabilities",
              {"account_probe", "startup_status", "enable_startup",
-              "disable_startup", "options", "owners", "reservations",
-              "scheduler", "challenge_policy"}},
+              "disable_startup", "installed_qualification", "options",
+              "owners", "reservations", "scheduler", "challenge_policy"}},
         },
     });
 }
@@ -1722,6 +1732,7 @@ json ServiceCatalog::discover_bot(
         {"token_reference_available", false},
         {"configuration_state", "missing"},
         {"startup_state", "disabled"},
+        {"qualification_state", "unavailable"},
         {"options_state", "interactive_helper_required"},
     };
     bool adapter_ready = false;
@@ -1737,9 +1748,13 @@ json ServiceCatalog::discover_bot(
             adapter.receipt.value("component_version", "");
         adapter_root = adapter.active_root;
         try {
-            static_cast<void>(
-                verified_provider_service_contract(receipts_root, adapter));
+            const ProviderServiceContract contract =
+                verified_provider_service_contract(receipts_root, adapter);
             candidate["integration_state"] = "compatible";
+            candidate["qualification_state"] =
+                contract.operations.at("operations").contains("qualification_run")
+                    ? "available"
+                    : "unavailable";
             adapter_ready = true;
         } catch (const std::exception& error) {
             candidate["integration_state"] = "incompatible";
@@ -2035,6 +2050,134 @@ json ServiceCatalog::probe_bot(
         {"account_name", result.at("account")},
         {"is_bot", true},
         {"games", result.value("games", 0ULL)},
+    };
+}
+
+json ServiceCatalog::qualify_bot(
+    const fs::path& manager_data_root,
+    const ProcessSupervisor& process_supervisor) {
+    return qualify_bot(
+        manager_data_root,
+        [&process_supervisor](
+            const fs::path& executable,
+            const fs::path& working_directory,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds timeout) {
+            return process_supervisor.run_json(
+                executable, working_directory, arguments, timeout);
+        });
+}
+
+json ServiceCatalog::qualify_bot(
+    const fs::path& manager_data_root,
+    const BotCommandRunner& command_runner) {
+    const BotProviderContext provider = bot_provider_context(manager_data_root);
+    const fs::path runtime_directory = bot_runtime_directory(provider.adapter);
+    std::vector<std::string> arguments = provider_operation_arguments(
+        provider.contract, "qualification_run", "forbidden");
+    arguments.insert(
+        arguments.end(),
+        {
+            "--config",
+            provider.configuration_path.string(),
+            "--runtime-dir",
+            runtime_directory.string(),
+        });
+    const json result = command_runner(
+        provider.contract.executable,
+        provider.adapter.active_root,
+        arguments,
+        std::chrono::minutes(20));
+
+    if (!result.is_object() || result.dump().size() > 16U * 1024U ||
+        result.size() > 32U ||
+        result.value("schema", "") !=
+            "uci_arena_lichess_qualification_result_v1" ||
+        result.value("status", "") != "qualified" ||
+        !result.contains("reused") || !result.at("reused").is_boolean() ||
+        !result.contains("maximum_concurrency") ||
+        !result.at("maximum_concurrency").is_number_integer()) {
+        throw std::runtime_error(
+            "the provider returned invalid installed qualification state");
+    }
+    const auto maximum_concurrency =
+        result.at("maximum_concurrency").get<std::int64_t>();
+    const std::string search_core = result.value("search_core", "");
+    const std::string provider_name = result.value("provider", "");
+    const std::string model_id = result.value("model_id", "");
+    const std::string completed_at = result.value("completed_at", "");
+    if (maximum_concurrency < 1 || maximum_concurrency > 64 ||
+        (search_core != "mcgs" && search_core != "v2") ||
+        (provider_name != "directml" && provider_name != "cuda") ||
+        !valid_contract_identifier(model_id) || completed_at.empty() ||
+        completed_at.size() > 64U) {
+        throw std::runtime_error(
+            "the provider returned invalid installed qualification identity");
+    }
+    for (const char* field : {
+             "engine_sha256",
+             "timing_sha256",
+             "timing_identity_sha256",
+             "single_game_profile_sha256",
+             "capacity_profile_sha256",
+         }) {
+        if (!result.contains(field) || !result.at(field).is_string() ||
+            !valid_prefixed_sha256(
+                result.at(field).get_ref<const std::string&>())) {
+            throw std::runtime_error(
+                "the provider returned an invalid qualification digest");
+        }
+    }
+
+    const auto verified_output = [&runtime_directory, &result](
+                                     const char* field,
+                                     const char* digest_field,
+                                     const char* expected_filename) {
+        if (!result.contains(field) || !result.at(field).is_string()) {
+            throw std::runtime_error(
+                "the provider omitted an installed qualification output");
+        }
+        const fs::path declared = result.at(field).get<std::string>();
+        std::error_code error;
+        const fs::path canonical_root =
+            fs::weakly_canonical(runtime_directory, error);
+        if (error) {
+            throw std::runtime_error(
+                "the provider runtime directory cannot be verified");
+        }
+        const fs::path canonical_output = fs::weakly_canonical(declared, error);
+        if (error || !declared.is_absolute() ||
+            declared.filename() != expected_filename ||
+            !fs::is_regular_file(declared) || fs::is_symlink(declared) ||
+            !same_or_within(canonical_root, canonical_output)) {
+            throw std::runtime_error(
+                "the provider qualification output escaped its retained workspace");
+        }
+        const std::string observed = "sha256:" + sha256_file(canonical_output);
+        if (observed != result.at(digest_field).get<std::string>()) {
+            throw std::runtime_error(
+                "the provider qualification output digest does not match");
+        }
+        return canonical_output;
+    };
+    const fs::path single_game = verified_output(
+        "single_game_profile",
+        "single_game_profile_sha256",
+        "uci_arena_single_game_profile_v1.json");
+    const fs::path capacity = verified_output(
+        "capacity_profile",
+        "capacity_profile_sha256",
+        "uci_arena_lichess_capacity_profile_v2.json");
+    return {
+        {"schema", "arena_bot_qualification_internal_v1"},
+        {"single_game_profile", single_game.string()},
+        {"capacity_profile", capacity.string()},
+        {"reused", result.at("reused")},
+        {"maximum_concurrency", maximum_concurrency},
+        {"search_core", search_core},
+        {"model_id", model_id},
+        {"provider", provider_name},
+        {"timing_identity_sha256", result.at("timing_identity_sha256")},
     };
 }
 

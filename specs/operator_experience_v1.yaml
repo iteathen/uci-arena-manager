@@ -301,6 +301,15 @@ bot_experience:
     - Offer typed Refresh status, Enable startup, and Disable startup controls
       without a terminal. Enablement performs a fresh BOT probe and never lets
       the browser provide the account identity.
+    - Offer Requalify installed engine whenever the verified adapter is
+      installed and provider startup is disabled. The control invokes one fixed
+      provider-owned workflow, displays a long-running state, and refreshes
+      readiness only after both validated profile locators commit through
+      Installer. It accepts no browser-supplied paths or commands.
+    - Qualification success names the retained timing identity, current model,
+      provider, search core, and concurrency without exposing filesystem paths.
+      Failure remains actionable, leaves startup disabled, and links the
+      operator to Engines, Reports, and Services for owning prerequisites.
     - While the installed adapter's Bots surface is open, sample the same
       credential-free provider/startup status on a bounded five-second interval.
       Manual Refresh remains available; polling never reads the token or contacts

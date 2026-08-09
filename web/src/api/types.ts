@@ -443,6 +443,7 @@ export interface BotCandidate {
   configuration_state: 'configured' | 'missing'
   token_reference_available: boolean
   startup_state: 'installed' | 'disabled'
+  qualification_state: 'available' | 'unavailable'
   state: 'ready_to_probe' | 'blocked'
   startup_eligibility: 'ready' | 'blocked'
   options_state: 'interactive_helper_required'
@@ -471,6 +472,20 @@ export interface BotProbeResult {
   account_name: string
   is_bot: true
   games: number
+}
+
+export interface BotQualificationResult {
+  schema: 'arena_bot_qualification_result_v1'
+  schema_version: 1
+  state: 'committed'
+  single_game_profile_imported: true
+  capacity_profile_imported: true
+  reused: boolean
+  maximum_concurrency: number
+  search_core: 'mcgs' | 'v2'
+  model_id: string
+  provider: 'directml' | 'cuda'
+  timing_identity_sha256: string
 }
 
 export type BotControlAction = 'status' | 'enable_startup' | 'disable_startup'
