@@ -2,6 +2,7 @@
 
 #include "arena/adapters/uci_game_runner.hpp"
 #include "arena/adapters/uci_process.hpp"
+#include "arena/application/engine_onboarding.hpp"
 #include "arena/domain/uuid.hpp"
 
 #include <chess.hpp>
@@ -341,14 +342,26 @@ void validate_competition_engines(
     }
 
     for (const auto& engine_id : engine_ids) {
+        const json registered = engine_data(store, engine_id);
         const adapters::UciGameEngine engine =
             game_engine(store, competition, engine_id);
+        json expected_runtime = nullptr;
+        if (registered.contains("launch_profile") &&
+            registered.at("launch_profile").is_object() &&
+            registered.at("launch_profile").value("state", "") ==
+                "qualified_timing") {
+            const json& launch_profile = registered.at("launch_profile");
+            expected_runtime = launch_profile.contains("expected_runtime")
+                ? launch_profile.at("expected_runtime")
+                : json(nullptr);
+        }
         const adapters::UciProbeResult probe = adapters::UciProcess::probe(
             engine.executable,
             engine.working_directory,
             engine.arguments,
             std::chrono::seconds(15),
-            engine.options);
+            engine.options,
+            !expected_runtime.is_null());
         if (!probe.ok) {
             throw std::runtime_error(
                 "engine preflight failed before game admission for " +
@@ -358,6 +371,20 @@ void validate_competition_engines(
             throw std::runtime_error(
                 "registered engine identity changed before game admission for " +
                 engine_id);
+        }
+        if (!expected_runtime.is_null()) {
+            if (!probe.runtime_status.has_value()) {
+                throw std::runtime_error(
+                    "qualified engine runtime status is unavailable before game admission for " +
+                    engine_id);
+            }
+            if (const auto mismatch =
+                    EngineOnboarding::runtime_identity_mismatch(
+                        expected_runtime, *probe.runtime_status)) {
+                throw std::runtime_error(
+                    "qualified engine runtime identity changed before game admission for " +
+                    engine_id + ": " + *mismatch);
+            }
         }
     }
 }

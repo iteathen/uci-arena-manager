@@ -4,8 +4,14 @@
 #include <cstddef>
 #include <filesystem>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <stop_token>
+#include <string>
 #include <vector>
+
+namespace arena::adapters {
+struct UciRuntimeStatus;
+}
 
 namespace arena::application {
 
@@ -27,6 +33,11 @@ class EngineOnboarding final {
         const std::vector<std::filesystem::path>& explicit_roots = {},
         bool include_path_candidates = true,
         const EngineDiscoveryOptions& options = {});
+
+    [[nodiscard]] static std::optional<std::string>
+    runtime_identity_mismatch(
+        const nlohmann::json& expected,
+        const adapters::UciRuntimeStatus& observed);
 };
 
 }  // namespace arena::application

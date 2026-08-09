@@ -366,12 +366,102 @@ TEST_CASE("changed engine identity fails before tournament game admission") {
         const json failed = wait_for_lifecycle(
             control_plane, "match_plan", id, "failed");
         REQUIRE(failed.at("data").at("lifecycle") == "failed");
+        INFO(failed.at("data").at("failure_detail").get<std::string>());
         REQUIRE(
             failed.at("data")
                 .at("failure_detail")
                 .get<std::string>()
                 .find("registered engine identity changed") !=
             std::string::npos);
+        REQUIRE(control_plane.list("game", 10, 0).empty());
+    }
+    fs::remove_all(root);
+}
+
+TEST_CASE("qualified runtime identity is revalidated before game admission") {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() /
+        ("arena-tournament-runtime-" + arena::domain::uuid_v7());
+    fs::create_directories(root);
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(
+            root / "arena.db");
+        arena::application::ControlPlane control_plane(store);
+        control_plane.initialize();
+        const std::vector<std::string> engines{
+            register_engine(control_plane, "Runtime Alpha"),
+            register_engine(control_plane, "Runtime Beta"),
+        };
+        const auto existing = store->get_resource("engine", engines.at(0));
+        REQUIRE(existing.has_value());
+        arena::ports::ResourceRecord updated = *existing;
+        json engine_data = json::parse(updated.data_json);
+        engine_data["launch_profile"] = {
+            {"schema", "arena_uci_engine_launch_profile_v1"},
+            {"state", "qualified_timing"},
+            {"timing_profile", {{"available", true}}},
+            {"expected_runtime",
+             {
+                 {"timing_contract_version", "persistent_mcgs_relative_clock_temporal_v4"},
+                 {"model_id", "example_model_v1"},
+                 {"model_fingerprint", "8104116015256418347"},
+                 {"adapter_id", "dense_planes_v1"},
+                 {"provider_requested", "cpu"},
+                 {"provider_effective", "cpu"},
+                 {"provider_numeric_fingerprint", "5805769137532863231"},
+                 {"hardware_driver_fingerprint", "15113055170282736144"},
+                 {"onnx_runtime_version", "1.24.4"},
+                 {"search_core", "mcgs"},
+             }},
+        };
+        const std::string now = arena::domain::utc_now();
+        const std::string command_id = arena::domain::uuid_v7();
+        updated.revision += 1;
+        updated.updated_at = now;
+        updated.data_json = engine_data.dump();
+        store->update_resource(
+            updated,
+            existing->revision,
+            {
+                command_id,
+                arena::domain::uuid_v7(),
+                arena::domain::uuid_v7(),
+                "test.engine.runtime_drift",
+                "completed",
+                "{}",
+                now,
+            },
+            {
+                0,
+                arena::domain::uuid_v7(),
+                now,
+                "state",
+                "engine.runtime_drifted",
+                "engine",
+                updated.id,
+                updated.revision,
+                command_id,
+                "{}",
+            });
+
+        const json created = create_competition(
+            control_plane, "match.plan", "match_plan", engines, 1);
+        const std::string id = created.at("resource").at("id");
+        control_plane.submit(
+            command(
+                "match.start",
+                "match_plan",
+                id,
+                json::object(),
+                created.at("resource").at("revision")),
+            "test");
+        const json failed = wait_for_lifecycle(
+            control_plane, "match_plan", id, "failed");
+        REQUIRE(failed.at("data").at("lifecycle") == "failed");
+        INFO(failed.at("data").at("failure_detail").get<std::string>());
+        REQUIRE(
+            failed.at("data").at("failure_detail").get<std::string>().find(
+                "hardware_driver_fingerprint") != std::string::npos);
         REQUIRE(control_plane.list("game", 10, 0).empty());
     }
     fs::remove_all(root);

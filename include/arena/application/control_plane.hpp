@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <string>
@@ -97,6 +98,7 @@ class ControlPlane final {
         const std::string& event_kind);
 
     std::shared_ptr<ports::Store> store_;
+    std::mutex engine_authority_mutex_;
     std::filesystem::path manager_data_root_;
     ProcessSupervisor process_supervisor_;
     TournamentExecutor tournament_executor_;

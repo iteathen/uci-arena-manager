@@ -32,6 +32,7 @@ import { api, makeCommand } from '../api/client'
 import type { EngineData, ManagedServiceData, Resource } from '../api/types'
 import { PageHeader } from '../components/PageHeader'
 import { ComponentSetupButton } from '../components/ComponentSetupButton'
+import { LocalSetupImportButton } from '../components/LocalSetupImportButton'
 import { PathPickerInput } from '../components/PathPickerInput'
 import { StatusPill } from '../components/StatusPill'
 import {
@@ -43,6 +44,7 @@ import {
   serviceLifecycleActions,
   serviceLocatorMode,
 } from './serviceSelection'
+import { candidateRegistration, engineRegistrationParameters } from './engineRegistration'
 
 export function ServicesPage({ navigate }: { navigate: (page: string) => void }) {
   const queryClient = useQueryClient()
@@ -92,6 +94,11 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
   const [evidenceCliPath, setEvidenceCliPath] = useState('')
   const [evidenceWorkspace, setEvidenceWorkspace] = useState('')
   const [discoveryMessage, setDiscoveryMessage] = useState('')
+  const [activationNotice, setActivationNotice] = useState<{
+    serviceId: string
+    color: 'green' | 'yellow' | 'red'
+    detail: string
+  } | null>(null)
   const bookService = selectPreferredService(
     services.data ?? [],
     'book_forge',
@@ -136,6 +143,65 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
       engine.data.recommended === true &&
       Boolean(engine.data.default_model?.root),
   )
+  const activateImportedOutput = async (serviceId: string, label: string) => {
+    try {
+      const [discovery, currentEngines] = await Promise.all([
+        api.engineCandidates(''),
+        api.resources<EngineData>('engine'),
+      ])
+      const candidate = discovery.candidates.find(
+        (entry) => entry.source === 'install_receipt' &&
+          entry.component_id === 'uci_arena.engine' && entry.recommended === true,
+      )
+      if (!candidate || candidate.state !== 'ready_to_probe') {
+        setActivationNotice({
+          serviceId,
+          color: 'yellow',
+          detail: `${label} was saved, but the verified UCI Arena Engine candidate is unavailable. Repair the Engine package before activation.`,
+        })
+        return
+      }
+      const registration = candidateRegistration(candidate, currentEngines)
+      if (registration.state === 'unregistered' || !registration.engine) {
+        setActivationNotice({
+          serviceId,
+          color: 'yellow',
+          detail: `${label} was saved. Register the recommended Engine to activate its regenerated profile.`,
+        })
+        return
+      }
+      if (registration.state === 'refresh_required') {
+        await api.command(
+          makeCommand(
+            'engine.refresh',
+            'engine',
+            engineRegistrationParameters(candidate),
+            false,
+            registration.engine.id,
+            registration.engine.revision,
+          ),
+        )
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['resources', 'engine'] }),
+        queryClient.invalidateQueries({ queryKey: ['engine-candidates'] }),
+        queryClient.invalidateQueries({ queryKey: ['resources', 'managed_service'] }),
+      ])
+      setActivationNotice({
+        serviceId,
+        color: 'green',
+        detail: registration.state === 'refresh_required'
+          ? `${label} is active in the registered Engine after a complete runtime probe.`
+          : `${label} is already represented by the current registered Engine profile.`,
+      })
+    } catch (error) {
+      setActivationNotice({
+        serviceId,
+        color: 'red',
+        detail: `${label} was saved, but the existing Engine registration was not changed: ${error instanceof Error ? error.message : String(error)}`,
+      })
+    }
+  }
   const save = useMutation({
     mutationFn: ({
       parameters,
@@ -547,21 +613,66 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                     Provider outputs
                   </Text>
                   {service.data.profile_id === 'book_forge' ? (
-                    <Text size="sm" mt={4}>
-                      {Array.isArray(service.data.output_integration.snapshots)
-                        ? `${service.data.output_integration.snapshots.length} validated opening-book snapshot(s)`
-                        : 'No validated opening-book snapshots'}
-                    </Text>
+                    <Stack gap="xs" mt={4}>
+                      <Text size="sm">
+                        {Array.isArray(service.data.output_integration.snapshots)
+                          ? `${service.data.output_integration.snapshots.length} validated opening-book snapshot(s)`
+                          : 'No validated opening-book snapshots'}
+                      </Text>
+                      {service.data.output_integration.snapshots?.map((snapshot) => (
+                        <Paper withBorder p="xs" key={snapshot.snapshot_id}>
+                          <Group justify="space-between" align="center">
+                            <div>
+                              <Text size="sm" fw={650}>{snapshot.channel}</Text>
+                              <Text size="xs" c="dimmed">
+                                {snapshot.record_count.toLocaleString()} records · {snapshot.qualified ? 'strength qualified' : 'validated'}
+                              </Text>
+                            </div>
+                            <LocalSetupImportButton
+                              assetKind="opening_book"
+                              path={snapshot.path}
+                              label="Use in Engine"
+                              onCompleted={() => activateImportedOutput(service.id, 'Opening-book snapshot')}
+                            />
+                          </Group>
+                        </Paper>
+                      ))}
+                    </Stack>
                   ) : (
-                    <Text size="sm" mt={4}>
-                      {Number(service.data.output_integration.dataset_count ?? 0)}{' '}
-                      dataset(s) ·{' '}
-                      {Number(service.data.output_integration.timing_profile_count ?? 0)}{' '}
-                      qualified timing profile(s)
-                    </Text>
+                    <Stack gap="xs" mt={4}>
+                      <Text size="sm">
+                        {Number(service.data.output_integration.dataset_count ?? 0)}{' '}
+                        dataset(s) ·{' '}
+                        {Number(service.data.output_integration.timing_profile_count ?? 0)}{' '}
+                        qualified timing profile(s)
+                      </Text>
+                      {service.data.output_integration.timing_profiles?.map((profile) => (
+                        <Paper withBorder p="xs" key={`${profile.source}-${profile.identity_sha256}`}>
+                          <Group justify="space-between" align="center">
+                            <div>
+                              <Text size="sm" fw={650}>Qualified timing evidence</Text>
+                              <Text size="xs" c="dimmed">
+                                {profile.target_identity.model_id ? String(profile.target_identity.model_id) : profile.source}
+                              </Text>
+                            </div>
+                            <LocalSetupImportButton
+                              assetKind="timing_profile"
+                              path={profile.path}
+                              label="Use in Engine"
+                              onCompleted={() => activateImportedOutput(service.id, 'Timing profile')}
+                            />
+                          </Group>
+                        </Paper>
+                      ))}
+                    </Stack>
                   )}
                 </Paper>
               )}
+            {activationNotice?.serviceId === service.id && (
+              <Alert color={activationNotice.color} mt="sm">
+                {activationNotice.detail}
+              </Alert>
+            )}
             {service.data.profile_id === 'uci_arena_evidence' &&
               service.data.orchestration_projection && (
                 <Paper withBorder mt="md" p="sm">

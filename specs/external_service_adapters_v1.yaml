@@ -260,6 +260,11 @@ profiles:
           qualification state, and record count are projected without
           rewriting the snapshot.
         - A digest, identity, channel, or schema mismatch marks the integration incompatible.
+        - The bounded projection retains the validated snapshot root solely so
+          the authenticated desktop setup helper can offer an explicit
+          opening-book import plan. Manager never opens the snapshot or treats
+          the path as activation authority; Installer revalidates it before
+          committing the locator and regenerating consumers.
     safety:
       - Book Forge remains authority for its workspace, catalog, resource governor, and publication.
       - The manager invokes only its public CLI and reads only its machine-readable status.
@@ -359,6 +364,11 @@ profiles:
           visible provenance and does not block reuse. Manager never decides
           compatibility or rewrites profile identity or permissions.
         - Manager never requests or stores raw observations and never reads the service SQLite catalog.
+        - A qualified profile may be explicitly selected through the
+          authenticated desktop setup helper. Installer remains locator and
+          consumer-configuration authority, and Manager then refreshes only
+          the existing receipt-managed Engine through its normal full probe.
+          Publication alone never changes live Engine authority.
         - Waiting for a target and an empty dataset set remain healthy.
         - A dataset schema or identity mismatch marks the integration incompatible.
     orchestration_integration:

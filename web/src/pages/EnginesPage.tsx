@@ -17,25 +17,15 @@ import {
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { api, makeCommand, pickLocalPath } from '../api/client'
-import type { EngineCandidate, EngineData } from '../api/types'
+import type { EngineCandidate, EngineData, Resource } from '../api/types'
 import { EmptyState } from '../components/EmptyState'
 import { ComponentSetupButton } from '../components/ComponentSetupButton'
 import { PageHeader } from '../components/PageHeader'
 import { PathPickerInput } from '../components/PathPickerInput'
 import { StatusPill } from '../components/StatusPill'
-
-function registrationParameters(candidate: EngineCandidate) {
-  return {
-    display_name: candidate.display_name,
-    executable: candidate.executable,
-    working_directory: candidate.working_directory,
-    arguments: candidate.arguments,
-    uci_options: candidate.uci_options,
-    candidate_id: candidate.candidate_id,
-  }
-}
+import { candidateRegistration, engineRegistrationParameters } from './engineRegistration'
 
 export function EnginesPage({ navigate }: { navigate: (page: string) => void }) {
   const queryClient = useQueryClient()
@@ -61,15 +51,10 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
   const [scanError, setScanError] = useState('')
   const [refreshMessage, setRefreshMessage] = useState('')
 
-  const registeredPaths = useMemo(
-    () => new Set((engines.data ?? []).map((engine) => engine.data.executable.toLowerCase())),
-    [engines.data],
-  )
-
   const probeCandidate = useMutation({
     mutationFn: (candidate: EngineCandidate) =>
       api.probeEngine({
-        ...registrationParameters(candidate),
+        ...engineRegistrationParameters(candidate),
       }),
     onSuccess: (result, candidate) => {
       setTestedCandidates((current) => ({
@@ -81,13 +66,39 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
 
   const registerCandidate = useMutation({
     mutationFn: (candidate: EngineCandidate) =>
-      api.command(makeCommand('engine.register', 'engine', registrationParameters(candidate))),
+      api.command(makeCommand('engine.register', 'engine', engineRegistrationParameters(candidate))),
     onSuccess: async (_, candidate) => {
       setTestedCandidates((current) => {
         const next = { ...current }
         delete next[candidate.candidate_id]
         return next
       })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['resources', 'engine'] }),
+        queryClient.invalidateQueries({ queryKey: ['engine-candidates'] }),
+      ])
+    },
+  })
+
+  const refreshCandidate = useMutation({
+    mutationFn: ({
+      candidate,
+      engine,
+    }: {
+      candidate: EngineCandidate
+      engine: Resource<EngineData>
+    }) =>
+      api.command(
+        makeCommand(
+          'engine.refresh',
+          'engine',
+          engineRegistrationParameters(candidate),
+          false,
+          engine.id,
+          engine.revision,
+        ),
+      ),
+    onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['resources', 'engine'] }),
         queryClient.invalidateQueries({ queryKey: ['engine-candidates'] }),
@@ -244,7 +255,9 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
           ) : (
             <SimpleGrid cols={{ base: 1, lg: 2 }}>
               {candidates.data?.candidates.map((candidate) => {
-                const registered = registeredPaths.has(candidate.executable.toLowerCase())
+                const registration = candidateRegistration(candidate, engines.data ?? [])
+                const registered = registration.state === 'registered'
+                const refreshRequired = registration.state === 'refresh_required'
                 const tested = Boolean(testedCandidates[candidate.candidate_id])
                 const probing =
                   probeCandidate.isPending &&
@@ -252,6 +265,9 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
                 const registering =
                   registerCandidate.isPending &&
                   registerCandidate.variables?.candidate_id === candidate.candidate_id
+                const refreshing =
+                  refreshCandidate.isPending &&
+                  refreshCandidate.variables?.candidate.candidate_id === candidate.candidate_id
                 return (
                   <Paper key={candidate.candidate_id} withBorder p="md">
                     <Stack gap="sm">
@@ -266,10 +282,10 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
                           </div>
                         </Group>
                         <Badge
-                          color={registered ? 'green' : tested ? 'teal' : candidate.recommended ? 'blue' : 'gray'}
+                          color={registered ? 'green' : refreshRequired ? 'yellow' : tested ? 'teal' : candidate.recommended ? 'blue' : 'gray'}
                           variant="light"
                         >
-                          {registered ? 'Registered' : tested ? 'Test passed' : candidate.recommended ? 'Recommended' : 'Not tested'}
+                          {registered ? 'Registered' : refreshRequired ? 'Update available' : tested ? 'Test passed' : candidate.recommended ? 'Recommended' : 'Not tested'}
                         </Badge>
                       </Group>
                       <Code block>{candidate.executable}</Code>
@@ -315,6 +331,10 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
                         registerCandidate.variables?.candidate_id === candidate.candidate_id && (
                           <Alert color="red">{registerCandidate.error.message}</Alert>
                         )}
+                      {refreshCandidate.error &&
+                        refreshCandidate.variables?.candidate.candidate_id === candidate.candidate_id && (
+                          <Alert color="red">{refreshCandidate.error.message}</Alert>
+                        )}
                       <Group justify="flex-end">
                         <Button
                           variant="default"
@@ -325,11 +345,19 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
                           Test only
                         </Button>
                         <Button
-                          loading={registering}
+                          loading={registering || refreshing}
                           disabled={candidate.state !== 'ready_to_probe' || registered}
-                          onClick={() => registerCandidate.mutate(candidate)}
+                          onClick={() => {
+                            if (refreshRequired && registration.engine) {
+                              refreshCandidate.mutate({ candidate, engine: registration.engine })
+                            } else {
+                              registerCandidate.mutate(candidate)
+                            }
+                          }}
                         >
-                          {candidate.recommended ? 'Use this engine' : 'Register engine'}
+                          {refreshRequired
+                            ? 'Refresh configuration'
+                            : candidate.recommended ? 'Use this engine' : 'Register engine'}
                         </Button>
                       </Group>
                     </Stack>

@@ -158,6 +158,14 @@ managed_service_experience:
       bounded Manager output projection without opening Book Forge storage.
     - Show Evidence dataset and qualified timing-profile identities from the
       bounded Manager output projection without opening Evidence storage.
+    - Each Book Forge snapshot and qualified timing profile offers an explicit
+      Use in Engine action in the authenticated desktop host. The action first
+      previews and commits the Installer-owned import transaction, then repeats
+      the managed Engine probe and reports whether the existing registration
+      was refreshed or remains safely stale.
+    - An external browser may inspect output identity but cannot claim to
+      activate it. Provider publication never silently changes a registered
+      Engine, a running game, or a running/paused competition.
     - Reports and configuration surfaces consume only these projected public
       outputs and visibly distinguish unavailable, incompatible, empty, and
       ready output sets.

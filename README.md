@@ -135,10 +135,20 @@ Installed Book Forge and Evidence Service components are reconciled from
 manifests must match before Manager registers either service. A status refresh
 validates every
 advertised Book Forge snapshot through `book-forge validate` and projects only
-the snapshot identity, channel, manifest digest, qualification, and record
-count. Evidence integration similarly validates the public dataset-list
-contract and projects bounded dataset identities and authority. Manager never
-opens either provider's database or rewrites provider output.
+the snapshot identity, channel, manifest digest, qualification, record count,
+and validated artifact root. Evidence integration similarly validates the
+public dataset-list contract and projects bounded dataset identities and
+authority. Manager never opens either provider's database or rewrites provider
+output.
+
+The Services page presents **Use in Engine** beside validated Book Forge
+snapshots and qualified Evidence timing profiles. The native setup helper first
+previews and commits the Installer-owned locator transaction. Manager then
+rediscovers the receipt-managed Engine and repeats its complete UCI and typed
+runtime-identity probe before updating the same engine resource by revision. A
+failed probe or active competition leaves the prior registration authoritative
+and visibly marks the candidate as needing refresh. Provider publication alone
+never changes a registered Engine or a running game.
 
 When Evidence is waiting for its first exact target, the Services page offers
 **Use UCI Arena Engine** if the receipt-verified recommended engine is already
@@ -205,6 +215,11 @@ A fix merged here is not present in the suite until Manager has a new immutable
 component version for each supported platform and the Installer repository's
 reviewed release lock selects those exact signed artifacts. Installer never
 silently substitutes newer source for locked component bytes.
+
+That normal component release changes the Manager artifact, its component
+manifest, and the suite composition lock; it does not require a change to the
+Installer engine. Installer mechanism changes are reserved for new lifecycle,
+transaction, platform, or component-contract behavior.
 
 Complete Arena setup presents UCI Arena Engine, Book Forge, UCI Arena Evidence
 Service, and the Lichess Bot adapter as named, selected-by-default components.

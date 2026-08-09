@@ -61,6 +61,9 @@ export interface CommandEnvelope {
 export interface EngineData extends Record<string, unknown> {
   display_name: string
   executable: string
+  working_directory?: string
+  arguments?: string[]
+  option_overrides?: Record<string, unknown>
   engine_name: string
   engine_author: string
   fingerprint: string
@@ -89,6 +92,7 @@ export interface EngineData extends Record<string, unknown> {
     provider: string
     provider_numeric_fingerprint: string
   }
+  launch_profile?: EngineCandidate['launch_profile']
 }
 
 export interface EngineCandidate {
@@ -355,6 +359,7 @@ export interface EvidenceOrchestrationProjection {
 export interface BookSnapshotProjection {
   snapshot_id: string
   channel: string
+  path: string
   manifest_sha256: string
   artifact_files: Array<{ name: string; sha256: string }>
   record_count: number

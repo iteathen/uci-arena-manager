@@ -104,6 +104,12 @@ engine_contract:
         runtime_status response to match its model, adapter, provider,
         hardware/driver, runtime, search-core, and timing-contract identity;
         mismatch or absence fails the probe without persisting a resource.
+      - A receipt-managed engine whose current candidate profile differs from
+        its persisted registration exposes one explicit refresh operation.
+        Refresh repeats the same full candidate and runtime-identity probe,
+        updates that existing resource by revision, and is rejected while a
+        running or paused competition or active game references the engine.
+        Provider-output adoption never silently rewrites a registered engine.
   naming_boundary:
     product_engine_executable: uci_arena_engine
     requirements:
@@ -201,7 +207,9 @@ local_match_planner:
     - Before admitting the first game, Manager repeats the complete UCI probe
       for every distinct participant with that competition's effective option
       set and verifies the executable fingerprint still equals the registered
-      identity. Failure terminates the competition before creating a game.
+      identity. A persisted qualified managed profile also repeats its typed
+      runtime-status identity comparison. Failure terminates the competition
+      before creating a game.
     - Competition-specific option overrides must name options advertised by
       the registered engine and satisfy their declared type and bounds before
       the plan is persisted.

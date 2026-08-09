@@ -230,8 +230,8 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                     "test");
             };
 
-        const json verified =
-            registration(candidate_id).at("resource").at("data");
+        const json registered = registration(candidate_id).at("resource");
+        const json verified = registered.at("data");
         REQUIRE(verified.at("candidate_id") == candidate_id);
         REQUIRE(
             verified.at("onboarding_source") ==
@@ -262,11 +262,104 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
         REQUIRE_FALSE(forged.contains("recommended"));
         REQUIRE_FALSE(forged.contains("default_model"));
 
+        launch_profile["uci_options"]["Threads"] = 2;
+        std::ofstream(configuration, std::ios::trunc)
+            << launch_profile.dump(2);
+        const json refreshed_candidate =
+            arena::application::EngineOnboarding::discover(
+                data_root, {}, false)
+                .at("candidates")
+                .at(0);
+        const auto refresh = [&](const std::uint64_t revision) {
+            return control_plane.submit(
+                {
+                    {"schema_version", 1},
+                    {"request_id", arena::domain::uuid_v7()},
+                    {"idempotency_key", arena::domain::uuid_v7()},
+                    {"target",
+                     {{"kind", "engine"}, {"id", registered.at("id")}}},
+                    {"action", "engine.refresh"},
+                    {"expected_revision", revision},
+                    {"dry_run", false},
+                    {"parameters",
+                     {
+                         {"display_name", "UCI Arena Engine"},
+                         {"executable", refreshed_candidate.at("executable")},
+                         {"working_directory",
+                          refreshed_candidate.at("working_directory")},
+                         {"arguments", refreshed_candidate.at("arguments")},
+                         {"uci_options", refreshed_candidate.at("uci_options")},
+                         {"candidate_id", refreshed_candidate.at("candidate_id")},
+                     }},
+                },
+                "test");
+        };
+        const json refreshed = refresh(registered.at("revision")).at("resource");
+        REQUIRE(refreshed.at("id") == registered.at("id"));
+        REQUIRE(refreshed.at("revision") == 2);
+        REQUIRE(refreshed.at("data").at("option_overrides").at("Threads") == 2);
+
         launch_profile["expected_runtime"]["hardware_driver_fingerprint"] =
             "15113055170282736144";
         std::ofstream(configuration, std::ios::trunc)
             << launch_profile.dump(2);
-        REQUIRE_THROWS(registration(candidate_id));
+        REQUIRE_THROWS(refresh(refreshed.at("revision")));
+        json after_failed_refresh = nullptr;
+        for (const auto& engine : control_plane.list("engine")) {
+            if (engine.at("id") == registered.at("id")) {
+                after_failed_refresh = engine;
+                break;
+            }
+        }
+        REQUIRE_FALSE(after_failed_refresh.is_null());
+        REQUIRE(after_failed_refresh.at("revision") == refreshed.at("revision"));
+        REQUIRE(
+            after_failed_refresh.at("data").at("launch_profile") ==
+            refreshed.at("data").at("launch_profile"));
+
+        launch_profile["expected_runtime"]["hardware_driver_fingerprint"] =
+            "15113055170282736143";
+        std::ofstream(configuration, std::ios::trunc)
+            << launch_profile.dump(2);
+        const std::string now = arena::domain::utc_now();
+        const std::string competition_id = arena::domain::uuid_v7();
+        const std::string command_id = arena::domain::uuid_v7();
+        store->create_resource(
+            {
+                competition_id,
+                "match_plan",
+                "local",
+                1,
+                now,
+                now,
+                "{}",
+                json{
+                    {"lifecycle", "paused"},
+                    {"engine_ids", {registered.at("id")}},
+                }.dump(),
+            },
+            {
+                command_id,
+                arena::domain::uuid_v7(),
+                arena::domain::uuid_v7(),
+                "match.plan",
+                "completed",
+                "{}",
+                now,
+            },
+            {
+                0,
+                arena::domain::uuid_v7(),
+                now,
+                "state",
+                "match_plan.created",
+                "match_plan",
+                competition_id,
+                1,
+                command_id,
+                "{}",
+            });
+        REQUIRE_THROWS(refresh(refreshed.at("revision")));
     }
 
     fs::remove_all(root);

@@ -135,6 +135,15 @@ registration:
       tournament and Evidence launches derive the same exact component-local
       option without mutating the resource; each game records the effective
       option set it actually launched.
+    - A current receipt-managed candidate whose launch arguments, options, or
+      managed-profile identity differ from an existing registration is shown
+      as needing refresh rather than merely registered by executable path.
+      Refresh targets that exact resource revision, repeats the complete
+      candidate probe including qualified runtime-status matching, and keeps
+      the prior registration authoritative on failure.
+    - Refresh is rejected while a running or paused competition or active game
+      references the engine so one persisted competition cannot silently
+      change topology, timing evidence, or knowledge bindings between games.
 
 recommendation:
   component_id: uci_arena.engine
@@ -183,6 +192,10 @@ acceptance:
     managed launch-profile schema and have every rendered option probed,
     registered, reused by tournaments, and forwarded to Evidence target
     registration without Manager source changes.
+  - Selecting a Book Forge snapshot or qualified Evidence timing profile
+    through the desktop setup helper refreshes an existing managed Engine only
+    after the Installer commits the locator and the repeated runtime probe
+    succeeds; otherwise the prior registration remains visibly stale.
   - Conservative and qualified-timing launch-profile states remain visible in
     the engine candidate UI; a rejected profile is actionable and cannot be
     registered through the dashboard.

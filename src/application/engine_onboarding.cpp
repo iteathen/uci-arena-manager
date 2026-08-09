@@ -1,4 +1,5 @@
 #include "arena/application/engine_onboarding.hpp"
+#include "arena/adapters/uci_process.hpp"
 #include "arena/platform/path_inspection.hpp"
 
 #include <sodium.h>
@@ -1010,6 +1011,30 @@ json EngineOnboarding::discover(
         {"explicit_root_inspection", explicit_work.projection()},
         {"candidates", std::move(candidates)},
     };
+}
+
+std::optional<std::string> EngineOnboarding::runtime_identity_mismatch(
+    const json& expected,
+    const adapters::UciRuntimeStatus& observed) {
+    const std::array<std::pair<const char*, const std::string*>, 10> fields{{
+        {"timing_contract_version", &observed.timing_contract_version},
+        {"model_id", &observed.model_id},
+        {"model_fingerprint", &observed.model_fingerprint},
+        {"adapter_id", &observed.adapter_id},
+        {"provider_requested", &observed.provider_requested},
+        {"provider_effective", &observed.provider_effective},
+        {"provider_numeric_fingerprint", &observed.provider_numeric_fingerprint},
+        {"hardware_driver_fingerprint", &observed.hardware_driver_fingerprint},
+        {"onnx_runtime_version", &observed.onnx_runtime_version},
+        {"search_core", &observed.search_core},
+    }};
+    for (const auto& [field, actual] : fields) {
+        if (!expected.is_object() ||
+            expected.value(field, std::string{}) != *actual) {
+            return field;
+        }
+    }
+    return std::nullopt;
 }
 
 }  // namespace arena::application
