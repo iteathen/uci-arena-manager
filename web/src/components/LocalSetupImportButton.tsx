@@ -12,6 +12,13 @@ import {
 
 type ImportRequest = Extract<LocalSetupRequest, { operation: 'import' }>
 
+export function localSetupImportReviewText(assetKind: ImportRequest['asset_kind']) {
+  if (assetKind === 'lichess_token_path') {
+    return 'The adjacent Installer validates this external credential reference using filesystem metadata only and updates every affected consumer as one transaction. Token contents are never opened or copied.'
+  }
+  return "The adjacent Installer validates this asset reference and updates every affected consumer as one transaction. The reviewed import policy preserves the asset's declared ownership."
+}
+
 export function LocalSetupImportButton({
   assetKind,
   path,
@@ -72,8 +79,7 @@ export function LocalSetupImportButton({
       >
         <Stack>
           <Alert color="blue">
-            The adjacent Installer validates this reference and updates every affected
-            consumer as one transaction. The credential file is never opened.
+            {localSetupImportReviewText(assetKind)}
           </Alert>
           {actions.map((action, index) => (
             <Paper withBorder p="sm" key={`${String(action.action)}-${index}`}>

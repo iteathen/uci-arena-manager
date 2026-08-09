@@ -455,6 +455,10 @@ knowledge_asset_setup:
       candidate and all retained alternatives remain visible with provenance
       and classification. Discovery itself never implies compatibility,
       installation, selection, or trust.
+    - Import review dialogs describe the selected asset's actual ownership and
+      validation behavior. Credential-specific language appears only for a
+      Lichess token-file reference; knowledge, timing, engine, and service
+      imports never imply that they contain or expose credential material.
     - Offer browse-assisted opening-book, Syzygy directory, and Lichess
       token-file-reference selection with format-specific hints and filters.
     - Offer browse-assisted qualified timing, Lichess single-game, Lichess
