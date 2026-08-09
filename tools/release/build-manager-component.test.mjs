@@ -117,6 +117,10 @@ test("Manager component workflow pins dependencies and bounds each release gate"
   assert.match(workflow, /path: \$\{\{ runner\.temp \}\}\/vcpkg-binary-cache/u);
   assert.match(workflow, /manager-vcpkg-v1-/u);
   assert.match(workflow, /VCPKG_BINARY_SOURCES: "clear;default,readwrite"/u);
+  assert.match(
+    workflow,
+    /New-Item -ItemType Directory -Force -Path \$env:VCPKG_DEFAULT_BINARY_CACHE/u,
+  );
   assert.doesNotMatch(workflow, /x-gha/u);
   assert.match(workflow, /--overlay-triplets=\$overlayTriplets/u);
   assert.match(workflow, /--x-install-root=\$installRoot/u);
