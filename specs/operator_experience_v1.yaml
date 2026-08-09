@@ -59,6 +59,11 @@ interaction_feedback:
     - The page hash is a durable deep link. Direct hash navigation, browser
       back/forward, and a newly delivered pairing hash update the rendered
       surface without reauthenticating ordinary page changes.
+    - If an installed upgrade replaces a lazy-loaded dashboard chunk while a
+      tab from the prior generation remains open, the web shell performs at
+      most one full reload for that exact failed chunk so the tab joins the
+      current installed generation. A repeated failure renders an actionable
+      reload surface instead of looping or leaving a blank window.
     - A direct same-origin tab that inherits a valid HttpOnly session cookie
       resynchronizes the existing session's per-tab CSRF value before it is
       presented as mutation-ready. Read success with a missing CSRF value must
