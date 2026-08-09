@@ -65,6 +65,49 @@ json manager_service_api() {
     };
 }
 
+json manager_bot_options_fixture() {
+    return {
+        {"schema", "uci_arena_lichess_manager_options_v1"},
+        {"capacity",
+         {{"total_slots", 2},
+          {"startup_parallelism", 2},
+          {"human",
+           {{"slots", 1},
+            {"allow_borrowing", false},
+            {"accept_public", true}}},
+          {"bot", {{"slots", 1}, {"target_active", 1}}},
+          {"evidence",
+           {{"status", "qualified"},
+            {"qualified", true},
+            {"maximum_concurrency", 2}}}}},
+        {"inbound_challenges",
+         {{"accept_bots", true},
+          {"min_base", 60},
+          {"max_base", 1800},
+          {"min_increment", 0},
+          {"max_increment", 10},
+          {"speeds", {"rapid"}},
+          {"modes", {"casual"}}}},
+        {"outbound_challenge",
+         {{"rated", false},
+          {"color", "random"},
+          {"clock_limit", 600},
+          {"clock_increment", 2}}},
+        {"scheduler",
+         {{"enabled", true},
+          {"discovery_interval_seconds", 60},
+          {"challenge_interval_seconds", 5},
+          {"reservation_retry_seconds", 30},
+          {"challenge_timeout_seconds", 25}}},
+        {"opponent_selection",
+         {{"max_games_per_opponent_per_day", 1},
+          {"timeout_cooldown_minutes", 30},
+          {"decline_cooldown_minutes", 360},
+          {"rating_target", 2200},
+          {"rating_spread", 600}}},
+    };
+}
+
 void write_installed_component(
     const fs::path& data_root,
     const fs::path& install_root,
@@ -1209,63 +1252,27 @@ TEST_CASE("Lichess BOT options use only verified provider entrypoints and bounde
             REQUIRE(fs::is_directory(working_directory));
             REQUIRE(timeout == std::chrono::seconds(30));
             calls.push_back(arguments);
-            return json{
-                {"status", "ready"},
-                {"editable",
-                 {
-                     {"schema", "uci_arena_lichess_manager_options_v1"},
-                     {"capacity",
-                      {
-                          {"total_slots", 2},
-                          {"startup_parallelism", 2},
-                          {"human",
-                           {{"slots", 1},
-                            {"allow_borrowing", false},
-                            {"accept_public", true}}},
-                          {"bot", {{"slots", 1}, {"target_active", 1}}},
-                          {"evidence",
-                           {{"status", "qualified"},
-                            {"qualified", true},
-                            {"maximum_concurrency", 2}}},
-                          {"capacity_profile", "MUST_NOT_ESCAPE"},
-                      }},
-                     {"inbound_challenges",
-                      {{"accept_bots", true},
-                       {"min_base", 60},
-                       {"max_base", 1800},
-                       {"min_increment", 0},
-                       {"max_increment", 10},
-                       {"speeds", {"rapid"}},
-                       {"modes", {"casual"}}}},
-                     {"outbound_challenge",
-                      {{"rated", false},
-                       {"color", "random"},
-                       {"clock_limit", 600},
-                       {"clock_increment", 2}}},
-                     {"scheduler",
-                      {{"enabled", true},
-                       {"discovery_interval_seconds", 60},
-                       {"challenge_interval_seconds", 5},
-                       {"reservation_retry_seconds", 30},
-                       {"challenge_timeout_seconds", 25}}},
-                     {"opponent_selection",
-                      {{"max_games_per_opponent_per_day", 1},
-                       {"timeout_cooldown_minutes", 30},
-                       {"decline_cooldown_minutes", 360},
-                       {"rating_target", 2200},
-                       {"rating_spread", 600}}},
-                     {"token", "MUST_NOT_ESCAPE"},
-                 }},
-            };
+            return manager_bot_options_fixture();
         });
 
     REQUIRE(result.at("schema") == "uci_arena_lichess_manager_options_v1");
     REQUIRE(result.at("capacity").at("evidence").at("qualified") == true);
-    REQUIRE(result.dump().find("MUST_NOT_ESCAPE") == std::string::npos);
     REQUIRE(calls.size() == 1);
     REQUIRE(calls.at(0).at(1) == "config");
     REQUIRE(calls.at(0).at(2) == "get");
     REQUIRE(calls.at(0).at(3) == "--config");
+    REQUIRE_THROWS_AS(
+        arena::application::ServiceCatalog::bot_options(
+            root / "data",
+            [](const fs::path&,
+               const fs::path&,
+               const std::vector<std::string>&,
+               const std::chrono::milliseconds) {
+                json invalid = manager_bot_options_fixture();
+                invalid["token"] = "MUST_NOT_ESCAPE";
+                return invalid;
+            }),
+        std::runtime_error);
     fs::remove_all(root);
 }
 
@@ -1285,38 +1292,7 @@ TEST_CASE("conforming direct provider substitutes its declared operation prefixe
             const std::chrono::milliseconds) {
             observed_executable = executable;
             observed_arguments = arguments;
-            return json{
-                {"status", "ready"},
-                {"editable",
-                 {{"schema", "uci_arena_lichess_manager_options_v1"},
-                  {"capacity",
-                   {{"total_slots", 1},
-                    {"startup_parallelism", 1},
-                    {"human", {{"slots", 1}, {"allow_borrowing", false},
-                               {"accept_public", true}}},
-                    {"bot", {{"slots", 0}, {"target_active", 0}}},
-                    {"evidence", {{"status", "unqualified"},
-                                  {"qualified", false},
-                                  {"maximum_concurrency", nullptr}}}}},
-                  {"inbound_challenges",
-                   {{"accept_bots", true}, {"min_base", 60},
-                    {"max_base", 1800}, {"min_increment", 0},
-                    {"max_increment", 10}, {"speeds", {"rapid"}},
-                    {"modes", {"casual"}}}},
-                  {"outbound_challenge",
-                   {{"rated", false}, {"color", "random"},
-                    {"clock_limit", 600}, {"clock_increment", 2}}},
-                  {"scheduler",
-                   {{"enabled", false}, {"discovery_interval_seconds", 60},
-                    {"challenge_interval_seconds", 5},
-                    {"reservation_retry_seconds", 30},
-                    {"challenge_timeout_seconds", 25}}},
-                  {"opponent_selection",
-                   {{"max_games_per_opponent_per_day", 1},
-                    {"timeout_cooldown_minutes", 30},
-                    {"decline_cooldown_minutes", 360},
-                    {"rating_target", 2200}, {"rating_spread", 600}}}}},
-            };
+            return manager_bot_options_fixture();
         });
     REQUIRE(result.at("schema") == "uci_arena_lichess_manager_options_v1");
     REQUIRE(observed_executable.filename() == "adapter.mjs");
@@ -1339,34 +1315,9 @@ TEST_CASE("Lichess BOT option updates are allowlisted and preserve explicit conf
             const std::vector<std::string>& arguments,
             const std::chrono::milliseconds) {
             calls.push_back(arguments);
-            return json{
-                {"status", "ready"},
-                {"editable",
-                 {
-                     {"schema", "uci_arena_lichess_manager_options_v1"},
-                     {"capacity",
-                      {{"total_slots", 1},
-                       {"startup_parallelism", 1},
-                       {"human", {{"slots", 0}, {"allow_borrowing", false}, {"accept_public", false}}},
-                       {"bot", {{"slots", 1}, {"target_active", 1}}},
-                       {"evidence", {{"status", "qualified"}, {"qualified", true}, {"maximum_concurrency", 1}}}}},
-                     {"inbound_challenges",
-                      {{"accept_bots", true}, {"min_base", 60}, {"max_base", 1800},
-                       {"min_increment", 0}, {"max_increment", 10},
-                       {"speeds", {"rapid"}}, {"modes", {"casual"}}}},
-                     {"outbound_challenge",
-                      {{"rated", true}, {"color", "random"},
-                       {"clock_limit", 600}, {"clock_increment", 2}}},
-                     {"scheduler",
-                      {{"enabled", true}, {"discovery_interval_seconds", 60},
-                       {"challenge_interval_seconds", 5}, {"reservation_retry_seconds", 30},
-                       {"challenge_timeout_seconds", 25}}},
-                     {"opponent_selection",
-                      {{"max_games_per_opponent_per_day", 1}, {"timeout_cooldown_minutes", 30},
-                       {"decline_cooldown_minutes", 360}, {"rating_target", 2200},
-                       {"rating_spread", 600}}},
-                 }},
-            };
+            json options = manager_bot_options_fixture();
+            options["outbound_challenge"]["rated"] = true;
+            return options;
         };
     const json settings{
         {"outbound_challenge", {{"rated", true}}},

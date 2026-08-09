@@ -689,6 +689,21 @@ const json& required_object(
     return value.at(field);
 }
 
+void require_exact_fields(
+    const json& source,
+    const std::initializer_list<std::string_view> fields) {
+    if (!source.is_object() || source.size() != fields.size()) {
+        throw std::runtime_error(
+            "the provider returned undeclared BOT option fields");
+    }
+    for (const auto field : fields) {
+        if (!source.contains(std::string(field))) {
+            throw std::runtime_error(
+                "the provider returned incomplete BOT options");
+        }
+    }
+}
+
 json selected_fields(
     const json& source,
     const std::initializer_list<std::string_view> fields) {
@@ -763,12 +778,28 @@ void require_string_choices(
 }
 
 void validate_projected_bot_options(const json& options) {
+    require_exact_fields(
+        options,
+        {"schema", "capacity", "inbound_challenges",
+         "outbound_challenge", "scheduler", "opponent_selection"});
+    if (!options.at("schema").is_string() ||
+        options.at("schema") != "uci_arena_lichess_manager_options_v1") {
+        throw std::runtime_error(
+            "the provider returned an unsupported BOT options schema");
+    }
     const json& capacity = required_object(options, "capacity");
+    require_exact_fields(
+        capacity,
+        {"total_slots", "startup_parallelism", "human", "bot",
+         "evidence"});
     const int total_slots =
         required_integer(capacity, "total_slots", 1, 64);
     required_integer(capacity, "startup_parallelism", 1, 64);
     const json& human = required_object(capacity, "human");
     const json& bot = required_object(capacity, "bot");
+    require_exact_fields(
+        human, {"slots", "allow_borrowing", "accept_public"});
+    require_exact_fields(bot, {"slots", "target_active"});
     const int human_slots = required_integer(human, "slots", 0, 64);
     const int bot_slots = required_integer(bot, "slots", 0, 64);
     if (human_slots + bot_slots != total_slots) {
@@ -779,9 +810,14 @@ void validate_projected_bot_options(const json& options) {
     static_cast<void>(required_boolean(human, "accept_public"));
     required_integer(bot, "target_active", 0, bot_slots);
     const json& evidence = required_object(capacity, "evidence");
+    require_exact_fields(
+        evidence, {"status", "qualified", "maximum_concurrency"});
+    static const std::set<std::string> evidence_statuses{
+        "legacy_shared", "standard_uci_startup_probe_required",
+        "runtime_revalidation_required", "missing", "qualified",
+        "rejected"};
     if (!evidence.contains("status") || !evidence.at("status").is_string() ||
-        evidence.at("status").get_ref<const std::string&>().empty() ||
-        evidence.at("status").get_ref<const std::string&>().size() > 64U ||
+        !evidence_statuses.contains(evidence.at("status").get<std::string>()) ||
         !evidence.contains("qualified") ||
         !evidence.at("qualified").is_boolean() ||
         !evidence.contains("maximum_concurrency") ||
@@ -803,6 +839,10 @@ void validate_projected_bot_options(const json& options) {
     }
 
     const json& inbound = required_object(options, "inbound_challenges");
+    require_exact_fields(
+        inbound,
+        {"accept_bots", "min_base", "max_base", "min_increment",
+         "max_increment", "speeds", "modes"});
     static_cast<void>(required_boolean(inbound, "accept_bots"));
     const int minimum_base =
         required_integer(inbound, "min_base", 0, 86400);
@@ -825,6 +865,8 @@ void validate_projected_bot_options(const json& options) {
     require_string_choices(inbound, "modes", {"casual", "rated"});
 
     const json& outbound = required_object(options, "outbound_challenge");
+    require_exact_fields(
+        outbound, {"rated", "color", "clock_limit", "clock_increment"});
     static_cast<void>(required_boolean(outbound, "rated"));
     require_string_choice(
         outbound, "color", {"random", "white", "black"});
@@ -832,12 +874,21 @@ void validate_projected_bot_options(const json& options) {
     required_integer(outbound, "clock_increment", 0, 300);
 
     const json& scheduler = required_object(options, "scheduler");
+    require_exact_fields(
+        scheduler,
+        {"enabled", "discovery_interval_seconds",
+         "challenge_interval_seconds", "reservation_retry_seconds",
+         "challenge_timeout_seconds"});
     static_cast<void>(required_boolean(scheduler, "enabled"));
     required_integer(scheduler, "discovery_interval_seconds", 15, 3600);
     required_integer(scheduler, "challenge_interval_seconds", 1, 300);
     required_integer(scheduler, "reservation_retry_seconds", 5, 600);
     required_integer(scheduler, "challenge_timeout_seconds", 10, 300);
     const json& opponents = required_object(options, "opponent_selection");
+    require_exact_fields(
+        opponents,
+        {"max_games_per_opponent_per_day", "timeout_cooldown_minutes",
+         "decline_cooldown_minutes", "rating_target", "rating_spread"});
     required_integer(opponents, "max_games_per_opponent_per_day", 1, 100);
     required_integer(opponents, "timeout_cooldown_minutes", 1, 1440);
     required_integer(opponents, "decline_cooldown_minutes", 1, 10080);
@@ -846,62 +897,12 @@ void validate_projected_bot_options(const json& options) {
 }
 
 json project_bot_options(const json& result) {
-    if (!result.is_object() || result.dump().size() > 64U * 1024U ||
-        result.value("status", "") != "ready" ||
-        !result.contains("editable") ||
-        !result.at("editable").is_object()) {
+    if (!result.is_object() || result.dump().size() > 32U * 1024U) {
         throw std::runtime_error(
             "the provider returned invalid BOT options");
     }
-    const json& editable = result.at("editable");
-    if (editable.value("schema", "") !=
-        "uci_arena_lichess_manager_options_v1") {
-        throw std::runtime_error(
-            "the provider returned an unsupported BOT options schema");
-    }
-    const json& capacity = required_object(editable, "capacity");
-    json projected_capacity = selected_fields(
-        capacity, {"total_slots", "startup_parallelism"});
-    projected_capacity["human"] = selected_fields(
-        required_object(capacity, "human"),
-        {"slots", "allow_borrowing", "accept_public"});
-    projected_capacity["bot"] = selected_fields(
-        required_object(capacity, "bot"),
-        {"slots", "target_active"});
-    projected_capacity["evidence"] = selected_fields(
-        required_object(capacity, "evidence"),
-        {"status", "qualified", "maximum_concurrency"});
-    json projection{
-        {"schema", "uci_arena_lichess_manager_options_v1"},
-        {"capacity", std::move(projected_capacity)},
-        {"inbound_challenges",
-         selected_fields(
-             required_object(editable, "inbound_challenges"),
-             {"accept_bots", "min_base", "max_base", "min_increment",
-              "max_increment", "speeds", "modes"})},
-        {"outbound_challenge",
-         selected_fields(
-             required_object(editable, "outbound_challenge"),
-             {"rated", "color", "clock_limit", "clock_increment"})},
-        {"scheduler",
-         selected_fields(
-             required_object(editable, "scheduler"),
-             {"enabled", "discovery_interval_seconds",
-              "challenge_interval_seconds", "reservation_retry_seconds",
-              "challenge_timeout_seconds"})},
-        {"opponent_selection",
-         selected_fields(
-             required_object(editable, "opponent_selection"),
-             {"max_games_per_opponent_per_day",
-              "timeout_cooldown_minutes", "decline_cooldown_minutes",
-              "rating_target", "rating_spread"})},
-    };
-    if (projection.dump().size() > 32U * 1024U) {
-        throw std::runtime_error(
-            "the provider BOT options projection is too large");
-    }
-    validate_projected_bot_options(projection);
-    return projection;
+    validate_projected_bot_options(result);
+    return result;
 }
 
 void require_parameter_keys(
