@@ -1179,8 +1179,10 @@ TEST_CASE("Lichess installed qualification uses only the published provider oper
             .at("candidates")
             .at(0)
             .at("qualification_state") == "available");
-    REQUIRE(result.at("single_game_profile") == single.string());
-    REQUIRE(result.at("capacity_profile") == capacity.string());
+    REQUIRE(fs::equivalent(
+        fs::path(result.at("single_game_profile").get<std::string>()), single));
+    REQUIRE(fs::equivalent(
+        fs::path(result.at("capacity_profile").get<std::string>()), capacity));
     REQUIRE(result.dump().find("MUST_NOT_ESCAPE") == std::string::npos);
     REQUIRE(observed_timeout == std::chrono::minutes(20));
     REQUIRE(observed_arguments.size() == 7);
@@ -1188,7 +1190,7 @@ TEST_CASE("Lichess installed qualification uses only the published provider oper
     REQUIRE(observed_arguments.at(2) == "refresh");
     REQUIRE(observed_arguments.at(3) == "--config");
     REQUIRE(observed_arguments.at(5) == "--runtime-dir");
-    REQUIRE(observed_arguments.at(6) == runtime.string());
+    REQUIRE(fs::equivalent(fs::path(observed_arguments.at(6)), runtime));
     REQUIRE(
         std::find(
             observed_arguments.begin(), observed_arguments.end(), "--token-file") ==
