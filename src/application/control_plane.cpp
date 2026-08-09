@@ -1031,7 +1031,7 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
         executable,
         working_directory,
         arguments,
-        std::chrono::seconds(10),
+        adapters::UciProbeTimeouts{},
         option_overrides,
         !expected_runtime.is_null());
     if (!probe.ok) {
@@ -2188,7 +2188,7 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                 executable,
                 working_directory,
                 string_array(engine_data, "arguments"),
-                std::chrono::seconds(10),
+                adapters::UciProbeTimeouts{},
                 typed_options);
             if (!probe.ok) {
                 throw CommandFailure("uci_probe_failed", probe.error, 422);

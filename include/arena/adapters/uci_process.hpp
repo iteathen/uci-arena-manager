@@ -40,6 +40,13 @@ struct UciProbeResult {
     std::string error;
 };
 
+struct UciProbeTimeouts final {
+    std::chrono::milliseconds uci_discovery{std::chrono::seconds(10)};
+    std::chrono::milliseconds ready_after_options{std::chrono::seconds(60)};
+    std::chrono::milliseconds runtime_status{std::chrono::seconds(10)};
+    std::chrono::milliseconds first_bestmove{std::chrono::seconds(60)};
+};
+
 class UciProcess final {
   public:
     static void validate_option_overrides(
@@ -50,7 +57,7 @@ class UciProcess final {
         const std::filesystem::path& executable,
         const std::filesystem::path& working_directory,
         const std::vector<std::string>& arguments,
-        std::chrono::milliseconds timeout = std::chrono::seconds(10),
+        const UciProbeTimeouts& timeouts = {},
         const std::map<std::string, std::string>& option_overrides = {},
         bool request_runtime_status = false);
 };

@@ -346,7 +346,7 @@ UciProbeResult UciProcess::probe(
     const std::filesystem::path& executable,
     const std::filesystem::path& working_directory,
     const std::vector<std::string>& arguments,
-    std::chrono::milliseconds timeout,
+    const UciProbeTimeouts& timeouts,
     const std::map<std::string, std::string>& option_overrides,
     const bool request_runtime_status) {
     UciProbeResult result;
@@ -355,25 +355,42 @@ UciProbeResult UciProcess::probe(
     try {
         result.fingerprint = fingerprint(executable);
         process.start(executable, working_directory, arguments);
-        const auto deadline = Clock::now() + timeout;
 
         process.write_line("uci");
-        await_token(process, "uciok", deadline, result, true);
+        await_token(
+            process,
+            "uciok",
+            Clock::now() + timeouts.uci_discovery,
+            result,
+            true);
         validate_option_overrides(result.options, option_overrides);
         for (const auto& [name, value] : option_overrides) {
             process.write_line("setoption name " + name + " value " + value);
         }
         process.write_line("isready");
-        await_token(process, "readyok", deadline, result, false);
+        await_token(
+            process,
+            "readyok",
+            Clock::now() + timeouts.ready_after_options,
+            result,
+            false);
         if (request_runtime_status) {
             process.write_line("runtime_status");
-            await_runtime_status(process, deadline, result);
+            await_runtime_status(
+                process,
+                Clock::now() + timeouts.runtime_status,
+                result);
         }
         process.write_line("ucinewgame");
         process.write_line("position startpos");
         process.write_line("go depth 1");
         const std::string bestmove_line =
-            await_token(process, "bestmove", deadline, result, false);
+            await_token(
+                process,
+                "bestmove",
+                Clock::now() + timeouts.first_bestmove,
+                result,
+                false);
         const auto parts = split(bestmove_line);
         if (parts.size() < 2 || !legal_starting_bestmove(parts[1])) {
             throw std::runtime_error("engine returned an illegal starting-position bestmove");

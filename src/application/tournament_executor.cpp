@@ -350,7 +350,7 @@ void validate_competition_engines(
             engine.executable,
             engine.working_directory,
             engine.arguments,
-            std::chrono::seconds(15),
+            adapters::UciProbeTimeouts{},
             engine.options,
             !expected_runtime.is_null());
         if (!probe.ok) {

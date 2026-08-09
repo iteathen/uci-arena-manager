@@ -9,6 +9,7 @@
 
 int main(int argc, char** argv) {
     unsigned delay_ms = 0;
+    unsigned ready_delay_ms = 0;
     bool illegal = false;
     std::size_t illegal_after_ply = static_cast<std::size_t>(-1);
     bool require_chess960 = false;
@@ -18,6 +19,8 @@ int main(int argc, char** argv) {
         const std::string_view argument = argv[index];
         if (argument == "--delay-ms" && index + 1 < argc) {
             delay_ms = static_cast<unsigned>(std::stoul(argv[++index]));
+        } else if (argument == "--ready-delay-ms" && index + 1 < argc) {
+            ready_delay_ms = static_cast<unsigned>(std::stoul(argv[++index]));
         } else if (argument == "--illegal") {
             illegal = true;
         } else if (argument == "--illegal-after-ply" && index + 1 < argc) {
@@ -59,6 +62,10 @@ int main(int argc, char** argv) {
                 std::filesystem::path(required_model_root),
                 equivalent_error);
         } else if (line == "isready") {
+            if (ready_delay_ms > 0) {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(ready_delay_ms));
+            }
             if (!required_model_root.empty() && model_root_ready) {
                 std::cout << "info string model loaded:backend:onnx:path:fixture:fingerprint:8104116015256418347:provider:cpu:provider_numeric_fingerprint:5805769137532863231\n";
             }

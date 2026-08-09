@@ -20,7 +20,7 @@ TEST_CASE("UCI probe discovers identity options and a legal bestmove") {
         executable,
         executable.parent_path(),
         {},
-        std::chrono::seconds(5),
+        arena::adapters::UciProbeTimeouts{},
         {},
         true);
     REQUIRE(result.ok);
@@ -52,12 +52,30 @@ TEST_CASE("UCI probe rejects an option the engine did not advertise") {
         executable,
         executable.parent_path(),
         {},
-        std::chrono::seconds(5),
+        arena::adapters::UciProbeTimeouts{},
         {{"ModelRoot", "not-advertised"}});
     REQUIRE_FALSE(result.ok);
     REQUIRE(
         result.error.find("requested UCI option is not advertised: ModelRoot") !=
         std::string::npos);
+}
+
+TEST_CASE("UCI probe gives readiness and first search independent deadlines") {
+    using namespace std::chrono_literals;
+    const std::filesystem::path executable = ARENA_MOCK_UCI_PATH;
+    const arena::adapters::UciProbeTimeouts timeouts{
+        50ms,
+        250ms,
+        50ms,
+        250ms,
+    };
+    const auto result = arena::adapters::UciProcess::probe(
+        executable,
+        executable.parent_path(),
+        {"--ready-delay-ms", "75", "--delay-ms", "75"},
+        timeouts);
+    REQUIRE(result.ok);
+    REQUIRE(result.elapsed_ms >= 150);
 }
 
 TEST_CASE("engine registration derives preferred metadata from the verified receipt") {
@@ -89,7 +107,10 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
         executable,
         fs::copy_options::overwrite_existing);
     const auto packaged_probe = arena::adapters::UciProcess::probe(
-        executable, active_root, {}, std::chrono::seconds(5));
+        executable,
+        active_root,
+        {},
+        arena::adapters::UciProbeTimeouts{});
     REQUIRE(packaged_probe.ok);
 
     std::ofstream(active_root / "arena-component.json")

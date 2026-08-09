@@ -189,7 +189,7 @@ TEST_CASE("legacy receipt engines launch tournaments with their packaged default
             executable,
             engine_root,
             {"--require-model-root", model_root.string()},
-            std::chrono::seconds(5),
+            arena::adapters::UciProbeTimeouts{},
             options);
         REQUIRE(probe.ok);
         const json engine_data{

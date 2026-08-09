@@ -72,11 +72,20 @@ candidate_authority:
 
 probe:
   authority: manager_service
+  phase_timeouts_ms:
+    uci_discovery: 10000
+    ready_after_options: 60000
+    runtime_status: 10000
+    first_bestmove: 60000
   behavior:
     - Dashboard and CLI probes use the same Manager service identity and the
       same engine.register dry-run path used immediately before persistence.
     - A passing probe performs process launch, uciok, readyok, typed option
       discovery, and a legal start-position bestmove.
+    - Each protocol phase owns an independent bounded deadline. Time spent in
+      UCI discovery cannot consume the readiness, runtime-status, or first-move
+      budget, and cold model/provider initialization after option application
+      uses the longer ready-after-options bound without weakening later checks.
     - Probe failure is returned with its stable failure code and remediation
       detail and never creates a resource.
     - A probe returns the UCI-reported display name and separately reported
