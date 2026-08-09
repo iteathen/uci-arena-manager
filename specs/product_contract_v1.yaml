@@ -80,6 +80,30 @@ engine_contract:
         component-relative path; the entrypoint key itself carries no role.
       - An entrypoint name, capability, component id, filename, model label,
         or enumeration order never implies that a component is a UCI engine.
+  managed_launch_profile:
+    schema: arena_uci_engine_launch_profile_v1
+    component_capability: uci_engine_launch_profile_v1
+    rules:
+      - A component that declares the versioned launch-profile capability must
+        select one profile through its current receipt's bounded preserved
+        configuration path. Manager never interprets an unrelated component's
+        generic configuration path as this contract. The profile must bind the
+        exact verified component and UCI entrypoint before its scalar options
+        can enter the universal registration probe.
+      - Manager consumes the flat engine launch contract and does not parse or
+        synthesize provider timing, search, model, opening-book, or tablebase
+        semantics. Those remain owned by the producing engine component.
+      - A consumer of schema version 1 validates and uses its required bounded
+        fields while safely ignoring additive fields it does not understand.
+        Additive metadata cannot make a compatible profile unavailable; an
+        unknown schema or major version still fails closed.
+      - The profile state and redacted timing-evidence availability are
+        discovery metadata. Every option still must be advertised, applied,
+        and followed by readyok plus a legal bestmove before registration. A
+        qualified_timing profile additionally requires the capability-owned
+        runtime_status response to match its model, adapter, provider,
+        hardware/driver, runtime, search-core, and timing-contract identity;
+        mismatch or absence fails the probe without persisting a resource.
   naming_boundary:
     product_engine_executable: uci_arena_engine
     requirements:

@@ -911,14 +911,93 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
         ? parameters.at("uci_options")
         : parameters.value("option_overrides", json::object());
     const auto option_overrides = uci_option_overrides(raw_options);
+    json expected_runtime = nullptr;
+    if (parameters.contains("candidate_id") &&
+        parameters.at("candidate_id").is_string() &&
+        !parameters.at("candidate_id").get_ref<const std::string&>().empty() &&
+        !manager_data_root_.empty()) {
+        const std::string requested_candidate_id =
+            parameters.at("candidate_id").get<std::string>();
+        const json discovery = EngineOnboarding::discover(manager_data_root_);
+        for (const auto& candidate : discovery.at("candidates")) {
+            if (candidate.value("candidate_id", "") != requested_candidate_id ||
+                !candidate.contains("executable") ||
+                !candidate.at("executable").is_string()) {
+                continue;
+            }
+            std::error_code error;
+            if (!std::filesystem::equivalent(
+                    executable,
+                    candidate.at("executable").get<std::string>(),
+                    error) ||
+                error) {
+                continue;
+            }
+            if (candidate.contains("launch_profile") &&
+                candidate.at("launch_profile").is_object()) {
+                std::error_code working_error;
+                const bool same_working_directory =
+                    std::filesystem::equivalent(
+                        working_directory,
+                        candidate.at("working_directory").get<std::string>(),
+                        working_error) &&
+                    !working_error;
+                if (candidate.value("state", "") != "ready_to_probe" ||
+                    json(arguments) != candidate.at("arguments") ||
+                    raw_options != candidate.at("uci_options") ||
+                    !same_working_directory) {
+                    throw CommandFailure(
+                        "engine_candidate_parameters_changed",
+                        "the managed launch parameters no longer match the selected candidate; refresh discovery and probe again",
+                        409);
+                }
+                const json& launch_profile = candidate.at("launch_profile");
+                if (launch_profile.value("state", "") == "qualified_timing") {
+                    expected_runtime = launch_profile.at("expected_runtime");
+                }
+            }
+            break;
+        }
+    }
     const auto probe = adapters::UciProcess::probe(
         executable,
         working_directory,
         arguments,
         std::chrono::seconds(10),
-        option_overrides);
+        option_overrides,
+        !expected_runtime.is_null());
     if (!probe.ok) {
         throw CommandFailure("uci_probe_failed", probe.error, 422);
+    }
+    if (!expected_runtime.is_null()) {
+        if (!probe.runtime_status.has_value()) {
+            throw CommandFailure(
+                "timing_runtime_identity_unavailable",
+                "the qualified timing profile requires a typed runtime status response",
+                422);
+        }
+        const adapters::UciRuntimeStatus& observed = *probe.runtime_status;
+        const std::array<std::pair<const char*, const std::string*>, 10> fields{{
+            {"timing_contract_version", &observed.timing_contract_version},
+            {"model_id", &observed.model_id},
+            {"model_fingerprint", &observed.model_fingerprint},
+            {"adapter_id", &observed.adapter_id},
+            {"provider_requested", &observed.provider_requested},
+            {"provider_effective", &observed.provider_effective},
+            {"provider_numeric_fingerprint", &observed.provider_numeric_fingerprint},
+            {"hardware_driver_fingerprint", &observed.hardware_driver_fingerprint},
+            {"onnx_runtime_version", &observed.onnx_runtime_version},
+            {"search_core", &observed.search_core},
+        }};
+        for (const auto& [field, actual] : fields) {
+            if (expected_runtime.value(field, std::string{}) != *actual) {
+                throw CommandFailure(
+                    "timing_runtime_identity_mismatch",
+                    "the qualified timing profile does not match the probed runtime field: " +
+                        std::string(field),
+                    422);
+            }
+        }
     }
     const std::string display_name =
         parameters.value("display_name", std::string{}).empty()
@@ -1005,6 +1084,10 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
                     !model.value("input_adapter_id", "").empty()) {
                     data["default_model"] = model;
                 }
+            }
+            if (candidate.contains("launch_profile") &&
+                candidate.at("launch_profile").is_object()) {
+                data["launch_profile"] = candidate.at("launch_profile");
             }
             break;
         }

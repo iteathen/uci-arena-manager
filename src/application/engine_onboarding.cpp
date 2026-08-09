@@ -27,6 +27,8 @@ using nlohmann::json;
 constexpr std::uintmax_t max_metadata_bytes = 1024 * 1024;
 constexpr std::size_t max_receipts = 1024;
 constexpr std::size_t max_diagnostic_path_characters = 512;
+constexpr std::size_t max_engine_arguments = 32;
+constexpr std::size_t max_engine_options = 128;
 
 json read_json_bounded(const fs::path& path) {
     std::error_code error;
@@ -59,6 +61,14 @@ bool safe_relative_path(const fs::path& value) {
     return std::none_of(
         value.begin(), value.end(),
         [](const fs::path& part) { return part == "." || part == ".."; });
+}
+
+bool within(const fs::path& root, const fs::path& candidate) {
+    const fs::path relative = candidate.lexically_relative(root);
+    return !relative.empty() && !relative.is_absolute() &&
+           std::ranges::none_of(
+               relative,
+               [](const fs::path& part) { return part == ".."; });
 }
 
 fs::path lexical_absolute(const fs::path& value) {
@@ -196,6 +206,189 @@ bool usable_executable(const fs::path& value) {
     const auto observation = platform::inspect_path_no_follow(value);
     return observation.kind == platform::PathEntryKind::regular_file &&
            observation.executable;
+}
+
+bool bounded_uci_scalar(const json& value) {
+    if (value.is_boolean() || value.is_number_integer() ||
+        value.is_number_unsigned()) {
+        return true;
+    }
+    if (!value.is_string()) {
+        return false;
+    }
+    const std::string& text = value.get_ref<const std::string&>();
+    return text.size() <= 4096U &&
+           std::ranges::none_of(
+               text,
+               [](const unsigned char character) {
+                   return character == '\0' || character == '\r' ||
+                          character == '\n';
+               });
+}
+
+bool declares_capability(const json& manifest, const std::string& expected) {
+    const json capabilities = manifest.value("capabilities", json::array());
+    return capabilities.is_array() && capabilities.size() <= 128U &&
+           std::ranges::any_of(
+               capabilities,
+               [&expected](const json& capability) {
+                   return capability.is_string() && capability == expected;
+               });
+}
+
+bool bounded_identity_token(const json& value, const bool decimal_only = false) {
+    if (!value.is_string()) {
+        return false;
+    }
+    const std::string& text = value.get_ref<const std::string&>();
+    return !text.empty() && text.size() <= 128U &&
+           std::ranges::all_of(
+               text,
+               [decimal_only](const unsigned char character) {
+                   return decimal_only
+                       ? std::isdigit(character) != 0
+                       : std::isalnum(character) != 0 || character == '_' ||
+                             character == '-' || character == '.';
+               });
+}
+
+json validated_managed_launch_profile(
+    const json& receipt,
+    const fs::path& active_root,
+    const fs::path& executable) {
+    if (!receipt.contains("configuration_path") ||
+        !receipt.at("configuration_path").is_string() ||
+        receipt.at("configuration_path").get_ref<const std::string&>().empty()) {
+        return nullptr;
+    }
+    const auto data_paths = receipt.value("data_paths", json::array());
+    if (!data_paths.is_array() || data_paths.empty() || data_paths.size() > 16U) {
+        throw std::runtime_error(
+            "managed launch profile has no bounded preserved data root");
+    }
+    const fs::path configuration = normalized_absolute(
+        receipt.at("configuration_path").get<std::string>());
+    bool bounded = false;
+    for (const auto& value : data_paths) {
+        if (!value.is_string()) {
+            throw std::runtime_error(
+                "managed launch profile data root is malformed");
+        }
+        const fs::path data_root = normalized_absolute(value.get<std::string>());
+        if (within(data_root, configuration)) {
+            bounded = true;
+            break;
+        }
+    }
+    std::error_code error;
+    if (!bounded || !fs::is_regular_file(configuration, error) || error ||
+        fs::is_symlink(configuration, error) || error) {
+        throw std::runtime_error(
+            "managed launch profile is unavailable outside its preserved data root");
+    }
+    const json profile = read_json_bounded(configuration);
+    if (!profile.is_object() ||
+        profile.value("schema", "") != "arena_uci_engine_launch_profile_v1" ||
+        profile.value("schema_version", 0) != 1 ||
+        !profile.contains("component") ||
+        !profile.at("component").is_object() ||
+        !profile.contains("engine") || !profile.at("engine").is_object() ||
+        !profile.contains("state") || !profile.at("state").is_string() ||
+        !profile.contains("enabled") || !profile.at("enabled").is_boolean() ||
+        !profile.contains("uci_options") ||
+        !profile.at("uci_options").is_object() ||
+        profile.at("uci_options").size() > max_engine_options ||
+        !profile.contains("expected_runtime") ||
+        !(profile.at("expected_runtime").is_null() ||
+          profile.at("expected_runtime").is_object()) ||
+        !profile.contains("evidence") || !profile.at("evidence").is_object() ||
+        !profile.contains("knowledge") || !profile.at("knowledge").is_object() ||
+        !profile.contains("diagnostics") ||
+        !profile.at("diagnostics").is_array() ||
+        profile.at("diagnostics").size() > 32U) {
+        throw std::runtime_error("managed launch profile contract is invalid");
+    }
+    const std::string state = profile.at("state").get<std::string>();
+    if ((state != "conservative" && state != "qualified_timing") ||
+        !profile.at("enabled").get<bool>()) {
+        throw std::runtime_error("managed launch profile state is unavailable");
+    }
+    const json& expected_runtime = profile.at("expected_runtime");
+    if (state == "conservative" && !expected_runtime.is_null()) {
+        throw std::runtime_error(
+            "conservative launch profile invents qualified runtime identity");
+    }
+    if (state == "qualified_timing") {
+        static constexpr std::array<const char*, 7> token_fields{
+            "timing_contract_version",
+            "model_id",
+            "adapter_id",
+            "provider_requested",
+            "provider_effective",
+            "onnx_runtime_version",
+            "search_core",
+        };
+        static constexpr std::array<const char*, 3> fingerprint_fields{
+            "model_fingerprint",
+            "provider_numeric_fingerprint",
+            "hardware_driver_fingerprint",
+        };
+        if (!expected_runtime.is_object() ||
+            std::ranges::any_of(
+                token_fields,
+                [&expected_runtime](const char* field) {
+                    return !expected_runtime.contains(field) ||
+                           !bounded_identity_token(expected_runtime.at(field));
+                }) ||
+            std::ranges::any_of(
+                fingerprint_fields,
+                [&expected_runtime](const char* field) {
+                    return !expected_runtime.contains(field) ||
+                           !bounded_identity_token(
+                               expected_runtime.at(field), true);
+                })) {
+            throw std::runtime_error(
+                "qualified launch profile runtime identity is incomplete");
+        }
+    }
+    const json& component = profile.at("component");
+    const json& engine = profile.at("engine");
+    if (component.value("id", "") != receipt.value("component_id", "") ||
+        component.value("version", "") !=
+            receipt.value("component_version", "") ||
+        !component.contains("root") || !component.at("root").is_string() ||
+        normalized_absolute(component.at("root").get<std::string>()) != active_root ||
+        !engine.contains("executable") ||
+        !engine.at("executable").is_string() ||
+        normalized_absolute(engine.at("executable").get<std::string>()) != executable ||
+        !engine.contains("working_directory") ||
+        !engine.at("working_directory").is_string() ||
+        normalized_absolute(engine.at("working_directory").get<std::string>()) !=
+            active_root ||
+        !engine.contains("arguments") || !engine.at("arguments").is_array() ||
+        engine.at("arguments").size() > max_engine_arguments) {
+        throw std::runtime_error(
+            "managed launch profile does not bind the installed component identity");
+    }
+    for (const auto& argument : engine.at("arguments")) {
+        if (!argument.is_string() ||
+            !bounded_uci_scalar(argument)) {
+            throw std::runtime_error("managed launch argument is invalid");
+        }
+    }
+    for (const auto& [name, value] : profile.at("uci_options").items()) {
+        if (name.empty() || name.size() > 128U ||
+            !std::ranges::all_of(
+                name,
+                [](const unsigned char character) {
+                    return std::isalnum(character) != 0 || character == ' ' ||
+                           character == '_' || character == '-';
+                }) ||
+            !bounded_uci_scalar(value)) {
+            throw std::runtime_error("managed launch UCI option is invalid");
+        }
+    }
+    return profile;
 }
 
 std::string path_key(const fs::path& value) {
@@ -394,6 +587,54 @@ void append_receipt_candidates(
                             };
                         }
                     }
+                }
+            }
+            if (declares_capability(
+                    manifest, "uci_engine_launch_profile_v1")) {
+                try {
+                    const json launch_profile = validated_managed_launch_profile(
+                        receipt,
+                        active_root,
+                        normalized_absolute(executable));
+                    if (launch_profile.is_null()) {
+                        throw std::runtime_error(
+                            "managed launch profile is not configured");
+                    }
+                    metadata["arguments"] =
+                        launch_profile.at("engine").at("arguments");
+                    metadata["uci_options"] =
+                        launch_profile.at("uci_options");
+                    json timing{{"available", false}};
+                    const json& evidence = launch_profile.at("evidence");
+                    if (evidence.contains("timing_profile") &&
+                        evidence.at("timing_profile").is_object()) {
+                        const json& profile = evidence.at("timing_profile");
+                        timing = {
+                            {"available", true},
+                            {"schema", profile.value("schema", "")},
+                            {"identity_sha256",
+                             profile.value("identity_sha256", "")},
+                        };
+                    }
+                    metadata["launch_profile"] = {
+                        {"schema", "arena_uci_engine_launch_profile_v1"},
+                        {"state", launch_profile.at("state")},
+                        {"timing_profile", std::move(timing)},
+                        {"expected_runtime",
+                         launch_profile.at("expected_runtime")},
+                    };
+                } catch (const std::exception&) {
+                    metadata["state"] = "unavailable";
+                    metadata["uci_options"] = json::object();
+                    metadata["issues"] = json::array({
+                        {
+                            {"code", "engine_launch_profile_invalid"},
+                            {"detail",
+                             "The managed launch profile does not match this "
+                             "verified Engine installation. Repair the suite "
+                             "before registering it."},
+                        },
+                    });
                 }
             }
             add_candidate(

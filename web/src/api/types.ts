@@ -111,6 +111,28 @@ export interface EngineCandidate {
     input_adapter_id: string
     root: string
   }
+  launch_profile?: {
+    schema: 'arena_uci_engine_launch_profile_v1'
+    state: 'conservative' | 'qualified_timing'
+    timing_profile: {
+      available: boolean
+      schema?: string
+      identity_sha256?: string
+    }
+    expected_runtime: null | {
+      timing_contract_version: string
+      model_id: string
+      model_fingerprint: string
+      adapter_id: string
+      provider_requested: string
+      provider_effective: string
+      provider_numeric_fingerprint: string
+      hardware_driver_fingerprint: string
+      onnx_runtime_version: string
+      search_core: string
+      [key: string]: unknown
+    }
+  }
   fingerprint?: string
   issues: Array<{ code: string; detail: string }>
 }

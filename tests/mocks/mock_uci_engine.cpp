@@ -62,6 +62,12 @@ int main(int argc, char** argv) {
                 std::cout << "info string model loaded:backend:onnx:path:fixture:fingerprint:8104116015256418347:provider:cpu:provider_numeric_fingerprint:5805769137532863231\n";
             }
             std::cout << "readyok\n" << std::flush;
+        } else if (line == "runtime_status") {
+            std::cout
+                << "info string runtime_status_v1 "
+                << R"({"schema":"uci_runtime_status_v1","timing_contract_version":"persistent_mcgs_relative_clock_temporal_v4","model_loaded":true,"model_id":"example_model_v1","model_fingerprint":"8104116015256418347","adapter_id":"dense_planes_v1","provider_requested":"cpu","provider_effective":"cpu","provider_numeric_fingerprint":"5805769137532863231","hardware_driver_fingerprint":"15113055170282736143","onnx_runtime_version":"1.24.4","search_core_configured":"mcgs"})"
+                << '\n'
+                << std::flush;
         } else if (line == "setoption name UCI_Chess960 value true") {
             chess960_enabled = true;
         } else if (line.starts_with("position ")) {

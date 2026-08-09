@@ -114,7 +114,7 @@ export default function App() {
       case 'services':
         return <ServicesPage navigate={navigate} />
       case 'engines':
-        return <EnginesPage />
+        return <EnginesPage navigate={navigate} />
       case 'planner':
         return <MatchPlannerPage navigate={navigate} />
       case 'bots':

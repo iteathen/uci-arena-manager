@@ -17,7 +17,12 @@
 TEST_CASE("UCI probe discovers identity options and a legal bestmove") {
     const std::filesystem::path executable = ARENA_MOCK_UCI_PATH;
     const auto result = arena::adapters::UciProcess::probe(
-        executable, executable.parent_path(), {}, std::chrono::seconds(5));
+        executable,
+        executable.parent_path(),
+        {},
+        std::chrono::seconds(5),
+        {},
+        true);
     REQUIRE(result.ok);
     REQUIRE(result.engine_name == "Arena Mock Engine");
     REQUIRE(result.engine_author == "UCI Arena Manager");
@@ -31,6 +36,12 @@ TEST_CASE("UCI probe discovers identity options and a legal bestmove") {
     REQUIRE(result.runtime_model_fingerprint == "8104116015256418347");
     REQUIRE(result.runtime_provider == "cpu");
     REQUIRE(result.runtime_provider_fingerprint == "5805769137532863231");
+    REQUIRE(result.runtime_status.has_value());
+    REQUIRE(result.runtime_status->model_id == "example_model_v1");
+    REQUIRE(result.runtime_status->adapter_id == "dense_planes_v1");
+    REQUIRE(result.runtime_status->hardware_driver_fingerprint ==
+            "15113055170282736143");
+    REQUIRE(result.runtime_status->onnx_runtime_version == "1.24.4");
 }
 
 TEST_CASE("UCI probe rejects an option the engine did not advertise") {
@@ -66,8 +77,11 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
 #endif
     fs::create_directories(executable.parent_path());
     const fs::path model_root = active_root / "models" / "default";
+    const fs::path workspace = root / "workspace" / "uci-arena-engine";
+    const fs::path configuration = workspace / "manager-config.json";
     fs::create_directories(model_root);
     fs::create_directories(data_root / "receipts");
+    fs::create_directories(workspace);
     fs::copy_file(
         ARENA_MOCK_UCI_PATH,
         executable,
@@ -95,6 +109,7 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                           {"entrypoint", "uci"}}},
                     },
                 })},
+               {"capabilities", {"uci_engine_launch_profile_v1"}},
                {"default_model",
                 {{"model_id", "example_model_v1"},
                  {"display_name", "Example Model"},
@@ -112,6 +127,40 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                 })},
            }
                .dump(2);
+    json launch_profile = {
+        {"schema", "arena_uci_engine_launch_profile_v1"},
+        {"schema_version", 1},
+        {"component",
+         {{"id", "uci_arena.engine"},
+          {"version", "1.2.3"},
+          {"root", fs::weakly_canonical(active_root).string()}}},
+        {"engine",
+         {{"executable", fs::weakly_canonical(executable).string()},
+          {"working_directory", fs::weakly_canonical(active_root).string()},
+          {"arguments", {"--require-model-root", model_root.string()}}}},
+        {"state", "qualified_timing"},
+        {"enabled", true},
+        {"uci_options", {{"ModelRoot", fs::weakly_canonical(model_root).string()}}},
+        {"expected_runtime",
+         {{"timing_contract_version",
+           "persistent_mcgs_relative_clock_temporal_v4"},
+          {"model_id", "example_model_v1"},
+          {"model_fingerprint", "8104116015256418347"},
+          {"adapter_id", "dense_planes_v1"},
+          {"provider_requested", "cpu"},
+          {"provider_effective", "cpu"},
+          {"provider_numeric_fingerprint", "5805769137532863231"},
+          {"hardware_driver_fingerprint", "15113055170282736143"},
+          {"onnx_runtime_version", "1.24.4"},
+          {"search_core", "mcgs"}}},
+        {"evidence",
+         {{"timing_profile",
+           {{"schema", "uci_time_profile_v3"},
+            {"identity_sha256", "sha256:fixture"}}}}},
+        {"knowledge", json::object()},
+        {"diagnostics", json::array()},
+    };
+    std::ofstream(configuration) << launch_profile.dump(2);
     std::ofstream(data_root / "receipts" / "uci_arena.engine.json")
         << json{
                {"schema", "arena_install_receipt_v1"},
@@ -121,6 +170,8 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                {"state", "installed_managed"},
                {"active_root", active_root.string()},
                {"artifact_sha256", std::string(64, 'a')},
+               {"data_paths", {workspace.string()}},
+               {"configuration_path", configuration.string()},
            }
                .dump(2);
 
@@ -161,7 +212,7 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                          {"display_name", "UCI Arena Engine"},
                          {"executable", executable.string()},
                          {"working_directory",
-                          executable.parent_path().string()},
+                          active_root.string()},
                          {"arguments",
                           {"--require-model-root", model_root.string()}},
                          {"uci_options", candidate_options},
@@ -210,6 +261,12 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
         REQUIRE_FALSE(forged.contains("component_version"));
         REQUIRE_FALSE(forged.contains("recommended"));
         REQUIRE_FALSE(forged.contains("default_model"));
+
+        launch_profile["expected_runtime"]["hardware_driver_fingerprint"] =
+            "15113055170282736144";
+        std::ofstream(configuration, std::ios::trunc)
+            << launch_profile.dump(2);
+        REQUIRE_THROWS(registration(candidate_id));
     }
 
     fs::remove_all(root);

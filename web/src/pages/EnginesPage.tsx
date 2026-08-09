@@ -37,7 +37,7 @@ function registrationParameters(candidate: EngineCandidate) {
   }
 }
 
-export function EnginesPage() {
+export function EnginesPage({ navigate }: { navigate: (page: string) => void }) {
   const queryClient = useQueryClient()
   const [scanRoot, setScanRoot] = useState('')
   const engines = useQuery({
@@ -278,6 +278,29 @@ export function EnginesPage() {
                           Default model: {candidate.default_model.display_name} ·{' '}
                           {candidate.default_model.input_adapter_id}
                         </Text>
+                      )}
+                      {candidate.launch_profile && (
+                        <Alert
+                          color={candidate.launch_profile.state === 'qualified_timing' ? 'teal' : 'yellow'}
+                          title={candidate.launch_profile.state === 'qualified_timing'
+                            ? 'Qualified timing profile selected'
+                            : 'Conservative timing defaults active'}
+                        >
+                          <Stack gap="xs">
+                            <Text size="sm">
+                              {candidate.launch_profile.state === 'qualified_timing'
+                                ? 'The Engine-owned profile includes qualified evidence and installed knowledge bindings. Test the candidate to verify its exact runtime identity.'
+                                : 'The engine remains usable, but timing evidence has not been selected for this managed profile.'}
+                            </Text>
+                            <Button
+                              variant="subtle"
+                              size="compact-sm"
+                              onClick={() => navigate('configuration')}
+                            >
+                              Manage timing evidence
+                            </Button>
+                          </Stack>
+                        </Alert>
                       )}
                       {candidate.issues.map((issue) => (
                         <Alert color="red" key={issue.code}>

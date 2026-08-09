@@ -2,6 +2,7 @@
 
 #include "arena/ports/native_process.hpp"
 
+#include <nlohmann/json.hpp>
 #include <sodium.h>
 
 #include <array>
@@ -180,6 +181,79 @@ void capture_runtime_model_identity(
     result.runtime_provider_fingerprint = provider_fingerprint;
 }
 
+UciRuntimeStatus parse_runtime_status(const std::string& line) {
+    constexpr std::string_view prefix = "info string runtime_status_v1 ";
+    if (!line.starts_with(prefix) || line.size() > 1024U * 1024U) {
+        throw std::runtime_error("engine runtime status response is missing or oversized");
+    }
+    const nlohmann::json value = nlohmann::json::parse(line.substr(prefix.size()));
+    if (!value.is_object() || value.value("schema", "") != "uci_runtime_status_v1" ||
+        value.value("model_loaded", false) != true) {
+        throw std::runtime_error("engine runtime status response is invalid");
+    }
+    const auto token = [&value](const char* name) {
+        if (!value.contains(name) || !value.at(name).is_string()) {
+            throw std::runtime_error(
+                "engine runtime status is missing field: " + std::string(name));
+        }
+        const std::string result = value.at(name).get<std::string>();
+        if (!safe_token(result, 128U)) {
+            throw std::runtime_error(
+                "engine runtime status has an invalid field: " + std::string(name));
+        }
+        return result;
+    };
+    const auto decimal = [&value](const char* name) {
+        if (!value.contains(name) || !value.at(name).is_string()) {
+            throw std::runtime_error(
+                "engine runtime status is missing field: " + std::string(name));
+        }
+        const std::string result = value.at(name).get<std::string>();
+        if (!decimal_fingerprint(result)) {
+            throw std::runtime_error(
+                "engine runtime status has an invalid field: " + std::string(name));
+        }
+        return result;
+    };
+    return UciRuntimeStatus{
+        token("timing_contract_version"),
+        token("model_id"),
+        decimal("model_fingerprint"),
+        token("adapter_id"),
+        token("provider_requested"),
+        token("provider_effective"),
+        decimal("provider_numeric_fingerprint"),
+        decimal("hardware_driver_fingerprint"),
+        token("onnx_runtime_version"),
+        token("search_core_configured"),
+    };
+}
+
+void await_runtime_status(
+    ports::NativeProcess& process,
+    const Clock::time_point deadline,
+    UciProbeResult& result) {
+    constexpr std::string_view prefix = "info string runtime_status_v1 ";
+    while (Clock::now() < deadline) {
+        const auto remaining =
+            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now());
+        const auto line = process.read_line(
+            std::min(remaining, std::chrono::milliseconds(250)));
+        if (!line) {
+            if (!process.running()) {
+                throw std::runtime_error("engine exited before runtime status");
+            }
+            continue;
+        }
+        capture_runtime_model_identity(*line, result);
+        if (line->starts_with(prefix)) {
+            result.runtime_status = parse_runtime_status(*line);
+            return;
+        }
+    }
+    throw std::runtime_error("engine timed out waiting for runtime status");
+}
+
 std::string await_token(
     ports::NativeProcess& process,
     const std::string_view token,
@@ -273,7 +347,8 @@ UciProbeResult UciProcess::probe(
     const std::filesystem::path& working_directory,
     const std::vector<std::string>& arguments,
     std::chrono::milliseconds timeout,
-    const std::map<std::string, std::string>& option_overrides) {
+    const std::map<std::string, std::string>& option_overrides,
+    const bool request_runtime_status) {
     UciProbeResult result;
     const auto started = Clock::now();
     ports::NativeProcess process;
@@ -290,6 +365,10 @@ UciProbeResult UciProcess::probe(
         }
         process.write_line("isready");
         await_token(process, "readyok", deadline, result, false);
+        if (request_runtime_status) {
+            process.write_line("runtime_status");
+            await_runtime_status(process, deadline, result);
+        }
         process.write_line("ucinewgame");
         process.write_line("position startpos");
         process.write_line("go depth 1");

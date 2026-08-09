@@ -77,6 +77,51 @@ json uci_discovery(const std::string& entrypoint) {
     });
 }
 
+json managed_launch_profile(
+    const fs::path& active_root,
+    const fs::path& executable,
+    const std::string& component_id,
+    const std::string& component_version) {
+    return {
+        {"schema", "arena_uci_engine_launch_profile_v1"},
+        {"schema_version", 1},
+        {"component",
+         {{"id", component_id},
+          {"version", component_version},
+          {"root", fs::weakly_canonical(active_root).string()}}},
+        {"engine",
+         {{"executable", fs::weakly_canonical(executable).string()},
+          {"working_directory", fs::weakly_canonical(active_root).string()},
+          {"arguments", json::array()}}},
+        {"state", "qualified_timing"},
+        {"enabled", true},
+        {"uci_options",
+         {{"ModelRoot", (active_root / "models" / "default").string()},
+          {"SearchCore", "mcgs"},
+          {"OnnxProvider", "directml"},
+          {"Threads", 3},
+          {"OwnBook", true}}},
+        {"expected_runtime",
+         {{"timing_contract_version",
+           "persistent_mcgs_relative_clock_temporal_v4"},
+          {"model_id", "example_model_v1"},
+          {"model_fingerprint", "8104116015256418347"},
+          {"adapter_id", "example_adapter_v1"},
+          {"provider_requested", "directml"},
+          {"provider_effective", "directml"},
+          {"provider_numeric_fingerprint", "3628410929205560055"},
+          {"hardware_driver_fingerprint", "15113055170282736143"},
+          {"onnx_runtime_version", "1.24.4"},
+          {"search_core", "mcgs"}}},
+        {"evidence",
+         {{"timing_profile",
+           {{"schema", "uci_time_profile_v3"},
+            {"identity_sha256", "sha256:fixture"}}}}},
+        {"knowledge", {{"opening_book", {{"status", "selected"}}}}},
+        {"diagnostics", json::array()},
+    };
+}
+
 }  // namespace
 
 TEST_CASE("installed engine receipts resolve provider-declared UCI entrypoints") {
@@ -87,8 +132,13 @@ TEST_CASE("installed engine receipts resolve provider-declared UCI entrypoints")
     const fs::path active_root = root / "components" / "engine";
     const fs::path executable =
         executable_path(active_root / "bin", "renamed-provider-engine");
+    const fs::path workspace = root / "workspace" / "example-engine";
+    const fs::path unrelated_configuration = workspace / "provider.json";
     write_executable(executable);
     fs::create_directories(data_root / "receipts");
+    fs::create_directories(workspace);
+    std::ofstream(unrelated_configuration)
+        << json{{"schema", "example_private_configuration_v1"}}.dump(2);
 
     std::ofstream(active_root / "arena-component.json")
         << json{
@@ -112,6 +162,8 @@ TEST_CASE("installed engine receipts resolve provider-declared UCI entrypoints")
                {"state", "installed_managed"},
                {"active_root", active_root.string()},
                {"artifact_sha256", std::string(64, 'a')},
+               {"data_paths", {workspace.string()}},
+               {"configuration_path", unrelated_configuration.string()},
            }
                .dump(2);
 
@@ -123,6 +175,7 @@ TEST_CASE("installed engine receipts resolve provider-declared UCI entrypoints")
     REQUIRE(candidate.at("source") == "install_receipt");
     REQUIRE(candidate.at("authority") == "verified_component_inventory");
     REQUIRE(candidate.at("state") == "ready_to_probe");
+    REQUIRE_FALSE(candidate.contains("launch_profile"));
     REQUIRE(candidate.at("component_id") == "example.engine");
     REQUIRE(
         fs::path(candidate.at("executable").get<std::string>()) ==
@@ -232,6 +285,91 @@ TEST_CASE("verified UCI Arena receipt is recommended without turning its model i
     REQUIRE(
         fs::path(candidate.at("uci_options").at("ModelRoot").get<std::string>()) ==
         fs::weakly_canonical(model_root));
+    fs::remove_all(root);
+}
+
+TEST_CASE("managed engine receipt projects its Engine-owned launch profile") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-engine-launch-profile-" + arena::domain::uuid_v7());
+    const fs::path data_root = root / "data";
+    const fs::path active_root = root / "components" / "example.engine" / "1.2.3";
+    const fs::path executable = executable_path(active_root / "bin", "renamed-engine");
+    const fs::path workspace = root / "workspace" / "example-engine";
+    const fs::path configuration = workspace / "manager-config.json";
+    write_executable(executable);
+    fs::create_directories(active_root / "models" / "default");
+    fs::create_directories(data_root / "receipts");
+    fs::create_directories(workspace);
+    std::ofstream(active_root / "arena-component.json")
+        << json{
+               {"schema", "arena_install_component_v1"},
+               {"schema_version", 1},
+               {"component_id", "example.engine"},
+               {"component_version", "1.2.3"},
+               {"entrypoints",
+                {{"uci", fs::relative(executable, active_root).generic_string()}}},
+               {"discovery", uci_discovery("uci")},
+               {"capabilities", {"uci_engine_launch_profile_v1"}},
+               {"default_model",
+                {{"model_id", "example_model_v1"},
+                 {"display_name", "Example Model"},
+                 {"input_adapter_id", "example_adapter_v1"},
+                 {"root", "models/default"}}},
+               {"files", {file_inventory_entry(active_root, executable)}},
+           }
+               .dump(2);
+    std::ofstream(configuration)
+        << managed_launch_profile(
+               active_root, executable, "example.engine", "1.2.3")
+               .dump(2);
+    std::ofstream(data_root / "receipts" / "example.engine.json")
+        << json{
+               {"schema", "arena_install_receipt_v1"},
+               {"schema_version", 1},
+               {"component_id", "example.engine"},
+               {"component_version", "1.2.3"},
+               {"state", "installed_managed"},
+               {"active_root", active_root.string()},
+               {"artifact_sha256", std::string(64, 'a')},
+               {"data_paths", {workspace.string()}},
+               {"configuration_path", configuration.string()},
+           }
+               .dump(2);
+
+    const json discovered =
+        arena::application::EngineOnboarding::discover(data_root, {}, false);
+    REQUIRE(discovered.at("candidates").size() == 1);
+    const json& candidate = discovered.at("candidates").at(0);
+    REQUIRE(candidate.at("state") == "ready_to_probe");
+    REQUIRE(candidate.at("uci_options").at("SearchCore") == "mcgs");
+    REQUIRE(candidate.at("uci_options").at("OnnxProvider") == "directml");
+    REQUIRE(candidate.at("uci_options").at("Threads") == 3);
+    REQUIRE(candidate.at("launch_profile").at("state") == "qualified_timing");
+    REQUIRE(candidate.at("launch_profile").at("timing_profile").at("available") == true);
+
+    json additive = managed_launch_profile(
+        active_root, executable, "example.engine", "1.2.3");
+    additive["producer_metadata"] = {{"capability", "future_addition"}};
+    additive["component"]["release_channel"] = "development";
+    additive["engine"]["environment"] = json::object();
+    std::ofstream(configuration, std::ios::trunc) << additive.dump(2);
+    const json compatible =
+        arena::application::EngineOnboarding::discover(data_root, {}, false);
+    REQUIRE(compatible.at("candidates").size() == 1);
+    REQUIRE(compatible.at("candidates").at(0).at("state") == "ready_to_probe");
+
+    json stale = managed_launch_profile(
+        active_root, executable, "example.engine", "1.2.2");
+    std::ofstream(configuration, std::ios::trunc) << stale.dump(2);
+    const json rejected =
+        arena::application::EngineOnboarding::discover(data_root, {}, false);
+    REQUIRE(rejected.at("candidates").size() == 1);
+    REQUIRE(rejected.at("candidates").at(0).at("state") == "unavailable");
+    REQUIRE(
+        rejected.at("candidates").at(0).at("issues").at(0).at("code") ==
+        "engine_launch_profile_invalid");
+
     fs::remove_all(root);
 }
 

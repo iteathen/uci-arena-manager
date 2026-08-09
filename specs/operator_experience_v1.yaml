@@ -89,6 +89,11 @@ engine_identity_experience:
     - Persist the verified component id, candidate source, recommendation flag,
       and separate default-model metadata on a registered candidate so planner
       ordering never depends on enumeration order or a model-branded label.
+    - Show whether a managed candidate's Engine-owned launch profile is using
+      selected qualified timing evidence or conservative defaults. Selection
+      is not described as active until the runtime-identity probe succeeds; a
+      successful generic executable probe must not conceal missing timing
+      integration.
     - Preserved registrations lacking verified component identity remain
       available as external peers but are never selected as the preferred
       product engine.
