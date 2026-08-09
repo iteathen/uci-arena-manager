@@ -1,48 +1,57 @@
-# AGENTS.md
+# UCI Arena Manager Agent Contract
 
-## Project
+UCI Arena Manager is the installed local control-plane product: service, CLI, native desktop host, web dashboard, privileged broker boundary, persistent manager state, provider adapters, and operator-facing orchestration. It does not own Engine or provider behavior.
 
-UCI Arena Manager is a standalone, spec-driven C++ control plane with an
-embedded web dashboard and native CLI.
+## Required start
 
-## Required reasoning
-
-- Use high reasoning for runtime, protocol, concurrency, security, storage,
-  installation, service control, match execution, and public contract changes.
-- Use medium reasoning for localized UI and low-blast-radius implementation.
-- Use low reasoning only for factual inspection or formatting.
-
-## Mandatory spec preflight
-
-Before substantive planning, inspection, implementation, or validation, run:
+1. Read `.agents/core-standard.md`.
+2. Before substantive planning, inspection, implementation, or validation run:
 
 ```text
-node tools/spec-preflight.mjs --task "<description>" --changed-files <paths>
+node tools/spec-preflight.mjs --task "<description>" --changed-files <likely paths>
 ```
 
-Read every returned spec. If behavior changes, update the governing spec first.
+3. Read every active spec returned by preflight and rerun when touched paths change materially.
+4. For repository-boundary, provider-registration, broker, packaging, or cross-project contract work, also read `specs/suite_lego_boundaries_v1.yaml` and the canonical suite architecture in `iteathen/uci-arena-installer`.
+
+Do not broadly preload historical provider integrations, extracted implementation paths, old plans, or unrelated specs.
+
+## Authority and reuse
+
+Current Manager specs/contracts own Manager behavior. The suite architecture owns cross-repository responsibility. Historical source layouts and provider implementation details are not authority.
+
+Before creating a new service path, provider adapter, broker action, state store, UI-side authority, process controller, or contract, search the current Manager owners/specs first. Reuse or extend the existing owner and keep one control truth.
 
 ## Architecture invariants
 
-The canonical complete-suite target is
-[`UCI_ARENA_COMPLETE_LEGO_ARCHITECTURE.md`](https://github.com/iteathen/uci-arena-installer/blob/main/docs/architecture/UCI_ARENA_COMPLETE_LEGO_ARCHITECTURE.md).
-Read `specs/suite_lego_boundaries_v1.yaml` before repository-boundary,
-provider-registration, broker, packaging, or cross-project contract work.
-
 - Domain code has no platform, SQL, HTTP, UI, or process dependencies.
-- The service is the only runtime state authority.
-- CLI, dashboard, scripts, and automations use the same control contract.
-- Engines and bots are external adapters; never import another repository.
-- Canonical chess state validates every engine move.
-- Raw engine output cannot block UCI control traffic.
+- The Manager service is the only Manager runtime state authority.
+- CLI, dashboard, scripts, desktop host, and automations use the same typed control contract rather than parallel logic.
+- Engines and provider products are external adapters; never import another repository's private source.
+- Canonical chess state validates every engine move used by Manager-owned match/control workflows.
+- Raw engine/provider output cannot block control traffic or become semantic authority.
 - The main service remains unprivileged.
-- The broker accepts only allowlisted typed actions and never arbitrary
-  commands, paths, or shell strings.
+- The privileged broker accepts only allowlisted typed actions and never arbitrary commands, shell strings, or unconstrained paths.
 - Node.js is a build/test dependency, not a production runtime dependency.
-- Secrets are never logged, returned, placed in argv, or committed.
-- Prefer small, complete vertical slices over disconnected scaffolding.
+- Secrets are never logged, returned, committed, or placed in argv. Pass only the minimum owned credential reference required by the provider contract.
+- Prefer complete vertical slices through the existing ownership model over disconnected scaffolding or duplicate control surfaces.
 
-## Execution
+Use LEGO boundaries: universal typed contracts outside, direct purpose-built implementation inside. Framework/provider/private storage types stay behind adapters.
 
-Code changes must modify tracked source, include proportionate tests, be
-committed, pushed, and opened as a draft pull request.
+## Reasoning, debugging, and validation
+
+Use high reasoning for runtime, protocol, concurrency, security, persistence, installation/service control, match execution, broker behavior, and public contract changes. Localized low-blast-radius UI work may use medium reasoning; factual inspection/formatting may use low.
+
+For ambiguous failures, preserve the original failure signature and trace raw expected-vs-actual evidence through the owning boundary before editing. Do not accept UI appearance or a passing projection test as proof that service truth is correct.
+
+Run the smallest complete preflight-selected owner/contract validation locally before broad CI. Security, persistence, broker, public compatibility, and recovery-sensitive changes retain their stronger safeguards regardless of diff size.
+
+## Execution and integration
+
+Code changes modify tracked source, include proportionate tests/evidence, are committed and pushed on a branch, and are opened as a draft PR. Do not stop at plans or pseudo-code when real implementation is requested.
+
+Before integration, inspect the complete diff, test the simplest credible failure, freeze the intended head, use exact-head guarded merge where supported, and verify target integration.
+
+## Completion
+
+Complete when the requested Manager outcome is evidenced, Manager remains the sole local control truth, provider behavior stays external, security/privilege boundaries remain intact, and no material invalid partial state remains.
