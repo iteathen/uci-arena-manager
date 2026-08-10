@@ -14,6 +14,14 @@ on:
         options:
           - windows-x86_64
           - linux-x86_64
+      runner:
+        description: Release runner authority
+        type: choice
+        required: true
+        default: github-hosted
+        options:
+          - github-hosted
+          - ephemeral-self-hosted-windows
 
 permissions:
   contents: read
@@ -24,7 +32,7 @@ concurrency:
 
 jobs:
   build-sign-verify:
-    runs-on: ${{ inputs.target == 'windows-x86_64' && 'windows-2025' || 'ubuntu-24.04' }}
+    runs-on: ${{ inputs.runner == 'ephemeral-self-hosted-windows' && fromJSON('["self-hosted","Windows","X64","ephemeral","uci-suite","manager-release"]') || (inputs.target == 'windows-x86_64' && 'windows-2025' || 'ubuntu-24.04') }}
     timeout-minutes: 75
     permissions:
       contents: write
@@ -54,11 +62,24 @@ jobs:
           if ($env:RELEASE_TARGET -notmatch '^(windows-x86_64|linux-x86_64)$') {
             throw 'unsupported target'
           }
+          if ('${{ inputs.runner }}' -eq 'ephemeral-self-hosted-windows' -and
+              $env:RELEASE_TARGET -ne 'windows-x86_64') {
+            throw 'ephemeral self-hosted release is Windows-only'
+          }
       - name: Install exact dashboard dependency closure
         run: npm ci
         working-directory: web
       - uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && inputs.runner != 'ephemeral-self-hosted-windows'
+      - name: Validate ephemeral Windows release toolchain
+        if: inputs.runner == 'ephemeral-self-hosted-windows'
+        shell: pwsh
+        run: |
+          foreach ($command in @('cl.exe', 'gh.exe', 'git.exe', 'msbuild.exe')) {
+            if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
+              throw "ephemeral release runner is missing $command"
+            }
+          }
       - name: Install pinned CMake build toolchain
         if: runner.os == 'Windows'
         shell: pwsh
@@ -97,7 +118,7 @@ jobs:
           npm test --prefix web
           npm run build --prefix web
       - name: Install exact native dependency closure
-        timeout-minutes: 45
+        timeout-minutes: 90
         shell: pwsh
         env:
           VCPKG_DEFAULT_BINARY_CACHE: ${{ runner.temp }}/vcpkg-binary-cache
@@ -120,14 +141,29 @@ jobs:
         shell: pwsh
         run: |
           $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-component-release' } else { 'linux-component-release' }
-          cmake --preset $preset "-DARENA_VERSION=$env:RELEASE_VERSION"
+          if ('${{ inputs.runner }}' -eq 'ephemeral-self-hosted-windows') {
+            $ninja = 'C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe'
+            if (-not (Test-Path -LiteralPath $ninja -PathType Leaf)) {
+              throw "ephemeral release runner is missing bundled Ninja: $ninja"
+            }
+            if (-not (Test-Path -LiteralPath $env:ARENA_MANAGER_MSVC_RUNTIME_DIRECTORY -PathType Container)) {
+              throw 'ephemeral release runner is missing its explicit MSVC runtime directory'
+            }
+            cmake --preset $preset -G Ninja `
+              "-DCMAKE_MAKE_PROGRAM=$ninja" `
+              "-DARENA_MANAGER_MSVC_RUNTIME_DIRECTORY=$env:ARENA_MANAGER_MSVC_RUNTIME_DIRECTORY" `
+              "-DARENA_VERSION=$env:RELEASE_VERSION"
+          } else {
+            cmake --preset $preset "-DARENA_VERSION=$env:RELEASE_VERSION"
+          }
           if ($LASTEXITCODE -ne 0) { throw 'Manager configure failed' }
       - name: Build exact Manager source
         timeout-minutes: 30
         shell: pwsh
         run: |
           $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-component-release' } else { 'linux-component-release' }
-          cmake --build --preset $preset --clean-first --parallel 4
+          $parallel = if ('${{ inputs.runner }}' -eq 'ephemeral-self-hosted-windows') { 1 } else { 4 }
+          cmake --build --preset $preset --clean-first --parallel $parallel
           if ($LASTEXITCODE -ne 0) { throw 'Manager build failed' }
       - name: Verify exact Manager native tests
         timeout-minutes: 10

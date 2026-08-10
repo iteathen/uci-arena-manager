@@ -136,9 +136,27 @@ test("only the manual Manager component workflow uploads signed candidate assets
     new URL("../../.github/workflows/component-release.yml", import.meta.url),
     "utf8",
   );
+  const cmake = readFileSync(
+    new URL("../../CMakeLists.txt", import.meta.url),
+    "utf8",
+  );
   assert.match(workflow, /^name:\s*Manager component candidate$/mu);
   assert.match(workflow, /^on:\s*\n  workflow_dispatch:/mu);
   assert.doesNotMatch(workflow, /^ {2}(?:pull_request|push|merge_group|schedule):/mu);
+  assert.match(workflow, /default:\s*github-hosted/u);
+  assert.match(
+    workflow,
+    /\["self-hosted","Windows","X64","ephemeral","uci-suite","manager-release"\]/u,
+  );
+  assert.match(workflow, /ephemeral self-hosted release is Windows-only/u);
+  assert.match(workflow, /\('cl\.exe', 'gh\.exe', 'git\.exe', 'msbuild\.exe'\)/u);
+  assert.match(workflow, /cmake --preset \$preset -G Ninja/u);
+  assert.match(workflow, /Microsoft\\CMake\\Ninja\\ninja\.exe/u);
+  assert.match(workflow, /-DARENA_MANAGER_MSVC_RUNTIME_DIRECTORY=/u);
+  assert.match(cmake, /set\(ARENA_MANAGER_MSVC_RUNTIME_DIRECTORY "" CACHE PATH/u);
+  assert.match(cmake, /list\(APPEND ARENA_MANAGER_RUNTIME_SEARCH_DIRECTORIES/u);
+  assert.match(workflow, /ephemeral-self-hosted-windows'\) \{ 1 \} else \{ 4 \}/u);
+  assert.doesNotMatch(workflow, /self-hosted.*linux/iu);
   assert.match(workflow, /sigstore\/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6/u);
   assert.match(workflow, /cosign-release:\s*v3\.0\.6/u);
   assert.match(workflow, /sigstore-provenance\.mjs prepare-provider/u);

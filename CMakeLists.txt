@@ -181,9 +181,21 @@ else()
   target_compile_options(uci-arena-manager PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+set(ARENA_MANAGER_MSVC_RUNTIME_DIRECTORY "" CACHE PATH
+  "Explicit MSVC redistributable runtime directory for component staging")
+
 if(WIN32)
   set(ARENA_MANAGER_RUNTIME_SEARCH_DIRECTORIES
     "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+  if(ARENA_MANAGER_MSVC_RUNTIME_DIRECTORY)
+    if(NOT IS_DIRECTORY "${ARENA_MANAGER_MSVC_RUNTIME_DIRECTORY}")
+      message(FATAL_ERROR
+        "ARENA_MANAGER_MSVC_RUNTIME_DIRECTORY is not a directory: "
+        "${ARENA_MANAGER_MSVC_RUNTIME_DIRECTORY}")
+    endif()
+    list(APPEND ARENA_MANAGER_RUNTIME_SEARCH_DIRECTORIES
+      "${ARENA_MANAGER_MSVC_RUNTIME_DIRECTORY}")
+  endif()
 else()
   set(ARENA_MANAGER_RUNTIME_SEARCH_DIRECTORIES
     "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib")
