@@ -402,7 +402,6 @@ TEST_CASE("qualified runtime identity is revalidated before game admission") {
         REQUIRE(existing.has_value());
         arena::ports::ResourceRecord updated = *existing;
         json engine_data = json::parse(updated.data_json);
-        engine_data["timing_model_compatibility"] = "class_io_v1";
         engine_data["launch_profile"] = {
             {"schema", "arena_uci_engine_launch_profile_v1"},
             {"state", "qualified_timing"},
@@ -410,10 +409,8 @@ TEST_CASE("qualified runtime identity is revalidated before game admission") {
             {"expected_runtime",
              {
                  {"timing_contract_version", "persistent_mcgs_relative_clock_temporal_v4"},
-                 {"model_id", "qualified_model_checkpoint"},
-                 {"model_fingerprint", "8104116015256418348"},
-                 {"model_class", "residual_conv_trunk"},
-                 {"model_io_contract_fingerprint", "7000"},
+                 {"model_id", "example_model_v1"},
+                 {"model_fingerprint", "8104116015256418347"},
                  {"adapter_id", "dense_planes_v1"},
                  {"provider_requested", "cpu"},
                  {"provider_effective", "cpu"},

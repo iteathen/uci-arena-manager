@@ -371,12 +371,7 @@ void validate_competition_engines(
             }
             if (const auto mismatch =
                     EngineOnboarding::runtime_identity_mismatch(
-                        expected_runtime,
-                        *probe.runtime_status,
-                        registered.value("timing_model_compatibility", "") ==
-                                "class_io_v1"
-                            ? EngineOnboarding::TimingModelCompatibility::class_io
-                            : EngineOnboarding::TimingModelCompatibility::exact_model)) {
+                        expected_runtime, *probe.runtime_status)) {
                 throw std::runtime_error(
                     "qualified engine runtime identity changed before game admission for " +
                     engine_id + ": " + *mismatch);

@@ -48,11 +48,7 @@ arena daemon status
 `--model-root` is passed only through the engine-advertised `ModelRoot` UCI
 option. For a registered UCI Arena Engine, `engine set-model` performs the same
 revision-checked full refresh as the Engines dashboard and leaves the existing
-registration unchanged if the selected model fails its probe. Qualified timing
-may carry across a checkpoint change only when Engine reports the same model
-class and inspected input/output contract plus identical search,
-provider/runtime, hardware, and timing identity. A model-class, I/O-contract,
-or MCGS/Minimax change requires new timing.
+registration unchanged if the selected model fails its probe.
 
 On Linux, the same reference is installed as `arena(1)`:
 

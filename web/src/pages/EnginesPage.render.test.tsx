@@ -116,7 +116,6 @@ describe('Engine inventory loading state', () => {
 
     fireEvent.change(modelRoot, { target: { value: 'C:\\models\\custom' } })
     expect(screen.getByText('Custom model selected')).toBeTruthy()
-    expect(screen.getByText(/Timing carries over only when the probe reports/)).toBeTruthy()
     expect(screen.getByText('Reset to packaged default')).toBeTruthy()
   })
 })

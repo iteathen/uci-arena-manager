@@ -130,29 +130,4 @@ describe('managed Engine registration state', () => {
       'C:\\Program Files\\UCI Arena\\models\\default',
     )
   })
-
-  it('preserves qualified timing for a class and IO compatible model probe', () => {
-    const qualified = candidate()
-    qualified.launch_profile = {
-      schema: 'arena_uci_engine_launch_profile_v1',
-      state: 'qualified_timing',
-      timing_profile: { available: true },
-      expected_runtime: {
-        timing_contract_version: 'timing-v1',
-        model_id: 'resnet-a',
-        model_fingerprint: '1001',
-        model_class: 'residual_conv_trunk',
-        model_io_contract_fingerprint: '2002',
-        adapter_id: 'dense_planes_v1',
-        provider_requested: 'cpu',
-        provider_effective: 'cpu',
-        provider_numeric_fingerprint: '3003',
-        hardware_driver_fingerprint: '4004',
-        onnx_runtime_version: '1.24.4',
-        search_core: 'mcgs',
-      },
-    }
-    const selected = candidateWithModelRoot(qualified, 'C:\\models\\resnet-b')
-    expect(selected.launch_profile).toEqual(qualified.launch_profile)
-  })
 })

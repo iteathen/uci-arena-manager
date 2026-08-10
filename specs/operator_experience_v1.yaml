@@ -89,13 +89,9 @@ engine_identity_experience:
       keep the packaged default label separate, and provide a reset-to-default
       action. Test, register, and refresh use the selected path through the
       normal full probe rather than mutating React-only state.
-    - Explain that a custom model selection retains packaged timing only when
-      the full probe reports the same Engine-owned model class and inspected
-      I/O contract plus identical search/runtime timing identity. Class, I/O,
-      search-core, provider/runtime, hardware/driver, or timing-contract drift
-      removes timing carry-over. A failed selection leaves the prior registered
-      model authoritative and reports the backend diagnostic beside that
-      candidate.
+    - Explain that a custom model selection does not retain packaged qualified
+      timing evidence. A failed selection leaves the prior registered model
+      authoritative and reports the backend diagnostic beside that candidate.
     - Put the receipt-verified uci_arena.engine candidate first and offer one
       explicit Use this engine action; that action performs the complete
       bounded UCI interrogation before creating the registration and does not

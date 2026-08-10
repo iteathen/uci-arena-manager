@@ -215,35 +215,10 @@ UciRuntimeStatus parse_runtime_status(const std::string& line) {
         }
         return result;
     };
-    const auto optional_token = [&value](const char* name) {
-        if (!value.contains(name)) {
-            return std::string{};
-        }
-        if (!value.at(name).is_string()) {
-            throw std::runtime_error(
-                "engine runtime status has an invalid field: " + std::string(name));
-        }
-        const std::string result = value.at(name).get<std::string>();
-        if (!safe_token(result, 128U)) {
-            throw std::runtime_error(
-                "engine runtime status has an invalid field: " + std::string(name));
-        }
-        return result;
-    };
-    const auto optional_decimal = [&optional_token](const char* name) {
-        const std::string result = optional_token(name);
-        if (!result.empty() && !decimal_fingerprint(result)) {
-            throw std::runtime_error(
-                "engine runtime status has an invalid field: " + std::string(name));
-        }
-        return result;
-    };
     return UciRuntimeStatus{
         token("timing_contract_version"),
         token("model_id"),
         decimal("model_fingerprint"),
-        optional_token("model_class"),
-        optional_decimal("model_io_contract_fingerprint"),
         token("adapter_id"),
         token("provider_requested"),
         token("provider_effective"),

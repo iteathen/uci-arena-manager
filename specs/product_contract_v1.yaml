@@ -119,16 +119,10 @@ engine_contract:
         only and never deletes installed or preserved component data.
         Provider-output adoption never silently rewrites a registered engine.
       - An operator-selected ModelRoot keeps every other Engine-owned launch
-        argument and UCI option exact. Packaged timing may carry to a different
-        checkpoint only when runtime_status reports the exact packaged model
-        timing class, inspected I/O-contract fingerprint, adapter, provider,
-        hardware/driver, runtime, search core, and timing contract. Model id
-        and content fingerprint may differ and remain provenance. Missing
-        compatibility fields permits conservative selection without timing;
-        an explicitly reported timing-affecting mismatch rejects selection and
-        leaves the prior registered model authoritative. Returning to the
-        packaged ModelRoot restores exact identity matching after the normal
-        full managed-candidate probe.
+        argument and UCI option exact. It does not inherit the packaged
+        qualified-timing claim or expected runtime identity; returning to the
+        packaged ModelRoot restores those claims only after the normal full
+        managed-candidate probe succeeds.
   naming_boundary:
     product_engine_executable: uci_arena_engine
     requirements:
