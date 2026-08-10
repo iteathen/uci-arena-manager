@@ -15,6 +15,7 @@ int main(int argc, char** argv) {
     bool require_chess960 = false;
     unsigned required_moves_to_go = 0;
     std::string required_model_root;
+    std::filesystem::path selected_model_root;
     bool allow_model_root = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -59,6 +60,7 @@ int main(int argc, char** argv) {
         } else if (line.starts_with("setoption name ModelRoot value ")) {
             const std::filesystem::path supplied_model_root = line.substr(
                 std::string("setoption name ModelRoot value ").size());
+            selected_model_root = supplied_model_root;
             if (allow_model_root) {
                 model_root_ready = std::filesystem::is_directory(supplied_model_root);
             } else {
@@ -75,13 +77,32 @@ int main(int argc, char** argv) {
             }
             if ((!required_model_root.empty() || allow_model_root) &&
                 model_root_ready) {
-                std::cout << "info string model loaded:backend:onnx:path:fixture:fingerprint:8104116015256418347:provider:cpu:provider_numeric_fingerprint:5805769137532863231\n";
+                const bool alternate =
+                    selected_model_root.filename() == "operator-selected";
+                std::cout
+                    << "info string model loaded:backend:onnx:path:fixture:fingerprint:"
+                    << (alternate
+                            ? "8104116015256418348"
+                            : "8104116015256418347")
+                    << ":provider:cpu:provider_numeric_fingerprint:5805769137532863231\n";
             }
             std::cout << "readyok\n" << std::flush;
         } else if (line == "runtime_status") {
+            const std::string selected_name = selected_model_root.filename().string();
+            const bool alternate = selected_name == "operator-selected";
+            const bool different_class = selected_name == "different-class";
+            const bool different_io = selected_name == "different-io";
             std::cout
                 << "info string runtime_status_v1 "
-                << R"({"schema":"uci_runtime_status_v1","timing_contract_version":"persistent_mcgs_relative_clock_temporal_v4","model_loaded":true,"model_id":"example_model_v1","model_fingerprint":"8104116015256418347","adapter_id":"dense_planes_v1","provider_requested":"cpu","provider_effective":"cpu","provider_numeric_fingerprint":"5805769137532863231","hardware_driver_fingerprint":"15113055170282736143","onnx_runtime_version":"1.24.4","search_core_configured":"mcgs"})"
+                << R"({"schema":"uci_runtime_status_v1","timing_contract_version":"persistent_mcgs_relative_clock_temporal_v4","model_loaded":true,"model_id":")"
+                << (alternate ? "example_model_v2" : "example_model_v1")
+                << R"(","model_fingerprint":")"
+                << (alternate ? "8104116015256418348" : "8104116015256418347")
+                << R"(","model_class":")"
+                << (different_class ? "square_transformer_encoder" : "residual_conv_trunk")
+                << R"(","model_io_contract_fingerprint":")"
+                << (different_io ? "7100" : "7000")
+                << R"(","adapter_id":"dense_planes_v1","provider_requested":"cpu","provider_effective":"cpu","provider_numeric_fingerprint":"5805769137532863231","hardware_driver_fingerprint":"15113055170282736143","onnx_runtime_version":"1.24.4","search_core_configured":"mcgs"})"
                 << '\n'
                 << std::flush;
         } else if (line == "setoption name UCI_Chess960 value true") {

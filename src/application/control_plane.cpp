@@ -995,6 +995,7 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
     json expected_runtime = nullptr;
     json selected_candidate = nullptr;
     bool model_root_overridden = false;
+    bool class_io_timing_compatibility = false;
     if (parameters.contains("candidate_id") &&
         parameters.at("candidate_id").is_string() &&
         !parameters.at("candidate_id").get_ref<const std::string&>().empty() &&
@@ -1042,9 +1043,20 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
                         409);
                 }
                 const json& launch_profile = candidate.at("launch_profile");
-                if (!model_root_overridden &&
-                    launch_profile.value("state", "") == "qualified_timing") {
-                    expected_runtime = launch_profile.at("expected_runtime");
+                if (launch_profile.value("state", "") == "qualified_timing") {
+                    const json& candidate_runtime =
+                        launch_profile.at("expected_runtime");
+                    if (!model_root_overridden) {
+                        expected_runtime = candidate_runtime;
+                    } else if (
+                        candidate_runtime.is_object() &&
+                        !candidate_runtime.value("model_class", "").empty() &&
+                        !candidate_runtime
+                             .value("model_io_contract_fingerprint", "")
+                             .empty()) {
+                        expected_runtime = candidate_runtime;
+                        class_io_timing_compatibility = true;
+                    }
                 }
             }
             break;
@@ -1085,7 +1097,11 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
                 422);
         }
         if (const auto mismatch = EngineOnboarding::runtime_identity_mismatch(
-                expected_runtime, *probe.runtime_status)) {
+                expected_runtime,
+                *probe.runtime_status,
+                class_io_timing_compatibility
+                    ? EngineOnboarding::TimingModelCompatibility::class_io
+                    : EngineOnboarding::TimingModelCompatibility::exact_model)) {
             throw CommandFailure(
                 "timing_runtime_identity_mismatch",
                 "the qualified timing profile does not match the probed runtime field: " +
@@ -1154,10 +1170,13 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
                 data["default_model"] = model;
             }
         }
-        if (!model_root_overridden &&
+        if ((!model_root_overridden || class_io_timing_compatibility) &&
             selected_candidate.contains("launch_profile") &&
             selected_candidate.at("launch_profile").is_object()) {
             data["launch_profile"] = selected_candidate.at("launch_profile");
+        }
+        if (model_root_overridden && class_io_timing_compatibility) {
+            data["timing_model_compatibility"] = "class_io_v1";
         }
     }
 
@@ -2174,75 +2193,95 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                     "register the receipt-verified UCI Arena Engine before creating an Evidence target",
                     422);
             }
-            const json& model = engine_data.at("default_model");
-            const std::string model_id = required_string(model, "model_id");
-            const std::filesystem::path relative_model_root =
-                required_string(model, "root");
-            if (relative_model_root.is_absolute() ||
-                std::ranges::any_of(
-                    relative_model_root,
-                    [](const auto& part) { return part == ".."; })) {
-                throw CommandFailure(
-                    "evidence_model_root_invalid",
-                    "the registered engine default-model root is not a safe component-relative path",
-                    422);
-            }
+            const json& packaged_model = engine_data.at("default_model");
+            const std::string packaged_model_id =
+                required_string(packaged_model, "model_id");
             const std::filesystem::path executable =
                 required_string(engine_data, "executable");
             const std::filesystem::path working_directory =
                 required_string(engine_data, "working_directory");
-            const std::filesystem::path model_root =
-                std::filesystem::weakly_canonical(
-                    working_directory / relative_model_root);
-            if (!std::filesystem::is_regular_file(executable) ||
-                !std::filesystem::is_directory(working_directory) ||
-                !std::filesystem::is_directory(model_root)) {
-                throw CommandFailure(
-                    "evidence_deployment_unavailable",
-                    "the registered engine or its default model deployment is unavailable",
-                    422);
-            }
             const json raw_options =
                 engine_data.value("option_overrides", json::object());
             auto typed_options = uci_option_overrides(raw_options);
             const auto model_root_option =
                 typed_options.find("ModelRoot");
+            std::filesystem::path model_root;
             if (model_root_option == typed_options.end()) {
-                typed_options.emplace("ModelRoot", model_root.string());
-            } else {
-                const std::filesystem::path configured_model_root =
-                    std::filesystem::path(model_root_option->second).is_absolute()
-                        ? std::filesystem::path(model_root_option->second)
-                        : working_directory / model_root_option->second;
-                std::error_code equivalent_error;
-                if (!std::filesystem::equivalent(
-                        configured_model_root,
-                        model_root,
-                        equivalent_error) ||
-                    equivalent_error) {
+                const std::filesystem::path relative_model_root =
+                    required_string(packaged_model, "root");
+                if (relative_model_root.is_absolute() ||
+                    std::ranges::any_of(
+                        relative_model_root,
+                        [](const auto& part) { return part == ".."; })) {
                     throw CommandFailure(
-                        "evidence_model_root_mismatch",
-                        "the registered engine ModelRoot does not match its verified default deployment",
+                        "evidence_model_root_invalid",
+                        "the registered engine default-model root is not a safe component-relative path",
                         422);
                 }
+                model_root = std::filesystem::weakly_canonical(
+                    working_directory / relative_model_root);
+            } else {
+                model_root = std::filesystem::weakly_canonical(
+                    std::filesystem::path(model_root_option->second).is_absolute()
+                        ? std::filesystem::path(model_root_option->second)
+                        : working_directory / model_root_option->second);
+            }
+            if (!std::filesystem::is_regular_file(executable) ||
+                !std::filesystem::is_directory(working_directory) ||
+                !std::filesystem::is_directory(model_root)) {
+                throw CommandFailure(
+                    "evidence_deployment_unavailable",
+                    "the registered engine or its selected model deployment is unavailable",
+                    422);
+            }
+            typed_options["ModelRoot"] = model_root.string();
+            json expected_runtime = nullptr;
+            if (engine_data.contains("launch_profile") &&
+                engine_data.at("launch_profile").is_object() &&
+                engine_data.at("launch_profile").value("state", "") ==
+                    "qualified_timing") {
+                expected_runtime = engine_data.at("launch_profile").value(
+                    "expected_runtime", json(nullptr));
             }
             const auto probe = adapters::UciProcess::probe(
                 executable,
                 working_directory,
                 string_array(engine_data, "arguments"),
                 adapters::UciProbeTimeouts{},
-                typed_options);
+                typed_options,
+                true);
             if (!probe.ok) {
                 throw CommandFailure("uci_probe_failed", probe.error, 422);
             }
-            if (probe.runtime_model_fingerprint.empty() ||
-                probe.runtime_provider.empty()) {
+            if (!probe.runtime_status.has_value()) {
                 throw CommandFailure(
                     "evidence_runtime_identity_unavailable",
                     "the engine passed UCI readiness but did not expose a typed runtime model identity",
                     422);
             }
-            std::string label = model.value("display_name", model_id);
+            if (!expected_runtime.is_null()) {
+                if (const auto mismatch =
+                        EngineOnboarding::runtime_identity_mismatch(
+                            expected_runtime,
+                            *probe.runtime_status,
+                            engine_data.value(
+                                "timing_model_compatibility", "") ==
+                                    "class_io_v1"
+                                ? EngineOnboarding::TimingModelCompatibility::
+                                      class_io
+                                : EngineOnboarding::TimingModelCompatibility::
+                                      exact_model)) {
+                    throw CommandFailure(
+                        "timing_runtime_identity_mismatch",
+                        "the qualified timing profile does not match the Evidence target runtime field: " +
+                            *mismatch,
+                        422);
+                }
+            }
+            const std::string model_id = probe.runtime_status->model_id;
+            std::string label = model_id == packaged_model_id
+                ? packaged_model.value("display_name", model_id)
+                : model_id;
             if (label.size() > 240) label.resize(240);
             label += " deployment";
             json effective_options = json::object();
@@ -2254,16 +2293,16 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                 "--label", label,
                 "--model-id", model_id,
                 "--model-root", model_root.string(),
-                "--model-fingerprint", probe.runtime_model_fingerprint,
+                "--model-fingerprint", probe.runtime_status->model_fingerprint,
                 "--engine", std::filesystem::absolute(executable).string(),
-                "--provider", probe.runtime_provider,
+                "--provider", probe.runtime_status->provider_effective,
                 "--uci-options-json", effective_options.dump(),
             };
-            if (!probe.runtime_provider_fingerprint.empty()) {
+            if (!probe.runtime_status->provider_numeric_fingerprint.empty()) {
                 operation_arguments.insert(
                     operation_arguments.end(),
                     {"--provider-fingerprint",
-                     probe.runtime_provider_fingerprint});
+                     probe.runtime_status->provider_numeric_fingerprint});
             }
             operation = "target_register";
         } else if (action == "service.evidence_campaign_enqueue") {

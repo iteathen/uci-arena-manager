@@ -28,6 +28,11 @@ struct EngineDiscoveryOptions final {
 
 class EngineOnboarding final {
   public:
+    enum class TimingModelCompatibility {
+        exact_model,
+        class_io,
+    };
+
     [[nodiscard]] static nlohmann::json discover(
         const std::filesystem::path& manager_data_root,
         const std::vector<std::filesystem::path>& explicit_roots = {},
@@ -37,7 +42,9 @@ class EngineOnboarding final {
     [[nodiscard]] static std::optional<std::string>
     runtime_identity_mismatch(
         const nlohmann::json& expected,
-        const adapters::UciRuntimeStatus& observed);
+        const adapters::UciRuntimeStatus& observed,
+        TimingModelCompatibility model_compatibility =
+            TimingModelCompatibility::exact_model);
 };
 
 }  // namespace arena::application

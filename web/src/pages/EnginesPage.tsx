@@ -375,7 +375,10 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
                             <Alert color="yellow" title="Custom model selected">
                               <Group justify="space-between" align="flex-start">
                                 <Text size="sm">
-                                  Packaged timing qualification will not carry over to this model.
+                                  Timing carries over only when the probe reports the same model
+                                  class and input/output contract with identical search and runtime
+                                  timing identity. Older profiles without compatibility fields select
+                                  conservatively without timing; a reported mismatch is rejected.
                                 </Text>
                                 <Button
                                   variant="subtle"

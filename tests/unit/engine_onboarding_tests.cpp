@@ -1,3 +1,4 @@
+#include "arena/adapters/uci_process.hpp"
 #include "arena/application/engine_onboarding.hpp"
 #include "arena/domain/uuid.hpp"
 
@@ -106,6 +107,8 @@ json managed_launch_profile(
            "persistent_mcgs_relative_clock_temporal_v4"},
           {"model_id", "example_model_v1"},
           {"model_fingerprint", "8104116015256418347"},
+          {"model_class", "residual_conv_trunk"},
+          {"model_io_contract_fingerprint", "7000"},
           {"adapter_id", "example_adapter_v1"},
           {"provider_requested", "directml"},
           {"provider_effective", "directml"},
@@ -123,6 +126,62 @@ json managed_launch_profile(
 }
 
 }  // namespace
+
+TEST_CASE("timing identity permits only class and IO compatible model changes") {
+    const json expected = {
+        {"timing_contract_version", "timing-v1"},
+        {"model_id", "resnet-checkpoint-a"},
+        {"model_fingerprint", "1001"},
+        {"model_class", "residual_conv_trunk"},
+        {"model_io_contract_fingerprint", "2002"},
+        {"adapter_id", "dense_planes_v1"},
+        {"provider_requested", "cpu"},
+        {"provider_effective", "cpu"},
+        {"provider_numeric_fingerprint", "3003"},
+        {"hardware_driver_fingerprint", "4004"},
+        {"onnx_runtime_version", "1.24.4"},
+        {"search_core", "mcgs"},
+    };
+    arena::adapters::UciRuntimeStatus observed;
+    observed.timing_contract_version = "timing-v1";
+    observed.model_id = "resnet-checkpoint-b";
+    observed.model_fingerprint = "1002";
+    observed.model_class = "residual_conv_trunk";
+    observed.model_io_contract_fingerprint = "2002";
+    observed.adapter_id = "dense_planes_v1";
+    observed.provider_requested = "cpu";
+    observed.provider_effective = "cpu";
+    observed.provider_numeric_fingerprint = "3003";
+    observed.hardware_driver_fingerprint = "4004";
+    observed.onnx_runtime_version = "1.24.4";
+    observed.search_core = "mcgs";
+
+    REQUIRE(
+        arena::application::EngineOnboarding::runtime_identity_mismatch(
+            expected, observed) == "model_id");
+    REQUIRE_FALSE(
+        arena::application::EngineOnboarding::runtime_identity_mismatch(
+            expected,
+            observed,
+            arena::application::EngineOnboarding::TimingModelCompatibility::
+                class_io));
+
+    observed.model_class = "square_transformer_encoder";
+    REQUIRE(
+        arena::application::EngineOnboarding::runtime_identity_mismatch(
+            expected,
+            observed,
+            arena::application::EngineOnboarding::TimingModelCompatibility::
+                class_io) == "model_class");
+    observed.model_class = "residual_conv_trunk";
+    observed.model_io_contract_fingerprint = "2003";
+    REQUIRE(
+        arena::application::EngineOnboarding::runtime_identity_mismatch(
+            expected,
+            observed,
+            arena::application::EngineOnboarding::TimingModelCompatibility::
+                class_io) == "model_io_contract_fingerprint");
+}
 
 TEST_CASE("installed engine receipts resolve provider-declared UCI entrypoints") {
     const fs::path root =

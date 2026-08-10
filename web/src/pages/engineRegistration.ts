@@ -20,13 +20,21 @@ export function candidateWithModelRoot(
   const selectedRoot = modelRoot.trim()
   if (!selectedRoot) return candidate
   const customSelection = isCustomModelRoot(candidate, selectedRoot)
+  const expectedRuntime = candidate.launch_profile?.expected_runtime
+  const canCarryTiming = candidate.launch_profile?.state === 'qualified_timing' &&
+    typeof expectedRuntime?.model_class === 'string' &&
+    Boolean(expectedRuntime.model_class) &&
+    typeof expectedRuntime.model_io_contract_fingerprint === 'string' &&
+    Boolean(expectedRuntime.model_io_contract_fingerprint)
   return {
     ...candidate,
     uci_options: {
       ...candidate.uci_options,
       ModelRoot: customSelection ? selectedRoot : packagedRoot,
     },
-    launch_profile: customSelection ? undefined : candidate.launch_profile,
+    launch_profile: customSelection && !canCarryTiming
+      ? undefined
+      : candidate.launch_profile,
   }
 }
 

@@ -108,7 +108,10 @@ arena tournament create --name "Local round robin" --format round_robin --engine
 
 `engine probe` and `engine add` also accept `--model-root PATH`. Manager sends
 the value only through an advertised `ModelRoot` UCI option and repeats the
-full probe before a selection is registered.
+full probe before a selection is registered. Qualified timing carries across a
+checkpoint change only when Engine reports the same model class and inspected
+input/output contract plus identical search, provider/runtime, hardware, and
+timing identity. Class, I/O, or MCGS/Minimax changes require new timing.
 
 ## External services
 

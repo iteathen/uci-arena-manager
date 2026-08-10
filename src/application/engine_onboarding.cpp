@@ -351,6 +351,18 @@ json validated_managed_launch_profile(
             throw std::runtime_error(
                 "qualified launch profile runtime identity is incomplete");
         }
+        const bool has_model_class = expected_runtime.contains("model_class");
+        const bool has_model_io =
+            expected_runtime.contains("model_io_contract_fingerprint");
+        if (has_model_class != has_model_io ||
+            (has_model_class &&
+             (!bounded_identity_token(expected_runtime.at("model_class")) ||
+              !bounded_identity_token(
+                  expected_runtime.at("model_io_contract_fingerprint"),
+                  true)))) {
+            throw std::runtime_error(
+                "qualified launch profile model timing compatibility is incomplete");
+        }
     }
     const json& component = profile.at("component");
     const json& engine = profile.at("engine");
@@ -1015,11 +1027,40 @@ json EngineOnboarding::discover(
 
 std::optional<std::string> EngineOnboarding::runtime_identity_mismatch(
     const json& expected,
-    const adapters::UciRuntimeStatus& observed) {
-    const std::array<std::pair<const char*, const std::string*>, 10> fields{{
-        {"timing_contract_version", &observed.timing_contract_version},
-        {"model_id", &observed.model_id},
-        {"model_fingerprint", &observed.model_fingerprint},
+    const adapters::UciRuntimeStatus& observed,
+    const TimingModelCompatibility model_compatibility) {
+    const auto mismatch = [&expected](
+        const char* field,
+        const std::string& actual) -> std::optional<std::string> {
+        if (!expected.is_object() ||
+            expected.value(field, std::string{}) != actual) {
+            return field;
+        }
+        return std::nullopt;
+    };
+    if (const auto field = mismatch(
+            "timing_contract_version", observed.timing_contract_version)) {
+        return field;
+    }
+    if (model_compatibility == TimingModelCompatibility::class_io) {
+        if (const auto field = mismatch("model_class", observed.model_class)) {
+            return field;
+        }
+        if (const auto field = mismatch(
+                "model_io_contract_fingerprint",
+                observed.model_io_contract_fingerprint)) {
+            return field;
+        }
+    } else {
+        if (const auto field = mismatch("model_id", observed.model_id)) {
+            return field;
+        }
+        if (const auto field = mismatch(
+                "model_fingerprint", observed.model_fingerprint)) {
+            return field;
+        }
+    }
+    const std::array<std::pair<const char*, const std::string*>, 7> fields{{
         {"adapter_id", &observed.adapter_id},
         {"provider_requested", &observed.provider_requested},
         {"provider_effective", &observed.provider_effective},
@@ -1029,9 +1070,8 @@ std::optional<std::string> EngineOnboarding::runtime_identity_mismatch(
         {"search_core", &observed.search_core},
     }};
     for (const auto& [field, actual] : fields) {
-        if (!expected.is_object() ||
-            expected.value(field, std::string{}) != *actual) {
-            return field;
+        if (const auto difference = mismatch(field, *actual)) {
+            return difference;
         }
     }
     return std::nullopt;

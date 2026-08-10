@@ -15,6 +15,8 @@ struct UciRuntimeStatus final {
     std::string timing_contract_version;
     std::string model_id;
     std::string model_fingerprint;
+    std::string model_class;
+    std::string model_io_contract_fingerprint;
     std::string adapter_id;
     std::string provider_requested;
     std::string provider_effective;

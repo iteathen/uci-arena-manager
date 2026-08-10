@@ -120,10 +120,17 @@ probe:
       launch profile every other argument and option remains exact, and the
       complete probe must load the selected deployment and republish its
       post-selection runtime identity before the selection can be persisted.
-    - A custom ModelRoot cannot retain the packaged qualified-timing claim or
-      its expected runtime identity. The packaged default-model label remains
-      non-authoritative provenance and is displayed separately from the
-      selected path.
+    - A custom ModelRoot retains a packaged qualified-timing claim only when
+      the Engine-owned expected runtime and post-selection runtime_status both
+      publish the same model_class and model_io_contract_fingerprint and every
+      adapter, provider/runtime, hardware/driver, search-core, and timing-
+      contract field remains exact. Model id and model fingerprint may differ
+      and remain checkpoint provenance. Missing compatibility fields select the
+      model conservatively without timing carry-over. An explicitly reported
+      compatibility mismatch rejects selection and leaves the prior registered
+      model authoritative. The packaged default-model label remains non-
+      authoritative provenance and is displayed separately from the selected
+      path.
     - A qualified_timing profile requires the declared runtime_status command
       after options and readyok. Its typed identity must match every expected
       model, adapter, provider, provider numeric, hardware/driver, runtime,
@@ -183,6 +190,11 @@ registration:
       full managed UCI Arena Engine candidate probe, preserve the prior
       registration on failure, and are rejected by the existing active-use
       gates.
+    - A successful compatible custom-model refresh persists
+      timing_model_compatibility=class_io_v1 beside the unchanged Engine-owned
+      launch profile. Tournament and Evidence launches repeat the same
+      class/I/O comparison. Resetting to the packaged root removes that marker
+      and restores exact model-id/fingerprint matching.
 
 recommendation:
   component_id: uci_arena.engine
@@ -231,8 +243,11 @@ acceptance:
     advertised ModelRoot option, show the packaged default separately, and
     persist the custom path only after a successful post-selection probe.
   - Selecting a custom ModelRoot keeps every other managed option exact and
-    removes packaged qualified-timing authority until the packaged root is
-    explicitly selected and successfully probed again.
+    carries packaged timing across a model-id or checkpoint-fingerprint change
+    only when model class, inspected I/O contract, adapter, provider/runtime,
+    hardware/driver, search core, topology, and timing contract remain exact.
+    A ResNet-to-other-class, input/output contract, or MCGS-to-Minimax change
+    cannot carry timing.
   - A differently identified conforming engine component can publish the
     managed launch-profile schema and have every rendered option probed,
     registered, reused by tournaments, and forwarded to Evidence target

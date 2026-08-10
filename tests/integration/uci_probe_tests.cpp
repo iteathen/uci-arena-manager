@@ -41,6 +41,8 @@ TEST_CASE("UCI probe discovers identity options and a legal bestmove") {
     REQUIRE(result.runtime_provider_fingerprint == "5805769137532863231");
     REQUIRE(result.runtime_status.has_value());
     REQUIRE(result.runtime_status->model_id == "example_model_v1");
+    REQUIRE(result.runtime_status->model_class == "residual_conv_trunk");
+    REQUIRE(result.runtime_status->model_io_contract_fingerprint == "7000");
     REQUIRE(result.runtime_status->adapter_id == "dense_planes_v1");
     REQUIRE(result.runtime_status->hardware_driver_fingerprint ==
             "15113055170282736143");
@@ -174,6 +176,8 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
            "persistent_mcgs_relative_clock_temporal_v4"},
           {"model_id", "example_model_v1"},
           {"model_fingerprint", "8104116015256418347"},
+          {"model_class", "residual_conv_trunk"},
+          {"model_io_contract_fingerprint", "7000"},
           {"adapter_id", "dense_planes_v1"},
           {"provider_requested", "cpu"},
           {"provider_effective", "cpu"},
@@ -298,10 +302,13 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                 selected_preview.at("option_overrides")
                     .at("ModelRoot")
                     .get<std::string>()) == alternate_model_root);
-        REQUIRE_FALSE(selected_preview.contains("launch_profile"));
+        REQUIRE(selected_preview.contains("launch_profile"));
+        REQUIRE(
+            selected_preview.at("timing_model_compatibility") ==
+            "class_io_v1");
         REQUIRE(
             selected_preview.at("runtime_model_identity")
-                .at("model_fingerprint") == "8104116015256418347");
+                .at("model_fingerprint") == "8104116015256418348");
         REQUIRE(
             selected_preview.at("default_model").at("display_name") ==
             "Example Model");
@@ -330,8 +337,22 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                 "test")
                 .at("resource");
         REQUIRE(selected_refresh_preview.at("id") == registered.at("id"));
-        REQUIRE_FALSE(
+        REQUIRE(
             selected_refresh_preview.at("data").contains("launch_profile"));
+        REQUIRE(
+            selected_refresh_preview.at("data")
+                .at("timing_model_compatibility") == "class_io_v1");
+
+        for (const std::string incompatible_root_name :
+             {"different-class", "different-io"}) {
+            const fs::path incompatible_root =
+                active_root / "models" / incompatible_root_name;
+            fs::create_directories(incompatible_root);
+            json incompatible_options = candidate_options;
+            incompatible_options["ModelRoot"] = incompatible_root.string();
+            REQUIRE_THROWS(
+                registration(candidate_id, incompatible_options, true));
+        }
 
         json changed_profile_options = selected_options;
         changed_profile_options["Threads"] = 3;
