@@ -118,7 +118,7 @@ jobs:
           npm test --prefix web
           npm run build --prefix web
       - name: Install exact native dependency closure
-        timeout-minutes: 45
+        timeout-minutes: 90
         shell: pwsh
         env:
           VCPKG_DEFAULT_BINARY_CACHE: ${{ runner.temp }}/vcpkg-binary-cache
@@ -156,7 +156,8 @@ jobs:
         shell: pwsh
         run: |
           $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-component-release' } else { 'linux-component-release' }
-          cmake --build --preset $preset --clean-first --parallel 4
+          $parallel = if ('${{ inputs.runner }}' -eq 'ephemeral-self-hosted-windows') { 1 } else { 4 }
+          cmake --build --preset $preset --clean-first --parallel $parallel
           if ($LASTEXITCODE -ne 0) { throw 'Manager build failed' }
       - name: Verify exact Manager native tests
         timeout-minutes: 10
