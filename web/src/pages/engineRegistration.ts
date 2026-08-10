@@ -11,6 +11,32 @@ export function engineRegistrationParameters(candidate: EngineCandidate) {
   }
 }
 
+export function candidateWithModelRoot(
+  candidate: EngineCandidate,
+  modelRoot: string,
+): EngineCandidate {
+  const packagedRoot = candidate.uci_options.ModelRoot
+  if (typeof packagedRoot !== 'string') return candidate
+  const selectedRoot = modelRoot.trim()
+  if (!selectedRoot) return candidate
+  const customSelection = isCustomModelRoot(candidate, selectedRoot)
+  return {
+    ...candidate,
+    uci_options: {
+      ...candidate.uci_options,
+      ModelRoot: customSelection ? selectedRoot : packagedRoot,
+    },
+    launch_profile: customSelection ? undefined : candidate.launch_profile,
+  }
+}
+
+export function isCustomModelRoot(candidate: EngineCandidate, modelRoot: string) {
+  const packagedRoot = candidate.uci_options.ModelRoot
+  return typeof packagedRoot === 'string' &&
+    Boolean(modelRoot.trim()) &&
+    !samePath(modelRoot.trim(), packagedRoot)
+}
+
 function samePath(left: string | undefined, right: string | undefined) {
   if (!left || !right) return false
   if (left === right) return true

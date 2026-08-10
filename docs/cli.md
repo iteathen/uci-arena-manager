@@ -36,11 +36,19 @@ Common engine and service commands:
 ```text
 arena engine list
 arena engine probe C:\engines\engine.exe
+arena engine probe C:\engines\uci_arena_engine.exe --model-root C:\models\candidate
 arena engine add --executable C:\engines\engine.exe
+arena engine add --executable C:\engines\uci_arena_engine.exe --model-root C:\models\candidate
+arena engine set-model ENGINE-ID --model-root C:\models\selected-package
 arena service profiles
 arena service discover book_forge
 arena daemon status
 ```
+
+`--model-root` is passed only through the engine-advertised `ModelRoot` UCI
+option. For a registered UCI Arena Engine, `engine set-model` performs the same
+revision-checked full refresh as the Engines dashboard and leaves the existing
+registration unchanged if the selected model fails its probe.
 
 On Linux, the same reference is installed as `arena(1)`:
 

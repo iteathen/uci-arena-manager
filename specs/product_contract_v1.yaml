@@ -71,6 +71,10 @@ engine_contract:
         dispatch. Receipt onboarding resolves it beneath the immutable
         component root and supplies it only through an engine-advertised
         ModelRoot UCI option.
+      - An explicit operator model selection may replace only the advertised
+        ModelRoot value in a receipt-managed launch profile. The repeated
+        probe must observe a post-selection runtime identity before Manager
+        persists that identity; a model label never selects a path.
   installed_candidate_entrypoints:
     rules:
       - A verified managed-component receipt contributes an engine candidate
@@ -114,6 +118,11 @@ engine_contract:
         Removing an idle Engine resource removes Manager registration state
         only and never deletes installed or preserved component data.
         Provider-output adoption never silently rewrites a registered engine.
+      - An operator-selected ModelRoot keeps every other Engine-owned launch
+        argument and UCI option exact. It does not inherit the packaged
+        qualified-timing claim or expected runtime identity; returning to the
+        packaged ModelRoot restores those claims only after the normal full
+        managed-candidate probe succeeds.
   naming_boundary:
     product_engine_executable: uci_arena_engine
     requirements:
@@ -132,6 +141,9 @@ engine_contract:
       - Verified component identity, never enumeration order or a model label,
         marks the recommended engine.
       - The bundled model is projected as separate model-package metadata.
+      - Packaged default-model metadata remains discovery provenance when an
+        operator selects another ModelRoot and is never presented as the
+        effective selected model.
       - A successful registration copied from a verified installation receipt
         persists component_id, onboarding_source, recommended, and
         default_model as non-authoritative discovery provenance.

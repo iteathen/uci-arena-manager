@@ -25,7 +25,12 @@ import { ComponentSetupButton } from '../components/ComponentSetupButton'
 import { PageHeader } from '../components/PageHeader'
 import { PathPickerInput } from '../components/PathPickerInput'
 import { StatusPill } from '../components/StatusPill'
-import { candidateRegistration, engineRegistrationParameters } from './engineRegistration'
+import {
+  candidateRegistration,
+  candidateWithModelRoot,
+  engineRegistrationParameters,
+  isCustomModelRoot,
+} from './engineRegistration'
 
 export function EnginesPage({ navigate }: { navigate: (page: string) => void }) {
   const queryClient = useQueryClient()
@@ -46,6 +51,8 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
   const [name, setName] = useState('')
   const [executable, setExecutable] = useState('')
   const [workingDirectory, setWorkingDirectory] = useState('')
+  const [manualModelRoot, setManualModelRoot] = useState('')
+  const [candidateModelRoots, setCandidateModelRoots] = useState<Record<string, string>>({})
   const [testedCandidates, setTestedCandidates] = useState<Record<string, string>>({})
   const [manualProbeId, setManualProbeId] = useState('')
   const [scanError, setScanError] = useState('')
@@ -133,7 +140,9 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
     executable,
     working_directory: workingDirectory || executable.replace(/[\\/][^\\/]+$/, ''),
     arguments: [],
-    uci_options: {},
+    uci_options: manualModelRoot.trim()
+      ? { ModelRoot: manualModelRoot.trim() }
+      : {},
   }
 
   const probeManual = useMutation({
@@ -154,6 +163,7 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
       setName('')
       setExecutable('')
       setWorkingDirectory('')
+      setManualModelRoot('')
       setManualProbeId('')
     },
   })
@@ -280,9 +290,31 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
           ) : (
             <SimpleGrid cols={{ base: 1, lg: 2 }}>
               {candidates.data?.candidates.map((candidate) => {
-                const registration = candidateRegistration(candidate, engines.data ?? [])
+                const discoveredRegistration = candidateRegistration(
+                  candidate,
+                  engines.data ?? [],
+                )
+                const packagedModelRoot = typeof candidate.uci_options.ModelRoot === 'string'
+                  ? candidate.uci_options.ModelRoot
+                  : ''
+                const registeredModelRoot =
+                  discoveredRegistration.engine?.data.option_overrides?.ModelRoot
+                const selectedModelRoot = candidateModelRoots[candidate.candidate_id] ?? (
+                  typeof registeredModelRoot === 'string'
+                    ? registeredModelRoot
+                    : packagedModelRoot
+                )
+                const selectedCandidate = packagedModelRoot
+                  ? candidateWithModelRoot(candidate, selectedModelRoot)
+                  : candidate
+                const customModelSelected = isCustomModelRoot(candidate, selectedModelRoot)
+                const registration = candidateRegistration(
+                  selectedCandidate,
+                  engines.data ?? [],
+                )
                 const registered = registration.state === 'registered'
                 const refreshRequired = registration.state === 'refresh_required'
+                const modelRootReady = !packagedModelRoot || Boolean(selectedModelRoot.trim())
                 const tested = Boolean(testedCandidates[candidate.candidate_id])
                 const probing =
                   probeCandidate.isPending &&
@@ -316,11 +348,58 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
                       <Code block>{candidate.executable}</Code>
                       {candidate.default_model && (
                         <Text size="sm" c="dimmed">
-                          Default model: {candidate.default_model.display_name} ·{' '}
+                          Packaged default: {candidate.default_model.display_name} ·{' '}
                           {candidate.default_model.input_adapter_id}
                         </Text>
                       )}
-                      {candidate.launch_profile && (
+                      {packagedModelRoot && (
+                        <Stack gap="xs">
+                          <PathPickerInput
+                            label="Model root"
+                            description="Select a model package directory. Manager applies it only through the engine-advertised ModelRoot option and repeats the full probe."
+                            value={selectedModelRoot}
+                            onChange={(value) => {
+                              setCandidateModelRoots((current) => ({
+                                ...current,
+                                [candidate.candidate_id]: value,
+                              }))
+                              setTestedCandidates((current) => {
+                                const next = { ...current }
+                                delete next[candidate.candidate_id]
+                                return next
+                              })
+                            }}
+                            mode="directory"
+                          />
+                          {customModelSelected && (
+                            <Alert color="yellow" title="Custom model selected">
+                              <Group justify="space-between" align="flex-start">
+                                <Text size="sm">
+                                  Packaged timing qualification will not carry over to this model.
+                                </Text>
+                                <Button
+                                  variant="subtle"
+                                  size="compact-sm"
+                                  onClick={() => {
+                                    setCandidateModelRoots((current) => ({
+                                      ...current,
+                                      [candidate.candidate_id]: packagedModelRoot,
+                                    }))
+                                    setTestedCandidates((current) => {
+                                      const next = { ...current }
+                                      delete next[candidate.candidate_id]
+                                      return next
+                                    })
+                                  }}
+                                >
+                                  Reset to packaged default
+                                </Button>
+                              </Group>
+                            </Alert>
+                          )}
+                        </Stack>
+                      )}
+                      {candidate.launch_profile && !customModelSelected && (
                         <Alert
                           color={candidate.launch_profile.state === 'qualified_timing' ? 'teal' : 'yellow'}
                           title={candidate.launch_profile.state === 'qualified_timing'
@@ -364,24 +443,27 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
                         <Button
                           variant="default"
                           loading={probing}
-                          disabled={candidate.state !== 'ready_to_probe' || registered}
+                          disabled={candidate.state !== 'ready_to_probe' || registered || !modelRootReady}
                           onClick={() => {
                             registerCandidate.reset()
                             refreshCandidate.reset()
-                            probeCandidate.mutate(candidate)
+                            probeCandidate.mutate(selectedCandidate)
                           }}
                         >
                           Test only
                         </Button>
                         <Button
                           loading={registering || refreshing}
-                          disabled={candidate.state !== 'ready_to_probe' || registered}
+                          disabled={candidate.state !== 'ready_to_probe' || registered || !modelRootReady}
                           onClick={() => {
                             probeCandidate.reset()
                             if (refreshRequired && registration.engine) {
-                              refreshCandidate.mutate({ candidate, engine: registration.engine })
+                              refreshCandidate.mutate({
+                                candidate: selectedCandidate,
+                                engine: registration.engine,
+                              })
                             } else {
-                              registerCandidate.mutate(candidate)
+                              registerCandidate.mutate(selectedCandidate)
                             }
                           }}
                         >
@@ -444,7 +526,12 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
                               )}
                             {engine.data.default_model && (
                               <Text size="xs" c="dimmed">
-                                Model package: {engine.data.default_model.display_name}
+                                Packaged default: {engine.data.default_model.display_name}
+                              </Text>
+                            )}
+                            {typeof engine.data.option_overrides?.ModelRoot === 'string' && (
+                              <Text size="xs" c="dimmed">
+                                Selected ModelRoot: {engine.data.option_overrides.ModelRoot}
                               </Text>
                             )}
                           </div>
@@ -520,6 +607,16 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
             value={workingDirectory}
             onChange={(value) => {
               setWorkingDirectory(value)
+              setManualProbeId('')
+            }}
+            mode="directory"
+          />
+          <PathPickerInput
+            label="Model root (optional)"
+            description="For engines that advertise ModelRoot, select the model package directory to apply before readyok."
+            value={manualModelRoot}
+            onChange={(value) => {
+              setManualModelRoot(value)
               setManualProbeId('')
             }}
             mode="directory"
