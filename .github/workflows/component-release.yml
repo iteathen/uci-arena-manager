@@ -75,7 +75,7 @@ jobs:
         if: inputs.runner == 'ephemeral-self-hosted-windows'
         shell: pwsh
         run: |
-          foreach ($command in @('cl.exe', 'git.exe', 'msbuild.exe')) {
+          foreach ($command in @('cl.exe', 'gh.exe', 'git.exe', 'msbuild.exe')) {
             if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
               throw "ephemeral release runner is missing $command"
             }

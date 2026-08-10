@@ -70,6 +70,9 @@ producer_contract:
       redistributable runtime locations through explicit, validated configure
       inputs. Candidate staging must not depend on ambient registry or runtime
       discovery inside the disposable VM.
+    - The ephemeral runner must also expose a callable GitHub CLI before any
+      build work because private candidate validation and upload use the
+      job-scoped GitHub token through that explicit release tool.
     - Candidate dependency materialization uses vcpkg's supported files
       provider beneath the runner temporary root and the pinned GitHub Actions
       cache adapter to reuse content-addressed, ABI-keyed binary packages. The

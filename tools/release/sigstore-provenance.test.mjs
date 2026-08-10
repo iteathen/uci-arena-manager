@@ -149,6 +149,7 @@ test("only the manual Manager component workflow uploads signed candidate assets
     /\["self-hosted","Windows","X64","ephemeral","uci-suite","manager-release"\]/u,
   );
   assert.match(workflow, /ephemeral self-hosted release is Windows-only/u);
+  assert.match(workflow, /\('cl\.exe', 'gh\.exe', 'git\.exe', 'msbuild\.exe'\)/u);
   assert.match(workflow, /cmake --preset \$preset -G Ninja/u);
   assert.match(workflow, /Microsoft\\CMake\\Ninja\\ninja\.exe/u);
   assert.match(workflow, /-DARENA_MANAGER_MSVC_RUNTIME_DIRECTORY=/u);
