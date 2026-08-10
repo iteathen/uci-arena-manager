@@ -162,7 +162,7 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
         {"engine",
          {{"executable", fs::weakly_canonical(executable).string()},
           {"working_directory", fs::weakly_canonical(active_root).string()},
-          {"arguments", {"--require-model-root", model_root.string()}}}},
+          {"arguments", {"--allow-model-root"}}}},
         {"state", "qualified_timing"},
         {"enabled", true},
         {"uci_options",
@@ -224,7 +224,9 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
         control_plane.reconcile_installed_services(data_root);
 
         const auto registration =
-            [&](const std::string& selected_candidate_id) {
+            [&](const std::string& selected_candidate_id,
+                const json& selected_options,
+                const bool dry_run) {
                 return control_plane.submit(
                 {
                     {"schema_version", 1},
@@ -234,16 +236,15 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                      {{"kind", "engine"}, {"id", nullptr}}},
                     {"action", "engine.register"},
                     {"expected_revision", nullptr},
-                    {"dry_run", false},
+                    {"dry_run", dry_run},
                     {"parameters",
                      {
                          {"display_name", "UCI Arena Engine"},
                          {"executable", executable.string()},
                          {"working_directory",
                           active_root.string()},
-                         {"arguments",
-                          {"--require-model-root", model_root.string()}},
-                         {"uci_options", candidate_options},
+                         {"arguments", {"--allow-model-root"}},
+                         {"uci_options", selected_options},
                          {"candidate_id",
                           selected_candidate_id},
                          {"component_id", "forged.engine"},
@@ -258,7 +259,8 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                     "test");
             };
 
-        const json registered = registration(candidate_id).at("resource");
+        const json registered =
+            registration(candidate_id, candidate_options, false).at("resource");
         const json verified = registered.at("data");
         REQUIRE(verified.at("candidate_id") == candidate_id);
         REQUIRE(
@@ -282,8 +284,63 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
             verified.at("runtime_model_identity")
                 .at("model_fingerprint") == "8104116015256418347");
 
+        const fs::path alternate_model_root =
+            active_root / "models" / "operator-selected";
+        fs::create_directories(alternate_model_root);
+        json selected_options = candidate_options;
+        selected_options["ModelRoot"] = alternate_model_root.string();
+        const json selected_preview =
+            registration(candidate_id, selected_options, true)
+                .at("resource")
+                .at("data");
+        REQUIRE(
+            fs::path(
+                selected_preview.at("option_overrides")
+                    .at("ModelRoot")
+                    .get<std::string>()) == alternate_model_root);
+        REQUIRE_FALSE(selected_preview.contains("launch_profile"));
+        REQUIRE(
+            selected_preview.at("runtime_model_identity")
+                .at("model_fingerprint") == "8104116015256418347");
+        REQUIRE(
+            selected_preview.at("default_model").at("display_name") ==
+            "Example Model");
+
+        const json selected_refresh_preview =
+            control_plane.submit(
+                {
+                    {"schema_version", 1},
+                    {"request_id", arena::domain::uuid_v7()},
+                    {"idempotency_key", arena::domain::uuid_v7()},
+                    {"target",
+                     {{"kind", "engine"}, {"id", registered.at("id")}}},
+                    {"action", "engine.refresh"},
+                    {"expected_revision", registered.at("revision")},
+                    {"dry_run", true},
+                    {"parameters",
+                     {
+                         {"display_name", "UCI Arena Engine"},
+                         {"executable", executable.string()},
+                         {"working_directory", active_root.string()},
+                         {"arguments", {"--allow-model-root"}},
+                         {"uci_options", selected_options},
+                         {"candidate_id", candidate_id},
+                     }},
+                },
+                "test")
+                .at("resource");
+        REQUIRE(selected_refresh_preview.at("id") == registered.at("id"));
+        REQUIRE_FALSE(
+            selected_refresh_preview.at("data").contains("launch_profile"));
+
+        json changed_profile_options = selected_options;
+        changed_profile_options["Threads"] = 3;
+        REQUIRE_THROWS(
+            registration(candidate_id, changed_profile_options, true));
+
         const json forged_resource =
-            registration("engcand-forged").at("resource");
+            registration("engcand-forged", candidate_options, false)
+                .at("resource");
         const json forged = forged_resource.at("data");
         REQUIRE_FALSE(forged.contains("candidate_id"));
         REQUIRE_FALSE(forged.contains("component_id"));

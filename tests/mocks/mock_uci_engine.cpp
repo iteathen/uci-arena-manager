@@ -15,6 +15,7 @@ int main(int argc, char** argv) {
     bool require_chess960 = false;
     unsigned required_moves_to_go = 0;
     std::string required_model_root;
+    bool allow_model_root = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
         if (argument == "--delay-ms" && index + 1 < argc) {
@@ -33,11 +34,13 @@ int main(int argc, char** argv) {
                 static_cast<unsigned>(std::stoul(argv[++index]));
         } else if (argument == "--require-model-root" && index + 1 < argc) {
             required_model_root = argv[++index];
+        } else if (argument == "--allow-model-root") {
+            allow_model_root = true;
         }
     }
     std::string position;
     bool chess960_enabled = false;
-    bool model_root_ready = required_model_root.empty();
+    bool model_root_ready = required_model_root.empty() && !allow_model_root;
     const std::vector<std::string> scholar_mate{
         "e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "h5f7"};
     for (std::string line; std::getline(std::cin, line);) {
@@ -47,7 +50,7 @@ int main(int argc, char** argv) {
                       << "option name Threads type spin default 1 min 1 max 16\n"
                       << "option name Ponder type check default false\n"
                       << "option name Style type combo default Normal var Solid var Normal var Risky\n";
-            if (!required_model_root.empty()) {
+            if (!required_model_root.empty() || allow_model_root) {
                 std::cout << "option name ModelRoot type string default missing\n";
             } else {
                 std::cout << "info string model loaded:backend:onnx:path:fixture:fingerprint:8104116015256418347:provider:cpu:provider_numeric_fingerprint:5805769137532863231\n";
@@ -56,17 +59,22 @@ int main(int argc, char** argv) {
         } else if (line.starts_with("setoption name ModelRoot value ")) {
             const std::filesystem::path supplied_model_root = line.substr(
                 std::string("setoption name ModelRoot value ").size());
-            std::error_code equivalent_error;
-            model_root_ready = std::filesystem::equivalent(
-                supplied_model_root,
-                std::filesystem::path(required_model_root),
-                equivalent_error);
+            if (allow_model_root) {
+                model_root_ready = std::filesystem::is_directory(supplied_model_root);
+            } else {
+                std::error_code equivalent_error;
+                model_root_ready = std::filesystem::equivalent(
+                    supplied_model_root,
+                    std::filesystem::path(required_model_root),
+                    equivalent_error);
+            }
         } else if (line == "isready") {
             if (ready_delay_ms > 0) {
                 std::this_thread::sleep_for(
                     std::chrono::milliseconds(ready_delay_ms));
             }
-            if (!required_model_root.empty() && model_root_ready) {
+            if ((!required_model_root.empty() || allow_model_root) &&
+                model_root_ready) {
                 std::cout << "info string model loaded:backend:onnx:path:fixture:fingerprint:8104116015256418347:provider:cpu:provider_numeric_fingerprint:5805769137532863231\n";
             }
             std::cout << "readyok\n" << std::flush;

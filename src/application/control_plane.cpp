@@ -271,6 +271,30 @@ std::map<std::string, std::string> uci_option_overrides(
     }
 }
 
+bool is_model_root_only_override(
+    const json& requested_options,
+    const json& candidate_options) {
+    if (!requested_options.is_object() || !candidate_options.is_object() ||
+        !requested_options.contains("ModelRoot") ||
+        !candidate_options.contains("ModelRoot") ||
+        !requested_options.at("ModelRoot").is_string() ||
+        !candidate_options.at("ModelRoot").is_string()) {
+        return false;
+    }
+    const std::string requested_root =
+        requested_options.at("ModelRoot").get<std::string>();
+    const std::string candidate_root =
+        candidate_options.at("ModelRoot").get<std::string>();
+    if (requested_root.empty() || requested_root == candidate_root) {
+        return false;
+    }
+    json requested_without_root = requested_options;
+    json candidate_without_root = candidate_options;
+    requested_without_root.erase("ModelRoot");
+    candidate_without_root.erase("ModelRoot");
+    return requested_without_root == candidate_without_root;
+}
+
 json labels_from(const json& parameters) {
     if (!parameters.contains("labels")) {
         return json::object();
@@ -970,6 +994,7 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
     const json normalized_options = engine_option_values_json(option_overrides);
     json expected_runtime = nullptr;
     json selected_candidate = nullptr;
+    bool model_root_overridden = false;
     if (parameters.contains("candidate_id") &&
         parameters.at("candidate_id").is_string() &&
         !parameters.at("candidate_id").get_ref<const std::string&>().empty() &&
@@ -992,6 +1017,11 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
                 continue;
             }
             selected_candidate = candidate;
+            const json normalized_candidate_options =
+                engine_option_values_json(
+                    uci_option_overrides(candidate.at("uci_options")));
+            model_root_overridden = is_model_root_only_override(
+                normalized_options, normalized_candidate_options);
             if (candidate.contains("launch_profile") &&
                 candidate.at("launch_profile").is_object()) {
                 std::error_code working_error;
@@ -1003,7 +1033,8 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
                     !working_error;
                 if (candidate.value("state", "") != "ready_to_probe" ||
                     json(arguments) != candidate.at("arguments") ||
-                    raw_options != candidate.at("uci_options") ||
+                    (normalized_options != normalized_candidate_options &&
+                     !model_root_overridden) ||
                     !same_working_directory) {
                     throw CommandFailure(
                         "engine_candidate_parameters_changed",
@@ -1011,7 +1042,8 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
                         409);
                 }
                 const json& launch_profile = candidate.at("launch_profile");
-                if (launch_profile.value("state", "") == "qualified_timing") {
+                if (!model_root_overridden &&
+                    launch_profile.value("state", "") == "qualified_timing") {
                     expected_runtime = launch_profile.at("expected_runtime");
                 }
             }
@@ -1036,6 +1068,14 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
         !expected_runtime.is_null());
     if (!probe.ok) {
         throw CommandFailure("uci_probe_failed", probe.error, 422);
+    }
+    if (model_root_overridden &&
+        (probe.runtime_model_fingerprint.empty() ||
+         probe.runtime_provider.empty())) {
+        throw CommandFailure(
+            "model_runtime_identity_unavailable",
+            "the selected ModelRoot did not publish a post-selection runtime identity",
+            422);
     }
     if (!expected_runtime.is_null()) {
         if (!probe.runtime_status.has_value()) {
@@ -1114,7 +1154,8 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
                 data["default_model"] = model;
             }
         }
-        if (selected_candidate.contains("launch_profile") &&
+        if (!model_root_overridden &&
+            selected_candidate.contains("launch_profile") &&
             selected_candidate.at("launch_profile").is_object()) {
             data["launch_profile"] = selected_candidate.at("launch_profile");
         }

@@ -43,6 +43,7 @@ arena doctor
 arena ui
 arena engine list
 arena engine probe PATH-TO-ENGINE
+arena engine set-model ENGINE-ID --model-root PATH-TO-MODEL-PACKAGE
 arena service profiles
 ```
 
@@ -100,9 +101,14 @@ No engine names are hardcoded.
 arena engine add --executable C:\engines\stockfish.exe
 arena engine add --executable C:\engines\lc0.exe
 arena engine add --executable C:\engines\uci_arena_engine.exe
+arena engine set-model <uci-arena-engine-id> --model-root C:\models\selected-package
 arena match plan --name "LC0 vs Stockfish" --engine <lc0-id> --engine <stockfish-id> --games-per-pair 20 --initial-ms 60000 --increment-ms 600
 arena tournament create --name "Local round robin" --format round_robin --engine <stockfish-id> --engine <lc0-id> --engine <uci-arena-engine-id>
 ```
+
+`engine probe` and `engine add` also accept `--model-root PATH`. Manager sends
+the value only through an advertised `ModelRoot` UCI option and repeats the
+full probe before a selection is registered.
 
 ## External services
 

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { EngineCandidate, EngineData, Resource } from '../api/types'
-import { candidateRegistration, engineRegistrationParameters } from './engineRegistration'
+import {
+  candidateRegistration,
+  candidateWithModelRoot,
+  engineRegistrationParameters,
+} from './engineRegistration'
 
 function candidate(): EngineCandidate {
   return {
@@ -14,6 +18,7 @@ function candidate(): EngineCandidate {
     working_directory: 'C:\\Program Files\\UCI Arena',
     arguments: [],
     uci_options: {
+      ModelRoot: 'C:\\Program Files\\UCI Arena\\models\\default',
       SearchCore: 'mcgs', OpeningBook: 'book.bin', Threads: 3, Ponder: false,
     },
     component_id: 'uci_arena.engine',
@@ -100,5 +105,29 @@ describe('managed Engine registration state', () => {
     manual.data.onboarding_source = 'discovered'
     manual.data.component_id = undefined
     expect(candidateRegistration(candidate(), [manual]).state).toBe('unregistered')
+  })
+
+  it('treats a selected ModelRoot as the only operator-owned profile override', () => {
+    const selected = candidateWithModelRoot(
+      candidate(),
+      'C:\\models\\operator-selected',
+    )
+    expect(selected.uci_options.ModelRoot).toBe('C:\\models\\operator-selected')
+    expect(selected.launch_profile).toBeUndefined()
+    expect(candidateRegistration(selected, [registered(selected)]).state).toBe('registered')
+    expect(candidateRegistration(candidate(), [registered(selected)]).state).toBe(
+      'refresh_required',
+    )
+  })
+
+  it('preserves the packaged launch profile when ModelRoot is unchanged', () => {
+    const selected = candidateWithModelRoot(
+      candidate(),
+      'c:/program files/uci arena/models/default',
+    )
+    expect(selected.launch_profile).toEqual(candidate().launch_profile)
+    expect(selected.uci_options.ModelRoot).toBe(
+      'C:\\Program Files\\UCI Arena\\models\\default',
+    )
   })
 })

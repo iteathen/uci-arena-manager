@@ -84,6 +84,14 @@ engine_identity_experience:
       or status labels.
     - Show the model package as separate metadata only when reported by the
       registered engine.
+    - When a receipt-managed candidate supplies an advertised ModelRoot, show
+      its current selected directory in an editable directory-picker control,
+      keep the packaged default label separate, and provide a reset-to-default
+      action. Test, register, and refresh use the selected path through the
+      normal full probe rather than mutating React-only state.
+    - Explain that a custom model selection does not retain packaged qualified
+      timing evidence. A failed selection leaves the prior registered model
+      authoritative and reports the backend diagnostic beside that candidate.
     - Put the receipt-verified uci_arena.engine candidate first and offer one
       explicit Use this engine action; that action performs the complete
       bounded UCI interrogation before creating the registration and does not
@@ -271,6 +279,11 @@ cli_experience:
       the same names for --endpoint, --data-dir, --output, and common commands.
     - Help documents that global flags precede the subcommand and includes
       status, health, doctor, ui, engine, service, and setup examples.
+    - Engine probe and add accept an optional --model-root directory that is
+      supplied only through the advertised ModelRoot UCI option. Engine
+      set-model accepts a registered UCI Arena Engine id plus required
+      --model-root and
+      uses the same revision-checked full refresh path as the dashboard.
 
 bot_experience:
   profile: lichess_bot
