@@ -59,6 +59,13 @@ producer_contract:
       bounds so a stalled runner cannot consume unbounded private-repository
       minutes or hide which brick stalled. Deprecated or unavailable binary
       cache backends never masquerade as restored dependency authority.
+    - GitHub-hosted runners remain the default. An explicit Windows-only
+      ephemeral-self-hosted runner selection may use only the exact labels
+      self-hosted, Windows, X64, ephemeral, uci-suite, and manager-release.
+      The runner must execute inside a fresh disposable VM, register with
+      --ephemeral and --disableupdate, receive no repository credential beyond
+      its short-lived registration token, and disappear after one job. A
+      physical developer host or persistent runner is forbidden.
     - Candidate dependency materialization uses vcpkg's supported files
       provider beneath the runner temporary root and the pinned GitHub Actions
       cache adapter to reuse content-addressed, ABI-keyed binary packages. The
