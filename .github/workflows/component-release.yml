@@ -141,7 +141,15 @@ jobs:
         shell: pwsh
         run: |
           $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-component-release' } else { 'linux-component-release' }
-          cmake --preset $preset "-DARENA_VERSION=$env:RELEASE_VERSION"
+          if ('${{ inputs.runner }}' -eq 'ephemeral-self-hosted-windows') {
+            $ninja = 'C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe'
+            if (-not (Test-Path -LiteralPath $ninja -PathType Leaf)) {
+              throw "ephemeral release runner is missing bundled Ninja: $ninja"
+            }
+            cmake --preset $preset -G Ninja "-DCMAKE_MAKE_PROGRAM=$ninja" "-DARENA_VERSION=$env:RELEASE_VERSION"
+          } else {
+            cmake --preset $preset "-DARENA_VERSION=$env:RELEASE_VERSION"
+          }
           if ($LASTEXITCODE -ne 0) { throw 'Manager configure failed' }
       - name: Build exact Manager source
         timeout-minutes: 30

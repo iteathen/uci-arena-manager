@@ -145,6 +145,8 @@ test("only the manual Manager component workflow uploads signed candidate assets
     /\["self-hosted","Windows","X64","ephemeral","uci-suite","manager-release"\]/u,
   );
   assert.match(workflow, /ephemeral self-hosted release is Windows-only/u);
+  assert.match(workflow, /cmake --preset \$preset -G Ninja/u);
+  assert.match(workflow, /Microsoft\\CMake\\Ninja\\ninja\.exe/u);
   assert.doesNotMatch(workflow, /self-hosted.*linux/iu);
   assert.match(workflow, /sigstore\/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6/u);
   assert.match(workflow, /cosign-release:\s*v3\.0\.6/u);
