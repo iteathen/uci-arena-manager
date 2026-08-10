@@ -146,7 +146,13 @@ jobs:
             if (-not (Test-Path -LiteralPath $ninja -PathType Leaf)) {
               throw "ephemeral release runner is missing bundled Ninja: $ninja"
             }
-            cmake --preset $preset -G Ninja "-DCMAKE_MAKE_PROGRAM=$ninja" "-DARENA_VERSION=$env:RELEASE_VERSION"
+            if (-not (Test-Path -LiteralPath $env:ARENA_MANAGER_MSVC_RUNTIME_DIRECTORY -PathType Container)) {
+              throw 'ephemeral release runner is missing its explicit MSVC runtime directory'
+            }
+            cmake --preset $preset -G Ninja `
+              "-DCMAKE_MAKE_PROGRAM=$ninja" `
+              "-DARENA_MANAGER_MSVC_RUNTIME_DIRECTORY=$env:ARENA_MANAGER_MSVC_RUNTIME_DIRECTORY" `
+              "-DARENA_VERSION=$env:RELEASE_VERSION"
           } else {
             cmake --preset $preset "-DARENA_VERSION=$env:RELEASE_VERSION"
           }

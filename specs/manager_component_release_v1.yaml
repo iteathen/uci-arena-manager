@@ -66,6 +66,10 @@ producer_contract:
       --ephemeral and --disableupdate, receive no repository credential beyond
       its short-lived registration token, and disappear after one job. A
       physical developer host or persistent runner is forbidden.
+    - An ephemeral Windows release runner exposes mapped compiler, SDK, and
+      redistributable runtime locations through explicit, validated configure
+      inputs. Candidate staging must not depend on ambient registry or runtime
+      discovery inside the disposable VM.
     - Candidate dependency materialization uses vcpkg's supported files
       provider beneath the runner temporary root and the pinned GitHub Actions
       cache adapter to reuse content-addressed, ABI-keyed binary packages. The
