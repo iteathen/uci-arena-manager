@@ -59,6 +59,9 @@ producer_contract:
       bounds so a stalled runner cannot consume unbounded private-repository
       minutes or hide which brick stalled. Deprecated or unavailable binary
       cache backends never masquerade as restored dependency authority.
+    - The specification/web gate invokes the repository's complete npm check as
+      one fail-closed native command and explicitly rejects its nonzero exit.
+      A later successful command must never mask a failed check.
     - GitHub-hosted runners remain the default. An explicit Windows-only
       ephemeral-self-hosted runner selection may use only the exact labels
       self-hosted, Windows, X64, ephemeral, uci-suite, and manager-release.
@@ -70,6 +73,12 @@ producer_contract:
       redistributable runtime locations through explicit, validated configure
       inputs. Candidate staging must not depend on ambient registry or runtime
       discovery inside the disposable VM.
+    - The Windows launcher-provided VCToolsRedistDir is the redistributable
+      runtime root authority. Before configure, the workflow must require that
+      root, select exactly one x64 Microsoft.VC*.CRT directory beneath it,
+      validate the core runtime files, and export the resulting directory
+      through GITHUB_ENV as ARENA_MANAGER_MSVC_RUNTIME_DIRECTORY. Later steps
+      must consume that exact mapped directory rather than rediscovering it.
     - The ephemeral runner must also expose a callable GitHub CLI before any
       build work because private candidate validation and upload use the
       job-scoped GitHub token through that explicit release tool.

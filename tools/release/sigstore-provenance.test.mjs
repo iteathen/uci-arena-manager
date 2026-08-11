@@ -150,9 +150,20 @@ test("only the manual Manager component workflow uploads signed candidate assets
   );
   assert.match(workflow, /ephemeral self-hosted release is Windows-only/u);
   assert.match(workflow, /\('cl\.exe', 'gh\.exe', 'git\.exe', 'msbuild\.exe'\)/u);
+  assert.match(workflow, /npm run check/u);
+  assert.match(workflow, /\$LASTEXITCODE -ne 0.*Manager repository checks failed/u);
+  assert.doesNotMatch(workflow, /npm run naming:check\s+npm test --prefix web/u);
   assert.match(workflow, /cmake --preset \$preset -G Ninja/u);
   assert.match(workflow, /Microsoft\\CMake\\Ninja\\ninja\.exe/u);
+  assert.match(workflow, /name: Map exact ephemeral MSVC runtime directory/u);
+  assert.match(workflow, /\$env:VCToolsRedistDir/u);
+  assert.match(workflow, /Microsoft\.VC\*\.CRT/u);
+  assert.match(workflow, /\$runtimeCandidates\.Count -ne 1/u);
+  assert.match(workflow, /ARENA_MANAGER_MSVC_RUNTIME_DIRECTORY=\$runtimeDirectory/u);
+  assert.match(workflow, /Add-Content -LiteralPath \$env:GITHUB_ENV/u);
   assert.match(workflow, /-DARENA_MANAGER_MSVC_RUNTIME_DIRECTORY=/u);
+  assert.ok(workflow.indexOf("Map exact ephemeral MSVC runtime directory")
+    < workflow.indexOf("Configure exact Manager source"));
   assert.match(cmake, /set\(ARENA_MANAGER_MSVC_RUNTIME_DIRECTORY "" CACHE PATH/u);
   assert.match(cmake, /list\(APPEND ARENA_MANAGER_RUNTIME_SEARCH_DIRECTORIES/u);
   assert.match(workflow, /ephemeral-self-hosted-windows'\) \{ 1 \} else \{ 4 \}/u);

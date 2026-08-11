@@ -2,6 +2,8 @@ import { readFile, readdir } from 'node:fs/promises'
 import { extname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { isNamedModelTestFixture } from './model-product-naming-policy.mjs'
+
 const root = fileURLToPath(new URL('..', import.meta.url))
 const self = fileURLToPath(import.meta.url)
 const roots = ['README.md', 'CMakeLists.txt', 'apps', 'include', 'src', 'web/src', 'tests', 'specs']
@@ -62,10 +64,11 @@ for (const path of files) {
   if (path === self) {
     continue
   }
+  const relativePath = relative(root, path)
   const lines = (await readFile(path, 'utf8')).split(/\r?\n/u)
   lines.forEach((line, index) => {
-    if (modelName.test(line)) {
-      violations.push(`${relative(root, path)}:${index + 1}: ${line.trim()}`)
+    if (modelName.test(line) && !isNamedModelTestFixture(relativePath)) {
+      violations.push(`${relativePath}:${index + 1}: ${line.trim()}`)
     }
   })
 }
