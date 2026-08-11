@@ -46,6 +46,42 @@ function samePath(left: string | undefined, right: string | undefined) {
     : false
 }
 
+export type EngineBindingState = 'active' | 'available' | 'engine_unregistered'
+
+export function activeEngineBookPath(engine?: Resource<EngineData>) {
+  const ownBook = engine?.data.option_overrides?.OwnBook
+  if (ownBook === false || (typeof ownBook === 'string' && ownBook.toLowerCase() === 'false')) {
+    return ''
+  }
+  const value = engine?.data.option_overrides?.BookFile
+  return typeof value === 'string' ? value : ''
+}
+
+export function activeEngineTimingIdentity(engine?: Resource<EngineData>) {
+  const value = engine?.data.launch_profile?.timing_profile.identity_sha256
+  return typeof value === 'string' ? value : ''
+}
+
+export function bookBindingState(
+  engine: Resource<EngineData> | undefined,
+  snapshotRoot: string,
+): EngineBindingState {
+  if (!engine) return 'engine_unregistered'
+  const separator = snapshotRoot.includes('\\') ? '\\' : '/'
+  const expected = `${snapshotRoot.replace(/[\\/]$/u, '')}${separator}strong_rare_v1.bin`
+  return samePath(activeEngineBookPath(engine), expected) ? 'active' : 'available'
+}
+
+export function timingBindingState(
+  engine: Resource<EngineData> | undefined,
+  identity: string,
+): EngineBindingState {
+  if (!engine) return 'engine_unregistered'
+  return Boolean(identity) && activeEngineTimingIdentity(engine) === identity
+    ? 'active'
+    : 'available'
+}
+
 function sameValue(left: unknown, right: unknown): boolean {
   if (left === right) return true
   if (Array.isArray(left) || Array.isArray(right)) {

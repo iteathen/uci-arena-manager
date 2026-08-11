@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { EngineCandidate, EngineData, Resource } from '../api/types'
 import {
+  activeEngineBookPath,
+  activeEngineTimingIdentity,
+  bookBindingState,
   candidateRegistration,
   candidateWithModelRoot,
   engineRegistrationParameters,
+  timingBindingState,
 } from './engineRegistration'
 
 function candidate(): EngineCandidate {
@@ -129,5 +133,36 @@ describe('managed Engine registration state', () => {
     expect(selected.uci_options.ModelRoot).toBe(
       'C:\\Program Files\\UCI Arena\\models\\default',
     )
+  })
+
+  it('distinguishes provider-current outputs from the active Engine bindings', () => {
+    const engine = registered()
+    engine.data.option_overrides = {
+      ...engine.data.option_overrides,
+      BookFile: 'C:\\UCI Arena Manager\\provider-data\\book-forge\\published\\integration\\strong_rare_v1.bin',
+    }
+    engine.data.launch_profile = {
+      ...engine.data.launch_profile!,
+      state: 'qualified_timing',
+      timing_profile: { available: true, identity_sha256: 'a'.repeat(64) },
+    }
+
+    expect(activeEngineBookPath(engine)).toContain('strong_rare_v1.bin')
+    expect(bookBindingState(
+      engine,
+      'c:/uci arena manager/provider-data/book-forge/published/integration',
+    )).toBe('active')
+    expect(bookBindingState(engine, 'C:\\other\\snapshot')).toBe('available')
+    expect(bookBindingState(undefined, 'C:\\other\\snapshot')).toBe('engine_unregistered')
+    engine.data.option_overrides!.OwnBook = 'false'
+    expect(activeEngineBookPath(engine)).toBe('')
+    expect(bookBindingState(
+      engine,
+      'c:/uci arena manager/provider-data/book-forge/published/integration',
+    )).toBe('available')
+    expect(activeEngineTimingIdentity(engine)).toBe('a'.repeat(64))
+    expect(timingBindingState(engine, 'a'.repeat(64))).toBe('active')
+    expect(timingBindingState(engine, 'b'.repeat(64))).toBe('available')
+    expect(timingBindingState(undefined, 'a'.repeat(64))).toBe('engine_unregistered')
   })
 })

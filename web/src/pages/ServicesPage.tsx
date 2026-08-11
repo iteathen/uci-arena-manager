@@ -44,7 +44,14 @@ import {
   serviceLifecycleActions,
   serviceLocatorMode,
 } from './serviceSelection'
-import { candidateRegistration, engineRegistrationParameters } from './engineRegistration'
+import {
+  activeEngineBookPath,
+  activeEngineTimingIdentity,
+  bookBindingState,
+  candidateRegistration,
+  engineRegistrationParameters,
+  timingBindingState,
+} from './engineRegistration'
 
 export function ServicesPage({ navigate }: { navigate: (page: string) => void }) {
   const queryClient = useQueryClient()
@@ -143,6 +150,14 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
       engine.data.recommended === true &&
       Boolean(engine.data.default_model?.root),
   )
+  const activeManagedEngine = (engines.data ?? []).find(
+    (engine) =>
+      engine.data.component_id === 'uci_arena.engine' &&
+      engine.data.onboarding_source === 'install_receipt' &&
+      engine.data.recommended === true,
+  )
+  const activeBookPath = activeEngineBookPath(activeManagedEngine)
+  const activeTimingIdentity = activeEngineTimingIdentity(activeManagedEngine)
   const activateImportedOutput = async (serviceId: string, label: string) => {
     try {
       const [discovery, currentEngines] = await Promise.all([
@@ -619,24 +634,48 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                           ? `${service.data.output_integration.snapshots.length} validated opening-book snapshot(s)`
                           : 'No validated opening-book snapshots'}
                       </Text>
-                      {service.data.output_integration.snapshots?.map((snapshot) => (
-                        <Paper withBorder p="xs" key={snapshot.snapshot_id}>
-                          <Group justify="space-between" align="center">
-                            <div>
-                              <Text size="sm" fw={650}>{snapshot.channel}</Text>
-                              <Text size="xs" c="dimmed">
-                                {snapshot.record_count.toLocaleString()} records · {snapshot.qualified ? 'strength qualified' : 'validated'}
-                              </Text>
-                            </div>
-                            <LocalSetupImportButton
-                              assetKind="opening_book"
-                              path={snapshot.path}
-                              label="Use in Engine"
-                              onCompleted={() => activateImportedOutput(service.id, 'Opening-book snapshot')}
-                            />
-                          </Group>
-                        </Paper>
-                      ))}
+                      <Text size="xs" c="dimmed" ff="monospace" title={activeBookPath}>
+                        Engine active book: {activeBookPath || 'Engine not registered'}
+                      </Text>
+                      {service.data.output_integration.snapshots?.map((snapshot) => {
+                        const binding = bookBindingState(activeManagedEngine, snapshot.path)
+                        return (
+                          <Paper withBorder p="xs" key={snapshot.snapshot_id}>
+                            <Group justify="space-between" align="center" wrap="nowrap">
+                              <Stack gap={3} style={{ minWidth: 0 }}>
+                                <Group gap="xs">
+                                  <Text size="sm" fw={650}>{snapshot.channel}</Text>
+                                  <Badge color={snapshot.current ? 'blue' : 'gray'} variant="light">
+                                    {snapshot.current ? 'Provider current' : 'Provider retained'}
+                                  </Badge>
+                                  <Badge
+                                    color={binding === 'active' ? 'teal' : binding === 'available' ? 'yellow' : 'gray'}
+                                    variant="light"
+                                  >
+                                    {binding === 'active'
+                                      ? 'Engine active'
+                                      : binding === 'available'
+                                        ? 'Available to switch'
+                                        : 'Engine not registered'}
+                                  </Badge>
+                                </Group>
+                                <Text size="xs" c="dimmed">
+                                  {snapshot.record_count.toLocaleString()} records · {snapshot.qualified ? 'strength qualified' : 'validated'}
+                                </Text>
+                                <Text size="xs" c="dimmed" ff="monospace" truncate title={snapshot.path}>
+                                  Provider updates: {snapshot.path}
+                                </Text>
+                              </Stack>
+                              <LocalSetupImportButton
+                                assetKind="opening_book"
+                                path={snapshot.path}
+                                label={binding === 'active' ? 'Reapply to Engine' : 'Use in Engine'}
+                                onCompleted={() => activateImportedOutput(service.id, 'Opening-book snapshot')}
+                              />
+                            </Group>
+                          </Paper>
+                        )
+                      })}
                     </Stack>
                   ) : (
                     <Stack gap="xs" mt={4}>
@@ -646,24 +685,50 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                         {Number(service.data.output_integration.timing_profile_count ?? 0)}{' '}
                         qualified timing profile(s)
                       </Text>
-                      {service.data.output_integration.timing_profiles?.map((profile) => (
-                        <Paper withBorder p="xs" key={`${profile.source}-${profile.identity_sha256}`}>
-                          <Group justify="space-between" align="center">
-                            <div>
-                              <Text size="sm" fw={650}>Qualified timing evidence</Text>
-                              <Text size="xs" c="dimmed">
-                                {profile.target_identity.model_id ? String(profile.target_identity.model_id) : profile.source}
-                              </Text>
-                            </div>
-                            <LocalSetupImportButton
-                              assetKind="timing_profile"
-                              path={profile.path}
-                              label="Use in Engine"
-                              onCompleted={() => activateImportedOutput(service.id, 'Timing profile')}
-                            />
-                          </Group>
-                        </Paper>
-                      ))}
+                      <Text size="xs" c="dimmed" ff="monospace" title={activeTimingIdentity}>
+                        Engine active timing identity: {activeTimingIdentity || 'Engine not registered'}
+                      </Text>
+                      {service.data.output_integration.timing_profiles?.map((profile) => {
+                        const binding = timingBindingState(activeManagedEngine, profile.identity_sha256)
+                        const providerCurrent = service.data.output_integration?.selected_timing_profile
+                          ?.identity_sha256 === profile.identity_sha256
+                        return (
+                          <Paper withBorder p="xs" key={`${profile.source}-${profile.identity_sha256}`}>
+                            <Group justify="space-between" align="center" wrap="nowrap">
+                              <Stack gap={3} style={{ minWidth: 0 }}>
+                                <Group gap="xs">
+                                  <Text size="sm" fw={650}>Qualified timing evidence</Text>
+                                  <Badge color={providerCurrent ? 'blue' : 'gray'} variant="light">
+                                    {providerCurrent ? 'Provider current' : 'Provider retained'}
+                                  </Badge>
+                                  <Badge
+                                    color={binding === 'active' ? 'teal' : binding === 'available' ? 'yellow' : 'gray'}
+                                    variant="light"
+                                  >
+                                    {binding === 'active'
+                                      ? 'Engine active'
+                                      : binding === 'available'
+                                        ? 'Available to switch'
+                                        : 'Engine not registered'}
+                                  </Badge>
+                                </Group>
+                                <Text size="xs" c="dimmed">
+                                  {profile.target_identity.model_id ? String(profile.target_identity.model_id) : profile.source}
+                                </Text>
+                                <Text size="xs" c="dimmed" ff="monospace" truncate title={profile.path}>
+                                  Provider file: {profile.path}
+                                </Text>
+                              </Stack>
+                              <LocalSetupImportButton
+                                assetKind="timing_profile"
+                                path={profile.path}
+                                label={binding === 'active' ? 'Reapply to Engine' : 'Use in Engine'}
+                                onCompleted={() => activateImportedOutput(service.id, 'Timing profile')}
+                              />
+                            </Group>
+                          </Paper>
+                        )
+                      })}
                     </Stack>
                   )}
                 </Paper>

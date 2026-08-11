@@ -184,6 +184,16 @@ managed_service_experience:
       previews and commits the Installer-owned import transaction, then repeats
       the managed Engine probe and reports whether the existing registration
       was refreshed or remains safely stale.
+    - Every projected Book Forge snapshot and qualified timing profile shows
+      Provider current and Engine active as separate identity states. Engine
+      active is derived only from the receipt-managed Engine registration that
+      completed its runtime probe; a matching provider path or timing identity
+      is labelled active, a non-matching current output keeps Use in Engine,
+      and an unavailable registration is labelled Engine not registered.
+    - The Services surface shows the active Engine book path and timing
+      identity in a bounded copyable form so the operator can tell which
+      provider-owned files are being updated and which exact selection the
+      Engine will consume without opening provider-private storage.
     - An external browser may inspect output identity but cannot claim to
       activate it. Provider publication never silently changes a registered
       Engine, a running game, or a running/paused competition.
