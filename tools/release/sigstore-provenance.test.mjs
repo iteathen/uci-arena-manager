@@ -163,6 +163,8 @@ test("only the manual Manager component workflow uploads signed candidate assets
   assert.match(workflow, /Add-Content -LiteralPath \$env:GITHUB_ENV/u);
   assert.match(workflow, /-DARENA_MANAGER_MSVC_RUNTIME_DIRECTORY=/u);
   assert.ok(workflow.indexOf("Map exact ephemeral MSVC runtime directory")
+    < workflow.indexOf("Install exact native dependency closure"));
+  assert.ok(workflow.indexOf("Map exact ephemeral MSVC runtime directory")
     < workflow.indexOf("Configure exact Manager source"));
   assert.match(cmake, /set\(ARENA_MANAGER_MSVC_RUNTIME_DIRECTORY "" CACHE PATH/u);
   assert.match(cmake, /list\(APPEND ARENA_MANAGER_RUNTIME_SEARCH_DIRECTORIES/u);
