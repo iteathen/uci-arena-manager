@@ -211,6 +211,9 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
         discovery.at("candidates").at(0).at("candidate_id");
     const json candidate_options =
         discovery.at("candidates").at(0).at("uci_options");
+    REQUIRE(discovery.at("candidates")
+                .at(0)
+                .at("installed_artifact_sha256") == std::string(64, 'a'));
     REQUIRE(
         fs::path(candidate_options.at("ModelRoot").get<std::string>()) ==
         fs::weakly_canonical(model_root));
@@ -269,6 +272,10 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
         REQUIRE(
             verified.at("component_id") == "uci_arena.engine");
         REQUIRE(verified.at("component_version") == "1.2.3");
+        REQUIRE(verified.at("installed_artifact_sha256") ==
+                std::string(64, 'a'));
+        REQUIRE(verified.at("model_selection_authority") ==
+                "packaged_launch_profile");
         REQUIRE(verified.at("recommended") == true);
         REQUIRE(
             verified.at("default_model").at("display_name") ==
@@ -332,6 +339,8 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
         REQUIRE(selected_refresh_preview.at("id") == registered.at("id"));
         REQUIRE_FALSE(
             selected_refresh_preview.at("data").contains("launch_profile"));
+        REQUIRE(selected_refresh_preview.at("data")
+                    .at("model_selection_authority") == "operator");
 
         json changed_profile_options = selected_options;
         changed_profile_options["Threads"] = 3;
@@ -519,6 +528,105 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                 },
                 "test"),
             arena::application::CommandFailure);
+
+        json replacement_receipt = json::parse(std::ifstream(
+            data_root / "receipts" / "uci_arena.engine.json"));
+        replacement_receipt["artifact_sha256"] = std::string(64, 'b');
+        std::ofstream(data_root / "receipts" / "uci_arena.engine.json",
+                      std::ios::trunc)
+            << replacement_receipt.dump(2);
+        control_plane.reconcile_installed_services(data_root);
+        REQUIRE(control_plane.status()
+                    .at("installed_engine_reconciliation")
+                    .at("outcome") == "active_use_preserved");
+        REQUIRE(store->get_resource(
+                    "engine", registered.at("id").get<std::string>())
+                    ->revision == version_refreshed.at("revision"));
+
+        auto completed_competition =
+            store->get_resource("match_plan", competition_id).value();
+        json completed_competition_data =
+            json::parse(completed_competition.data_json);
+        completed_competition_data["lifecycle"] = "completed";
+        completed_competition.revision += 1;
+        completed_competition.updated_at = arena::domain::utc_now();
+        completed_competition.data_json = completed_competition_data.dump();
+        const std::string completion_command_id = arena::domain::uuid_v7();
+        store->update_resource(
+            completed_competition,
+            1,
+            {
+                completion_command_id,
+                arena::domain::uuid_v7(),
+                arena::domain::uuid_v7(),
+                "test.complete-competition",
+                "completed",
+                "{}",
+                completed_competition.updated_at,
+            },
+            {
+                0,
+                arena::domain::uuid_v7(),
+                completed_competition.updated_at,
+                "state",
+                "match_plan.completed",
+                "match_plan",
+                competition_id,
+                completed_competition.revision,
+                completion_command_id,
+                "{}",
+            });
+        control_plane.reconcile_installed_services(data_root);
+        const json reconciliation =
+            control_plane.status().at("installed_engine_reconciliation");
+        REQUIRE(reconciliation.at("outcome") == "refreshed");
+        auto automatically_refreshed = store->get_resource(
+            "engine", registered.at("id").get<std::string>()).value();
+        REQUIRE(automatically_refreshed.revision == 5);
+        REQUIRE(json::parse(automatically_refreshed.data_json)
+                    .at("installed_artifact_sha256") == std::string(64, 'b'));
+
+        const json operator_selected = control_plane.submit(
+            {
+                {"schema_version", 1},
+                {"request_id", arena::domain::uuid_v7()},
+                {"idempotency_key", arena::domain::uuid_v7()},
+                {"target",
+                 {{"kind", "engine"}, {"id", registered.at("id")}}},
+                {"action", "engine.refresh"},
+                {"expected_revision", automatically_refreshed.revision},
+                {"dry_run", false},
+                {"parameters",
+                 {
+                     {"display_name", "UCI Arena Engine"},
+                     {"executable", executable.string()},
+                     {"working_directory", active_root.string()},
+                     {"arguments", {"--allow-model-root"}},
+                     {"uci_options", selected_options},
+                     {"candidate_id", candidate_id},
+                 }},
+            },
+            "test").at("resource");
+        REQUIRE(operator_selected.at("data")
+                    .at("model_selection_authority") == "operator");
+        REQUIRE_FALSE(operator_selected.at("data").contains("launch_profile"));
+
+        replacement_receipt["artifact_sha256"] = std::string(64, 'c');
+        std::ofstream(data_root / "receipts" / "uci_arena.engine.json",
+                      std::ios::trunc)
+            << replacement_receipt.dump(2);
+        control_plane.reconcile_installed_services(data_root);
+        REQUIRE(control_plane.status()
+                    .at("installed_engine_reconciliation")
+                    .at("outcome") == "operator_model_override_preserved");
+        const auto preserved_operator = store->get_resource(
+            "engine", registered.at("id").get<std::string>()).value();
+        REQUIRE(preserved_operator.revision ==
+                operator_selected.at("revision"));
+        REQUIRE(fs::path(json::parse(preserved_operator.data_json)
+                             .at("option_overrides")
+                             .at("ModelRoot")
+                             .get<std::string>()) == alternate_model_root);
     }
 
     fs::remove_all(root);

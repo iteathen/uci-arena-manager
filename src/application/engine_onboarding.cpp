@@ -557,6 +557,16 @@ void append_receipt_candidates(
                  receipt.value("component_version", "")},
                 {"recommended", component_id == "uci_arena.engine"},
             };
+            const std::string artifact_sha256 =
+                receipt.value("artifact_sha256", "");
+            if (artifact_sha256.size() == crypto_hash_sha256_BYTES * 2U &&
+                std::ranges::all_of(
+                    artifact_sha256,
+                    [](const unsigned char character) {
+                        return std::isxdigit(character) != 0;
+                    })) {
+                metadata["installed_artifact_sha256"] = artifact_sha256;
+            }
             if (manifest.contains("default_model") &&
                 manifest.at("default_model").is_object()) {
                 const json& model = manifest.at("default_model");

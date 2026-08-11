@@ -67,6 +67,11 @@ candidate_authority:
         attempted; it never means launch-safe, registered, or trusted.
   installed_receipt:
     value: verified_component_inventory
+    rules:
+      - The candidate carries the receipt's exact installed artifact SHA-256
+        as generation evidence after the manifest and selected executable pass
+        their independent inventory checks. This digest detects a repaired or
+        same-version replacement whose normalized executable path is unchanged.
   saved_locator:
     value: retained_locator_hint
 
@@ -171,6 +176,16 @@ registration:
       Refresh targets that exact resource revision, repeats the complete
       candidate probe including qualified runtime-status matching, and keeps
       the prior registration authoritative on failure.
+    - At Manager startup, an idle receipt-managed UCI Arena Engine that still
+      retains packaged launch-profile authority is refreshed through that same
+      command whenever candidate id, component version, receipt artifact
+      digest, launch arguments, options, or launch-profile identity differs.
+      This is reconciliation of existing Installer authority, not implicit
+      discovery registration.
+    - A persisted operator model selection is explicit registration authority
+      and is never replaced during startup. Legacy managed registrations whose
+      selection authority is not provable also remain unchanged and require an
+      explicit refresh.
     - Refresh is rejected while a running or paused competition or active game
       references the engine so one persisted competition cannot silently
       change topology, timing evidence, or knowledge bindings between games.
@@ -244,3 +259,6 @@ acceptance:
   - Conservative and qualified-timing launch-profile states remain visible in
     the engine candidate UI; a rejected profile is actionable and cannot be
     registered through the dashboard.
+  - A same-version receipt replacement with a new artifact digest refreshes an
+    idle packaged-profile registration on startup, while an explicit operator
+    ModelRoot and an active competition both preserve the prior registration.

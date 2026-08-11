@@ -61,6 +61,7 @@ class ControlPlane final {
         const std::string& format) const;
 
   private:
+    void reconcile_installed_engine();
     [[nodiscard]] nlohmann::json register_engine(
         const nlohmann::json& request,
         const std::string& actor);
@@ -105,6 +106,9 @@ class ControlPlane final {
     std::string started_at_;
     nlohmann::json installed_service_reconciliation_{
         {"schema", "arena_installed_service_reconciliation_v1"},
+        {"state", "not_run"}};
+    nlohmann::json installed_engine_reconciliation_{
+        {"schema", "arena_installed_engine_reconciliation_v1"},
         {"state", "not_run"}};
 };
 

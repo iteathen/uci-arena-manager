@@ -117,7 +117,20 @@ engine_contract:
         such a refresh; it must not create a second managed Engine authority.
         Removing an idle Engine resource removes Manager registration state
         only and never deletes installed or preserved component data.
-        Provider-output adoption never silently rewrites a registered engine.
+      - Manager startup automatically invokes that same revision-checked full
+        refresh operation when exactly one persisted receipt-managed UCI Arena
+        Engine still carries its packaged launch_profile authority and the
+        verified current receipt candidate differs. The automatic path never
+        bypasses active-use conflicts, UCI probing, runtime-identity checks, or
+        optimistic revision control.
+      - An operator-selected ModelRoot removes packaged launch_profile
+        authority from the persisted registration. Startup reconciliation
+        preserves that registration unchanged and reports
+        operator_model_override_preserved; provider output or a new component
+        root never silently resets the operator's model choice.
+      - An absent, ambiguous, unverifiable, or busy managed Engine remains
+        safely stale with a bounded reconciliation result. It cannot prevent
+        Manager startup or create a second Engine authority.
       - An operator-selected ModelRoot keeps every other Engine-owned launch
         argument and UCI option exact. It does not inherit the packaged
         qualified-timing claim or expected runtime identity; returning to the
