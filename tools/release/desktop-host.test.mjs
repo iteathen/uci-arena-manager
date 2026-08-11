@@ -26,7 +26,6 @@ test("native host setup authority is narrow, typed, and unavailable to normal br
     path.join(root, "apps", "cli", "ui_picker.cpp"),
     "utf8",
   );
-  const setup = readFileSync(path.join(root, "apps", "setup", "main.cpp"), "utf8");
   assert.match(cli, /if \(desktop_host\)[\s\S]*setup=1/u);
   assert.match(helper, /arena_ui_setup_request_v1/);
   assert.match(helper, /component id is not available to desktop setup/);
@@ -34,12 +33,54 @@ test("native host setup authority is narrow, typed, and unavailable to normal br
   assert.match(helper, /\/v1\/setup-apply/);
   assert.match(helper, /request\.operation == "discover"/);
   assert.match(helper, /arguments\.push_back\("inventory"\)/);
+  assert.match(helper, /arguments\.push_back\("--scan-root"\)/);
+  assert.match(helper, /input\.at\("roots"\)\.size\(\) > 8/);
   assert.match(helper, /discover is a read-only setup-plan operation/);
   assert.match(helper, /runas/);
+  assert.match(helper, /--result-file/);
   assert.doesNotMatch(helper, /input\.at\("executable"\)/);
   assert.doesNotMatch(helper, /input\.at\("argv"\)/);
   assert.doesNotMatch(helper, /input\.at\("catalog"\)/);
-  assert.match(setup, /--result-file/);
+});
+
+test("direct Lichess credential entry is a write-only native transaction", () => {
+  const helper = readFileSync(
+    path.join(root, "apps", "cli", "ui_picker.cpp"),
+    "utf8",
+  );
+  const header = readFileSync(
+    path.join(root, "include", "arena", "platform", "operator_credential_file.hpp"),
+    "utf8",
+  );
+  assert.match(helper, /\/v1\/bot-credential-plan/);
+  assert.match(helper, /\/v1\/bot-credential-apply/);
+  assert.match(helper, /application\/octet-stream/);
+  assert.match(helper, /OperatorCredentialFileUpdate/);
+  assert.match(helper, /lichess_token_path/);
+  assert.match(helper, /consumer_configuration_regenerated/);
+  assert.doesNotMatch(helper, /arguments\.push_back\(credential\)/);
+  const materializeCredential = helper.slice(
+    helper.indexOf("json materialize_lichess_credential"),
+    helper.indexOf("#ifdef _WIN32", helper.indexOf("json materialize_lichess_credential")),
+  );
+  assert.match(
+    materializeCredential,
+    /ServiceCatalog::control_bot\([\s\S]*"status"\)[\s\S]*status\.value\("installed", false\)/u,
+  );
+  assert.ok(
+    materializeCredential.indexOf("ServiceCatalog::control_bot") <
+      materializeCredential.indexOf("OperatorCredentialFileUpdate"),
+    "startup authority must be checked before credential mutation",
+  );
+  assert.doesNotMatch(materializeCredential, /saved_locator/);
+  const applyHandler = helper.slice(
+    helper.indexOf('"/v1/bot-credential-apply"'),
+    helper.indexOf("const auto register_setup_handler"),
+  );
+  assert.doesNotMatch(applyHandler, /error\.what\(\)/);
+  assert.match(applyHandler, /preceding credential remains authoritative/);
+  assert.match(header, /void commit\(\)/);
+  assert.match(header, /void rollback\(\) noexcept/);
 });
 
 test("desktop helper keeps scratch state out of the install directory", () => {

@@ -24,6 +24,14 @@ import {
   updateLocalBotOptions,
 } from '../api/client'
 import type { BotAccountAction, BotOptions, BotOptionsUpdate } from '../api/types'
+import {
+  changeOutboundBehavior,
+  needsOutboundConfirmation,
+  needsRatedConfirmation,
+  optionUpdateAuthorityMessage,
+  outboundBehavior,
+  schedulerAuthorityState,
+} from './botOperationsModel'
 
 const speeds = ['ultraBullet', 'bullet', 'blitz', 'rapid', 'classical', 'correspondence']
 const modes = ['casual', 'rated']
@@ -49,9 +57,11 @@ function numberValue(value: string | number, fallback: number) {
 
 export function BotOperationsPanel({
   installed,
+  providerActive,
   navigate,
 }: {
   installed: boolean
+  providerActive: boolean | undefined
   navigate: (page: string) => void
 }) {
   const queryClient = useQueryClient()
@@ -110,20 +120,21 @@ export function BotOperationsPanel({
     },
   })
 
-  const ratedConfirmationRequired =
-    options.data?.outbound_challenge.rated !== true &&
-    form?.outbound_challenge.rated === true
-  const outboundPreviouslyDisabled =
-    options.data?.scheduler.enabled !== true ||
-    options.data?.capacity.bot.target_active === 0
-  const outboundNowEnabled =
-    form?.scheduler.enabled === true && (form?.capacity.bot.target_active ?? 0) > 0
-  const outboundConfirmationRequired = outboundPreviouslyDisabled && outboundNowEnabled
+  const ratedConfirmationRequired = Boolean(
+    options.data && form && needsRatedConfirmation(options.data, form),
+  )
+  const outboundConfirmationRequired = Boolean(
+    options.data && form && needsOutboundConfirmation(options.data, form),
+  )
   const saveBlocked = !form ||
     (ratedConfirmationRequired && !confirmRated) ||
     (outboundConfirmationRequired && !confirmOutbound)
   const reservation = account.data?.reservation.reservation
   const schedulerPaused = account.data?.scheduler.scheduler?.paused
+  const schedulerState = schedulerAuthorityState(
+    options.data?.scheduler.enabled,
+    schedulerPaused,
+  )
 
   if (!installed) {
     return (
@@ -269,16 +280,25 @@ export function BotOperationsPanel({
             <Fieldset legend="Scheduler authority">
               <Group justify="space-between">
                 <Group>
-                  <Badge color={schedulerPaused ? 'orange' : 'teal'}>
-                    {schedulerPaused ? 'PAUSED' : 'ACTIVE'}
+                  <Badge color={
+                    schedulerState === 'active'
+                      ? 'teal'
+                      : schedulerState === 'paused'
+                        ? 'orange'
+                        : 'gray'
+                  }>
+                    {schedulerState.toUpperCase()}
                   </Badge>
                   <Text size="sm">
-                    Pausing stops new outbound scheduling; it does not terminate active games.
+                    {schedulerState === 'disabled'
+                      ? 'Active play is disabled in provider options; incoming challenges remain separately controlled.'
+                      : 'Pausing stops new outbound scheduling; it does not terminate active games.'}
                   </Text>
                 </Group>
                 <Button
                   variant="default"
                   loading={accountControl.isPending}
+                  disabled={schedulerState === 'checking' || schedulerState === 'disabled'}
                   onClick={() => accountControl.mutate({
                     action: schedulerPaused ? 'scheduler_resume' : 'scheduler_pause',
                   })}
@@ -340,7 +360,7 @@ export function BotOperationsPanel({
                 </Group>
               </Stack>
             </Fieldset>
-            <Fieldset legend="Inbound challenges">
+            <Fieldset legend="Inbound game types and connection policy">
               <Stack gap="sm">
                 <Switch label="Accept challenges from bots" checked={form.inbound_challenges.accept_bots}
                   onChange={(event) => setForm({ ...form, inbound_challenges: { ...form.inbound_challenges, accept_bots: event.currentTarget.checked } })} />
@@ -363,12 +383,27 @@ export function BotOperationsPanel({
             <Fieldset legend="Outbound challenges">
               <Stack gap="sm">
                 <Group>
-                  <Switch label="Automatic outbound scheduling" checked={form.scheduler.enabled}
-                    onChange={(event) => setForm({ ...form, scheduler: { ...form.scheduler, enabled: event.currentTarget.checked } })} />
                   <Switch label="Rated games" checked={form.outbound_challenge.rated}
                     onChange={(event) => setForm({ ...form, outbound_challenge: { ...form.outbound_challenge, rated: event.currentTarget.checked } })} />
                 </Group>
-                <SimpleGrid cols={{ base: 1, sm: 3 }}>
+                <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
+                  <Select
+                    label="Play behavior"
+                    description="Choose whether to seek games or only wait for incoming challenges."
+                    data={[
+                      { value: 'wait', label: 'Wait for incoming challenges' },
+                      {
+                        value: 'active',
+                        label: 'Actively seek bot games',
+                        disabled: form.capacity.bot.slots === 0,
+                      },
+                    ]}
+                    value={outboundBehavior(form)}
+                    onChange={(value) => value && setForm(changeOutboundBehavior(
+                      form,
+                      value as 'wait' | 'active',
+                    ))}
+                  />
                   <Select label="Preferred color" data={['random', 'white', 'black']} value={form.outbound_challenge.color}
                     onChange={(value) => value && setForm({ ...form, outbound_challenge: { ...form.outbound_challenge, color: value as 'random' | 'white' | 'black' } })} />
                   <NumberInput label="Clock base (seconds)" min={0} max={86400} value={form.outbound_challenge.clock_limit}
@@ -417,7 +452,9 @@ export function BotOperationsPanel({
               />
             )}
             {save.error && <Alert color="red">{save.error.message}</Alert>}
-            {save.isSuccess && <Alert color="green">Adapter options were validated and saved atomically.</Alert>}
+            {save.isSuccess && (
+              <Alert color="green">{optionUpdateAuthorityMessage(providerActive)}</Alert>
+            )}
             <Group justify="flex-end">
               <Button variant="default" onClick={() => setForm(null)}>
                 Reset unsaved changes

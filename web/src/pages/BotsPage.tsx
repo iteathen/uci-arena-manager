@@ -2,12 +2,13 @@ import { IconRefresh, IconRobot } from '@tabler/icons-react'
 import { Alert, Badge, Button, Code, Group, Paper, SimpleGrid, Stack, Text, ThemeIcon, Title } from '@mantine/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { api, controlLocalBot, probeLocalBot } from '../api/client'
+import { api, controlLocalBot, probeLocalBot, qualifyLocalBot } from '../api/client'
 import type { BotCandidate } from '../api/types'
 import { PageHeader } from '../components/PageHeader'
-import { PathPickerInput } from '../components/PathPickerInput'
 import { ComponentSetupButton } from '../components/ComponentSetupButton'
 import { BotOperationsPanel } from '../components/BotOperationsPanel'
+import { LichessCredentialSetup } from '../components/LichessCredentialSetup'
+import { botStatusRefreshInterval, canEnableBotStartup, canProbeBot } from './botAdmission'
 
 export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
   const queryClient = useQueryClient()
@@ -17,22 +18,22 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
   const adapterComponent = components.data?.components.find(
     (component) => component.component_id === 'lichess.adapter',
   )
-  const [tokenPath, setTokenPath] = useState('')
   const [detectionMessage, setDetectionMessage] = useState('')
-  const saveToken = useMutation({
-    mutationFn: api.saveBotTokenReference,
+  const probe = useMutation({ mutationFn: probeLocalBot })
+  const qualification = useMutation({
+    mutationFn: qualifyLocalBot,
     onSuccess: async () => {
-      setTokenPath('')
       await candidates.refetch()
     },
   })
-  const probe = useMutation({ mutationFn: probeLocalBot })
   const candidate = candidates.data?.candidates[0]
   const startup = useQuery({
     queryKey: ['bot-startup'],
     queryFn: () => controlLocalBot('status'),
     enabled: candidate?.package_state === 'installed',
     retry: false,
+    refetchInterval: botStatusRefreshInterval(candidate?.package_state === 'installed'),
+    refetchIntervalInBackground: false,
   })
   const startupControl = useMutation({
     mutationFn: controlLocalBot,
@@ -68,7 +69,11 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
     if (code.includes('engine') || code.includes('model')) {
       return { page: 'engines', label: 'Open Engines' }
     }
-    if (code.includes('timing_profile')) {
+    if (
+      code.includes('timing_profile') ||
+      code.includes('single_game_profile') ||
+      code.includes('capacity_profile')
+    ) {
       return { page: 'reports', label: 'Review evidence' }
     }
     if (code.includes('adapter')) {
@@ -114,7 +119,7 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
               <div>
                 <Title order={2}>Lichess Bot</Title>
                 <Text size="sm" c="dimmed">
-                  One local BOT account using a token-file path reference.
+                  One local BOT account with direct API-key setup or an advanced existing-file locator.
                 </Text>
               </div>
             </Group>
@@ -152,25 +157,11 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
               <Text size="sm">Token-file reference</Text>
               <Code>{candidate?.token_reference_available ? 'available' : 'missing'}</Code>
             </Group>
-            <PathPickerInput
-              label="Lichess token file"
-              description="Select an operator-owned file outside Manager data and the installed adapter. Only its path is saved."
-              placeholder="Select the existing token file"
-              value={tokenPath}
-              onChange={setTokenPath}
-              mode="file"
-              filters={[{ name: 'Token reference files', patterns: ['*.txt', '*.token', '*'] }]}
+            <LichessCredentialSetup
+              onCompleted={async () => {
+                await candidates.refetch()
+              }}
             />
-            <Group justify="flex-end">
-              <Button
-                variant="default"
-                loading={saveToken.isPending}
-                disabled={!tokenPath}
-                onClick={() => saveToken.mutate(tokenPath)}
-              >
-                Save token-file reference
-              </Button>
-            </Group>
             <Group justify="space-between">
               <Text size="sm">Startup</Text>
               <Code>
@@ -220,12 +211,6 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
             ))}
             {candidates.error && <Alert color="red">{candidates.error.message}</Alert>}
             {detectionMessage && <Alert color="blue">{detectionMessage}</Alert>}
-            {saveToken.error && <Alert color="red">{saveToken.error.message}</Alert>}
-            {saveToken.data && (
-              <Alert color="green">
-                Token-file reference saved without reading its contents.
-              </Alert>
-            )}
             {probe.error && <Alert color="red">{probe.error.message}</Alert>}
             {startup.error && (
               <Alert color="blue">
@@ -234,6 +219,24 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
             )}
             {startupControl.error && (
               <Alert color="red">{startupControl.error.message}</Alert>
+            )}
+            {qualification.error && (
+              <Alert color="red" title="Installed qualification failed">
+                <Stack gap="xs">
+                  <Text size="sm">{qualification.error.message}</Text>
+                  <Group gap="xs">
+                    <Button size="xs" variant="subtle" onClick={() => navigate('engines')}>
+                      Engines
+                    </Button>
+                    <Button size="xs" variant="subtle" onClick={() => navigate('reports')}>
+                      Evidence reports
+                    </Button>
+                    <Button size="xs" variant="subtle" onClick={() => navigate('services')}>
+                      Services
+                    </Button>
+                  </Group>
+                </Stack>
+              </Alert>
             )}
             {probe.data && (
               <Alert color="green" title="BOT account verified">
@@ -245,6 +248,35 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
                 {startupControl.data.account_name}
               </Alert>
             )}
+            {qualification.data && (
+              <Alert color="green" title="Installed Engine qualified">
+                {qualification.data.model_id} · {qualification.data.provider} ·{' '}
+                {qualification.data.search_core.toUpperCase()} · concurrency{' '}
+                {qualification.data.maximum_concurrency}
+                {qualification.data.reused ? ' · reused exact completed evidence' : ''}
+              </Alert>
+            )}
+            <Group justify="space-between" align="center">
+              <div>
+                <Text size="sm" fw={500}>Installed Engine evidence</Text>
+                <Text size="xs" c="dimmed">
+                  Retains compatible timing authority and rebuilds exact single-game and capacity evidence.
+                </Text>
+              </div>
+              <Button
+                variant="light"
+                loading={qualification.isPending}
+                disabled={
+                  candidate?.package_state !== 'installed' ||
+                  candidate?.qualification_state !== 'available' ||
+                  !observedStartup ||
+                  startupInstalled
+                }
+                onClick={() => qualification.mutate()}
+              >
+                Requalify installed engine
+              </Button>
+            </Group>
             <Group justify="space-between">
               <Button
                 variant="default"
@@ -259,7 +291,7 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
               </Button>
               <Button
                 loading={probe.isPending}
-                disabled={candidate?.state !== 'ready_to_probe'}
+                disabled={!canProbeBot(candidate)}
                 onClick={() => probe.mutate()}
               >
                 Verify BOT account
@@ -276,11 +308,7 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
               </Button>
               <Button
                 loading={startupControl.isPending}
-                disabled={
-                  !observedStartup ||
-                  candidate?.state !== 'ready_to_probe' ||
-                  startupInstalled
-                }
+                disabled={!canEnableBotStartup(candidate, Boolean(observedStartup), startupInstalled)}
                 onClick={() => startupControl.mutate('enable_startup')}
               >
                 Enable startup
@@ -297,18 +325,21 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
           <Title order={3}>Readiness and options</Title>
           <Text size="sm" c="dimmed" mt="xs">
             Package, configuration, timing evidence, engine identity, knowledge,
-            capacity, transport, credential reference, and startup must all be ready
-            before activation.
+            capacity, credential reference, and startup eligibility remain explicit.
+            Transport uses the provider's conservative bootstrap reserve until qualified
+            evidence is learned from completed games.
           </Text>
           <SimpleGrid cols={{ base: 1, sm: 2 }} mt="md">
             {Object.entries(readinessLabels).map(([key, label]) => {
               const state = readiness[key] ?? 'missing'
               const ready = state === 'ready' || state === 'verified' || state === 'enabled'
+              const bootstrap = state === 'bootstrap'
+              const configured = state === 'configured'
               return (
                 <Paper withBorder p="sm" key={key}>
                   <Text size="xs" c="dimmed">{label}</Text>
-                  <Badge color={ready ? 'teal' : state === 'not_verified' ? 'blue' : 'orange'}>
-                    {state.replaceAll('_', ' ')}
+                  <Badge color={ready ? 'teal' : bootstrap || configured || state === 'not_verified' ? 'blue' : 'orange'}>
+                    {bootstrap ? 'bootstrap reserve' : configured ? 'profile configured' : state.replaceAll('_', ' ')}
                   </Badge>
                 </Paper>
               )
@@ -327,6 +358,7 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
           <Stack mt="lg">
             <BotOperationsPanel
               installed={candidate?.package_state === 'installed'}
+              providerActive={observedStartup?.active}
               navigate={navigate}
             />
           </Stack>

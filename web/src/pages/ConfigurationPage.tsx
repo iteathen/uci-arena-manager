@@ -31,10 +31,17 @@ import {
   type LocalSetupResult,
 } from '../api/client'
 import { managerEndpointLabel } from '../components/configurationModel'
+import { LichessCredentialSetup } from '../components/LichessCredentialSetup'
 import { PageHeader } from '../components/PageHeader'
 import { PathPickerInput } from '../components/PathPickerInput'
 
-type DiscoverableAssetKind = 'opening_book' | 'syzygy' | 'timing_profile'
+type DiscoverableAssetKind =
+  | 'opening_book'
+  | 'syzygy'
+  | 'timing_profile'
+  | 'lichess_single_game_profile'
+  | 'lichess_capacity_profile'
+  | 'lichess_transport_profile'
 
 const discoverableAssets: Array<{
   kind: DiscoverableAssetKind
@@ -43,6 +50,9 @@ const discoverableAssets: Array<{
   { kind: 'opening_book', label: 'Opening books' },
   { kind: 'syzygy', label: 'Syzygy tablebases' },
   { kind: 'timing_profile', label: 'Timing evidence' },
+  { kind: 'lichess_single_game_profile', label: 'Lichess single-game evidence' },
+  { kind: 'lichess_capacity_profile', label: 'Lichess capacity evidence' },
+  { kind: 'lichess_transport_profile', label: 'Lichess transport evidence' },
 ]
 
 function candidateClassification(candidate: LocalAssetCandidate) {
@@ -62,7 +72,7 @@ export function ConfigurationPage({ navigate }: { navigate: (page: string) => vo
   const [singleGameProfilePath, setSingleGameProfilePath] = useState('')
   const [capacityProfilePath, setCapacityProfilePath] = useState('')
   const [transportProfilePath, setTransportProfilePath] = useState('')
-  const [lichessTokenPath, setLichessTokenPath] = useState('')
+  const [assetScanRoot, setAssetScanRoot] = useState('')
   const [copied, setCopied] = useState('')
   const [pendingSetup, setPendingSetup] = useState<{
     key: string
@@ -93,7 +103,7 @@ export function ConfigurationPage({ navigate }: { navigate: (page: string) => vo
     },
   })
   const discoverAssets = useMutation({
-    mutationFn: discoverLocalAssets,
+    mutationFn: (roots: string[]) => discoverLocalAssets(roots),
     onSuccess: setAssetInventory,
   })
   const copy = async (label: string, command: string) => {
@@ -174,6 +184,9 @@ export function ConfigurationPage({ navigate }: { navigate: (page: string) => vo
     if (kind === 'opening_book') setBookPath(candidate.path)
     if (kind === 'syzygy') setSyzygyPath(candidate.path)
     if (kind === 'timing_profile') setTimingProfilePath(candidate.path)
+    if (kind === 'lichess_single_game_profile') setSingleGameProfilePath(candidate.path)
+    if (kind === 'lichess_capacity_profile') setCapacityProfilePath(candidate.path)
+    if (kind === 'lichess_transport_profile') setTransportProfilePath(candidate.path)
     const pending = {
       key: `discovered-${kind}-${candidate.path}`,
       label: `Import ${label}`,
@@ -225,7 +238,7 @@ export function ConfigurationPage({ navigate }: { navigate: (page: string) => vo
         <Paper withBorder className="panel">
           <Group justify="space-between" align="flex-start" mb="md">
             <div>
-              <Text fw={700}>Existing books, tablebases, and bot credentials</Text>
+              <Text fw={700}>Existing knowledge, timing evidence, and bot credentials</Text>
               <Text size="sm" c="dimmed">
                 {nativeSetup
                   ? 'Browse locally, review the typed setup plan, then confirm it in this desktop application.'
@@ -238,7 +251,7 @@ export function ConfigurationPage({ navigate }: { navigate: (page: string) => vo
           <Paper withBorder p="md" mb="lg">
             <Group justify="space-between" align="flex-start">
               <div>
-                <Text fw={700}>Find large assets already on this computer</Text>
+                <Text fw={700}>Find retained assets already on this computer</Text>
                 <Text size="sm" c="dimmed" maw={760}>
                   Uses the operating-system file index for a bounded read-only lookup. It does
                   not crawl drives, copy files, register candidates, or require matching release
@@ -251,14 +264,14 @@ export function ConfigurationPage({ navigate }: { navigate: (page: string) => vo
                 loading={discoverAssets.isPending}
                 onClick={() => {
                   if (nativeSetup) {
-                    discoverAssets.mutate()
+                    discoverAssets.mutate([])
                   } else {
                     void copy('detect-assets', 'arena-setup --json inventory')
                   }
                 }}
               >
                 {nativeSetup
-                  ? 'Auto-detect large assets'
+                  ? 'Auto-detect retained assets'
                   : copied === 'detect-assets'
                     ? 'Detection command copied'
                     : 'Copy detection command'}
@@ -270,6 +283,38 @@ export function ConfigurationPage({ navigate }: { navigate: (page: string) => vo
                 browse and import remain available below.
               </Alert>
             )}
+            <Group mt="md" align="flex-end">
+              <PathPickerInput
+                label="Folder to inspect"
+                description="Use this when the operating-system index does not include an older drive or workspace. Only this folder and its direct children are inspected."
+                placeholder="E:\\Chess"
+                value={assetScanRoot}
+                onChange={setAssetScanRoot}
+                mode="directory"
+              />
+              <Button
+                variant="default"
+                leftSection={<IconSearch size={16} />}
+                disabled={!assetScanRoot}
+                loading={discoverAssets.isPending && discoverAssets.variables?.[0] === assetScanRoot}
+                onClick={() => {
+                  if (nativeSetup) {
+                    discoverAssets.mutate([assetScanRoot])
+                  } else {
+                    void copy(
+                      'scan-assets',
+                      `arena-setup --json inventory --scan-root ${quote(assetScanRoot)}`,
+                    )
+                  }
+                }}
+              >
+                {nativeSetup
+                  ? 'Scan selected folder'
+                  : copied === 'scan-assets'
+                    ? 'Scan command copied'
+                    : 'Copy scan command'}
+              </Button>
+            </Group>
             {assetInventory?.discovery && (
               <Stack mt="md">
                 {discoverableAssets.map(({ kind, label }) => {
@@ -306,34 +351,44 @@ export function ConfigurationPage({ navigate }: { navigate: (page: string) => vo
                       ) : (
                         <ScrollArea.Autosize mah={320} type="auto">
                           <Stack gap="xs">
-                            {candidates.map((candidate) => (
-                              <Paper
-                                withBorder
-                                p="xs"
-                                key={`${candidate.source}-${candidate.path}`}
-                              >
-                                <Group justify="space-between" align="flex-start" wrap="nowrap">
-                                  <Stack gap={4} style={{ minWidth: 0, flex: 1 }}>
-                                    <Group gap="xs">
-                                      <Badge size="xs" variant="outline">
-                                        {candidate.source}
-                                      </Badge>
-                                      <Text size="xs" c="dimmed">
-                                        {candidateClassification(candidate)}
-                                      </Text>
-                                    </Group>
-                                    <Code block>{candidate.path}</Code>
-                                  </Stack>
-                                  <Button
-                                    size="xs"
-                                    variant="default"
-                                    onClick={() => reviewDiscovered(kind, label, candidate)}
-                                  >
-                                    {nativeSetup ? 'Review import' : 'Copy import command'}
-                                  </Button>
-                                </Group>
-                              </Paper>
-                            ))}
+                            {candidates.map((candidate) => {
+                              const selected =
+                                row?.selection?.source === candidate.source &&
+                                row.selection.path === candidate.path
+                              return (
+                                <Paper
+                                  withBorder
+                                  p="xs"
+                                  key={`${candidate.source}-${candidate.path}`}
+                                >
+                                  <Group justify="space-between" align="flex-start" wrap="nowrap">
+                                    <Stack gap={4} style={{ minWidth: 0, flex: 1 }}>
+                                      <Group gap="xs">
+                                        <Badge size="xs" variant="outline">
+                                          {candidate.source}
+                                        </Badge>
+                                        {selected && (
+                                          <Badge size="xs" color="teal" variant="light">
+                                            selected
+                                          </Badge>
+                                        )}
+                                        <Text size="xs" c="dimmed">
+                                          {candidateClassification(candidate)}
+                                        </Text>
+                                      </Group>
+                                      <Code block>{candidate.path}</Code>
+                                    </Stack>
+                                    <Button
+                                      size="xs"
+                                      variant="default"
+                                      onClick={() => reviewDiscovered(kind, label, candidate)}
+                                    >
+                                      {nativeSetup ? 'Review import' : 'Copy import command'}
+                                    </Button>
+                                  </Group>
+                                </Paper>
+                              )
+                            })}
                           </Stack>
                         </ScrollArea.Autosize>
                       )}
@@ -392,26 +447,16 @@ export function ConfigurationPage({ navigate }: { navigate: (page: string) => vo
               {reviewImport('syzygy', 'Import Syzygy', 'syzygy', syzygyPath)}
             </Stack>
             <Stack>
-              <PathPickerInput
-                label="Lichess token file reference"
-                description="Select only the credential file path. Its contents are never opened or returned."
-                placeholder="C:\Users\you\.config\uci-arena\lichess-token.txt"
-                value={lichessTokenPath}
-                onChange={setLichessTokenPath}
-                mode="file"
-                filters={[{ name: 'Credential text files', patterns: ['*.txt', '*.token'] }]}
+              <LichessCredentialSetup
+                onCompleted={() => {
+                  setSetupResult('Lichess credential locator and consumer configuration committed.')
+                }}
               />
-              {reviewImport(
-                'lichess',
-                'Save token-file reference',
-                'lichess_token_path',
-                lichessTokenPath,
-              )}
             </Stack>
             <Stack>
               <PathPickerInput
                 label="Qualified UCI timing profile"
-                description="Select the exact provider-safety-qualified v3 timing profile for this engine, model, provider, and hardware."
+                description="Select a provider-safety-qualified v3 profile matching the model, provider/runtime, hardware, and search topology. Engine build differences remain visible provenance unless timing-relevant identity changed."
                 placeholder="D:\Chess\profiles\uci_time_profile_v3.json"
                 value={timingProfilePath}
                 onChange={setTimingProfilePath}
@@ -445,12 +490,12 @@ export function ConfigurationPage({ navigate }: { navigate: (page: string) => vo
             <Stack>
               <PathPickerInput
                 label="Lichess capacity profile"
-                description="Select the qualified concurrency profile bound to the same engine, model, and single-game profile."
-                placeholder="D:\Chess\profiles\uci_arena_lichess_capacity_profile_v1.json"
+                description="Select the qualified v2 concurrency profile bound to the same engine, model, timing authority, and single-game profile."
+                placeholder="D:\Chess\profiles\uci_arena_lichess_capacity_profile_v2.json"
                 value={capacityProfilePath}
                 onChange={setCapacityProfilePath}
                 mode="file"
-                filters={[{ name: 'Lichess capacity profiles', patterns: ['uci_arena_lichess_capacity_profile_v1.json', '*.json'] }]}
+                filters={[{ name: 'Lichess capacity profiles', patterns: ['uci_arena_lichess_capacity_profile_v2.json', '*.json'] }]}
               />
               {reviewImport(
                 'capacity-profile',
@@ -462,7 +507,7 @@ export function ConfigurationPage({ navigate }: { navigate: (page: string) => vo
             <Stack>
               <PathPickerInput
                 label="Lichess transport profile"
-                description="Select the qualified v2 network transport-reserve profile measured for this host."
+                description="Select the qualified v2 network transport-reserve profile. Compatible evidence remains authoritative as it rolls forward with completed-game observations; age alone does not invalidate it."
                 placeholder="D:\Chess\profiles\transport_profile_v2.json"
                 value={transportProfilePath}
                 onChange={setTransportProfilePath}

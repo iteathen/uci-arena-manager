@@ -1,4 +1,4 @@
-import { IconCpu, IconFolderSearch, IconPlus, IconRefresh } from '@tabler/icons-react'
+import { IconCpu, IconFolderSearch, IconPlus, IconRefresh, IconTrash } from '@tabler/icons-react'
 import {
   Alert,
   Badge,
@@ -17,27 +17,22 @@ import {
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { api, makeCommand, pickLocalPath } from '../api/client'
-import type { EngineCandidate, EngineData } from '../api/types'
+import type { EngineCandidate, EngineData, Resource } from '../api/types'
 import { EmptyState } from '../components/EmptyState'
 import { ComponentSetupButton } from '../components/ComponentSetupButton'
 import { PageHeader } from '../components/PageHeader'
 import { PathPickerInput } from '../components/PathPickerInput'
 import { StatusPill } from '../components/StatusPill'
+import {
+  candidateRegistration,
+  candidateWithModelRoot,
+  engineRegistrationParameters,
+  isCustomModelRoot,
+} from './engineRegistration'
 
-function registrationParameters(candidate: EngineCandidate) {
-  return {
-    display_name: candidate.display_name,
-    executable: candidate.executable,
-    working_directory: candidate.working_directory,
-    arguments: candidate.arguments,
-    uci_options: candidate.uci_options,
-    candidate_id: candidate.candidate_id,
-  }
-}
-
-export function EnginesPage() {
+export function EnginesPage({ navigate }: { navigate: (page: string) => void }) {
   const queryClient = useQueryClient()
   const [scanRoot, setScanRoot] = useState('')
   const engines = useQuery({
@@ -56,20 +51,18 @@ export function EnginesPage() {
   const [name, setName] = useState('')
   const [executable, setExecutable] = useState('')
   const [workingDirectory, setWorkingDirectory] = useState('')
+  const [manualModelRoot, setManualModelRoot] = useState('')
+  const [candidateModelRoots, setCandidateModelRoots] = useState<Record<string, string>>({})
   const [testedCandidates, setTestedCandidates] = useState<Record<string, string>>({})
   const [manualProbeId, setManualProbeId] = useState('')
   const [scanError, setScanError] = useState('')
   const [refreshMessage, setRefreshMessage] = useState('')
-
-  const registeredPaths = useMemo(
-    () => new Set((engines.data ?? []).map((engine) => engine.data.executable.toLowerCase())),
-    [engines.data],
-  )
+  const [engineToRemove, setEngineToRemove] = useState<Resource<EngineData> | null>(null)
 
   const probeCandidate = useMutation({
     mutationFn: (candidate: EngineCandidate) =>
       api.probeEngine({
-        ...registrationParameters(candidate),
+        ...engineRegistrationParameters(candidate),
       }),
     onSuccess: (result, candidate) => {
       setTestedCandidates((current) => ({
@@ -81,7 +74,7 @@ export function EnginesPage() {
 
   const registerCandidate = useMutation({
     mutationFn: (candidate: EngineCandidate) =>
-      api.command(makeCommand('engine.register', 'engine', registrationParameters(candidate))),
+      api.command(makeCommand('engine.register', 'engine', engineRegistrationParameters(candidate))),
     onSuccess: async (_, candidate) => {
       setTestedCandidates((current) => {
         const next = { ...current }
@@ -95,12 +88,61 @@ export function EnginesPage() {
     },
   })
 
+  const refreshCandidate = useMutation({
+    mutationFn: ({
+      candidate,
+      engine,
+    }: {
+      candidate: EngineCandidate
+      engine: Resource<EngineData>
+    }) =>
+      api.command(
+        makeCommand(
+          'engine.refresh',
+          'engine',
+          engineRegistrationParameters(candidate),
+          false,
+          engine.id,
+          engine.revision,
+        ),
+      ),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['resources', 'engine'] }),
+        queryClient.invalidateQueries({ queryKey: ['engine-candidates'] }),
+      ])
+    },
+  })
+
+  const removeEngine = useMutation({
+    mutationFn: (engine: Resource<EngineData>) =>
+      api.command(
+        makeCommand(
+          'resource.remove',
+          'engine',
+          {},
+          false,
+          engine.id,
+          engine.revision,
+        ),
+      ),
+    onSuccess: async () => {
+      setEngineToRemove(null)
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['resources', 'engine'] }),
+        queryClient.invalidateQueries({ queryKey: ['engine-candidates'] }),
+      ])
+    },
+  })
+
   const manualParameters = {
     display_name: name,
     executable,
     working_directory: workingDirectory || executable.replace(/[\\/][^\\/]+$/, ''),
     arguments: [],
-    uci_options: {},
+    uci_options: manualModelRoot.trim()
+      ? { ModelRoot: manualModelRoot.trim() }
+      : {},
   }
 
   const probeManual = useMutation({
@@ -121,6 +163,7 @@ export function EnginesPage() {
       setName('')
       setExecutable('')
       setWorkingDirectory('')
+      setManualModelRoot('')
       setManualProbeId('')
     },
   })
@@ -193,15 +236,14 @@ export function EnginesPage() {
               </Text>
             </div>
             <Badge variant="light">
-              {candidates.data?.candidates.length ?? 0} candidates
+              {candidates.isLoading
+                ? 'Checking'
+                : candidates.error
+                  ? 'Unavailable'
+                  : `${candidates.data?.candidates.length ?? 0} candidates`}
             </Badge>
           </Group>
 
-          {candidates.error && (
-            <Alert color="red" mb="md">
-              {candidates.error.message}
-            </Alert>
-          )}
           {scanError && <Alert color="red" mb="md">{scanError}</Alert>}
           {refreshMessage && <Alert color="blue" mb="md">{refreshMessage}</Alert>}
           {scanRoot && (
@@ -236,7 +278,11 @@ export function EnginesPage() {
               </Stack>
             </Alert>
           )}
-          {!candidates.isLoading && !candidates.data?.candidates.length ? (
+          {candidates.isLoading ? (
+            <Alert color="blue">Checking installed engine receipts and saved locators…</Alert>
+          ) : candidates.error ? (
+            <Alert color="red">Engine discovery is unavailable: {candidates.error.message}</Alert>
+          ) : !candidates.data?.candidates.length ? (
             <Alert color="gray">
               No installed engine receipts or saved engine locators were found. Scan a
               selected folder or add an external engine.
@@ -244,7 +290,31 @@ export function EnginesPage() {
           ) : (
             <SimpleGrid cols={{ base: 1, lg: 2 }}>
               {candidates.data?.candidates.map((candidate) => {
-                const registered = registeredPaths.has(candidate.executable.toLowerCase())
+                const discoveredRegistration = candidateRegistration(
+                  candidate,
+                  engines.data ?? [],
+                )
+                const packagedModelRoot = typeof candidate.uci_options.ModelRoot === 'string'
+                  ? candidate.uci_options.ModelRoot
+                  : ''
+                const registeredModelRoot =
+                  discoveredRegistration.engine?.data.option_overrides?.ModelRoot
+                const selectedModelRoot = candidateModelRoots[candidate.candidate_id] ?? (
+                  typeof registeredModelRoot === 'string'
+                    ? registeredModelRoot
+                    : packagedModelRoot
+                )
+                const selectedCandidate = packagedModelRoot
+                  ? candidateWithModelRoot(candidate, selectedModelRoot)
+                  : candidate
+                const customModelSelected = isCustomModelRoot(candidate, selectedModelRoot)
+                const registration = candidateRegistration(
+                  selectedCandidate,
+                  engines.data ?? [],
+                )
+                const registered = registration.state === 'registered'
+                const refreshRequired = registration.state === 'refresh_required'
+                const modelRootReady = !packagedModelRoot || Boolean(selectedModelRoot.trim())
                 const tested = Boolean(testedCandidates[candidate.candidate_id])
                 const probing =
                   probeCandidate.isPending &&
@@ -252,6 +322,9 @@ export function EnginesPage() {
                 const registering =
                   registerCandidate.isPending &&
                   registerCandidate.variables?.candidate_id === candidate.candidate_id
+                const refreshing =
+                  refreshCandidate.isPending &&
+                  refreshCandidate.variables?.candidate.candidate_id === candidate.candidate_id
                 return (
                   <Paper key={candidate.candidate_id} withBorder p="md">
                     <Stack gap="sm">
@@ -266,18 +339,88 @@ export function EnginesPage() {
                           </div>
                         </Group>
                         <Badge
-                          color={registered ? 'green' : tested ? 'teal' : candidate.recommended ? 'blue' : 'gray'}
+                          color={registered ? 'green' : refreshRequired ? 'yellow' : tested ? 'teal' : candidate.recommended ? 'blue' : 'gray'}
                           variant="light"
                         >
-                          {registered ? 'Registered' : tested ? 'Test passed' : candidate.recommended ? 'Recommended' : 'Not tested'}
+                          {registered ? 'Registered' : refreshRequired ? 'Update available' : tested ? 'Test passed' : candidate.recommended ? 'Recommended' : 'Not tested'}
                         </Badge>
                       </Group>
                       <Code block>{candidate.executable}</Code>
                       {candidate.default_model && (
                         <Text size="sm" c="dimmed">
-                          Default model: {candidate.default_model.display_name} ·{' '}
+                          Packaged default: {candidate.default_model.display_name} ·{' '}
                           {candidate.default_model.input_adapter_id}
                         </Text>
+                      )}
+                      {packagedModelRoot && (
+                        <Stack gap="xs">
+                          <PathPickerInput
+                            label="Model root"
+                            description="Select a model package directory. Manager applies it only through the engine-advertised ModelRoot option and repeats the full probe."
+                            value={selectedModelRoot}
+                            onChange={(value) => {
+                              setCandidateModelRoots((current) => ({
+                                ...current,
+                                [candidate.candidate_id]: value,
+                              }))
+                              setTestedCandidates((current) => {
+                                const next = { ...current }
+                                delete next[candidate.candidate_id]
+                                return next
+                              })
+                            }}
+                            mode="directory"
+                          />
+                          {customModelSelected && (
+                            <Alert color="yellow" title="Custom model selected">
+                              <Group justify="space-between" align="flex-start">
+                                <Text size="sm">
+                                  Packaged timing qualification will not carry over to this model.
+                                </Text>
+                                <Button
+                                  variant="subtle"
+                                  size="compact-sm"
+                                  onClick={() => {
+                                    setCandidateModelRoots((current) => ({
+                                      ...current,
+                                      [candidate.candidate_id]: packagedModelRoot,
+                                    }))
+                                    setTestedCandidates((current) => {
+                                      const next = { ...current }
+                                      delete next[candidate.candidate_id]
+                                      return next
+                                    })
+                                  }}
+                                >
+                                  Reset to packaged default
+                                </Button>
+                              </Group>
+                            </Alert>
+                          )}
+                        </Stack>
+                      )}
+                      {candidate.launch_profile && !customModelSelected && (
+                        <Alert
+                          color={candidate.launch_profile.state === 'qualified_timing' ? 'teal' : 'yellow'}
+                          title={candidate.launch_profile.state === 'qualified_timing'
+                            ? 'Qualified timing profile selected'
+                            : 'Conservative timing defaults active'}
+                        >
+                          <Stack gap="xs">
+                            <Text size="sm">
+                              {candidate.launch_profile.state === 'qualified_timing'
+                                ? 'The Engine-owned profile includes qualified evidence and installed knowledge bindings. Test the candidate to verify its exact runtime identity.'
+                                : 'The engine remains usable, but timing evidence has not been selected for this managed profile.'}
+                            </Text>
+                            <Button
+                              variant="subtle"
+                              size="compact-sm"
+                              onClick={() => navigate('configuration')}
+                            >
+                              Manage timing evidence
+                            </Button>
+                          </Stack>
+                        </Alert>
                       )}
                       {candidate.issues.map((issue) => (
                         <Alert color="red" key={issue.code}>
@@ -292,21 +435,41 @@ export function EnginesPage() {
                         registerCandidate.variables?.candidate_id === candidate.candidate_id && (
                           <Alert color="red">{registerCandidate.error.message}</Alert>
                         )}
+                      {refreshCandidate.error &&
+                        refreshCandidate.variables?.candidate.candidate_id === candidate.candidate_id && (
+                          <Alert color="red">{refreshCandidate.error.message}</Alert>
+                        )}
                       <Group justify="flex-end">
                         <Button
                           variant="default"
                           loading={probing}
-                          disabled={candidate.state !== 'ready_to_probe' || registered}
-                          onClick={() => probeCandidate.mutate(candidate)}
+                          disabled={candidate.state !== 'ready_to_probe' || registered || !modelRootReady}
+                          onClick={() => {
+                            registerCandidate.reset()
+                            refreshCandidate.reset()
+                            probeCandidate.mutate(selectedCandidate)
+                          }}
                         >
                           Test only
                         </Button>
                         <Button
-                          loading={registering}
-                          disabled={candidate.state !== 'ready_to_probe' || registered}
-                          onClick={() => registerCandidate.mutate(candidate)}
+                          loading={registering || refreshing}
+                          disabled={candidate.state !== 'ready_to_probe' || registered || !modelRootReady}
+                          onClick={() => {
+                            probeCandidate.reset()
+                            if (refreshRequired && registration.engine) {
+                              refreshCandidate.mutate({
+                                candidate: selectedCandidate,
+                                engine: registration.engine,
+                              })
+                            } else {
+                              registerCandidate.mutate(selectedCandidate)
+                            }
+                          }}
                         >
-                          {candidate.recommended ? 'Use this engine' : 'Register engine'}
+                          {refreshRequired
+                            ? 'Refresh configuration'
+                            : candidate.recommended ? 'Use this engine' : 'Register engine'}
                         </Button>
                       </Group>
                     </Stack>
@@ -318,7 +481,13 @@ export function EnginesPage() {
         </Paper>
 
         <Paper withBorder className="panel" p={0}>
-          {!engines.data?.length ? (
+          {engines.isLoading ? (
+            <Alert color="blue" m="lg">Checking registered engines…</Alert>
+          ) : engines.error ? (
+            <Alert color="red" m="lg">
+              Registered engine inventory is unavailable: {engines.error.message}
+            </Alert>
+          ) : !engines.data?.length ? (
             <EmptyState
               title="No engines registered"
               detail="Register a detected engine above or add an external UCI executable."
@@ -335,6 +504,7 @@ export function EnginesPage() {
                     <Table.Th>Identity</Table.Th>
                     <Table.Th>Options</Table.Th>
                     <Table.Th>Fingerprint</Table.Th>
+                    <Table.Th>Actions</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
@@ -356,7 +526,12 @@ export function EnginesPage() {
                               )}
                             {engine.data.default_model && (
                               <Text size="xs" c="dimmed">
-                                Model package: {engine.data.default_model.display_name}
+                                Packaged default: {engine.data.default_model.display_name}
+                              </Text>
+                            )}
+                            {typeof engine.data.option_overrides?.ModelRoot === 'string' && (
+                              <Text size="xs" c="dimmed">
+                                Selected ModelRoot: {engine.data.option_overrides.ModelRoot}
                               </Text>
                             )}
                           </div>
@@ -374,6 +549,20 @@ export function EnginesPage() {
                       <Table.Td>{engine.data.discovered_options.length}</Table.Td>
                       <Table.Td>
                         <Code>{engine.data.fingerprint.slice(0, 12)}</Code>
+                      </Table.Td>
+                      <Table.Td>
+                        <Button
+                          size="compact-sm"
+                          variant="subtle"
+                          color="red"
+                          leftSection={<IconTrash size={14} />}
+                          onClick={() => {
+                            removeEngine.reset()
+                            setEngineToRemove(engine)
+                          }}
+                        >
+                          Remove registration
+                        </Button>
                       </Table.Td>
                     </Table.Tr>
                   ))}
@@ -422,6 +611,16 @@ export function EnginesPage() {
             }}
             mode="directory"
           />
+          <PathPickerInput
+            label="Model root (optional)"
+            description="For engines that advertise ModelRoot, select the model package directory to apply before readyok."
+            value={manualModelRoot}
+            onChange={(value) => {
+              setManualModelRoot(value)
+              setManualProbeId('')
+            }}
+            mode="directory"
+          />
           {probeManual.error && <Alert color="red">{probeManual.error.message}</Alert>}
           {registerManual.error && <Alert color="red">{registerManual.error.message}</Alert>}
           {manualProbeId && (
@@ -437,7 +636,10 @@ export function EnginesPage() {
               variant="default"
               loading={probeManual.isPending}
               disabled={!executable}
-              onClick={() => probeManual.mutate()}
+              onClick={() => {
+                registerManual.reset()
+                probeManual.mutate()
+              }}
             >
               Test engine
             </Button>
@@ -447,6 +649,36 @@ export function EnginesPage() {
               onClick={() => registerManual.mutate()}
             >
               Register
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      <Modal
+        opened={engineToRemove !== null}
+        onClose={() => setEngineToRemove(null)}
+        title="Remove engine registration?"
+      >
+        <Stack>
+          <Text>
+            Remove {engineToRemove?.data.display_name ?? 'this engine'} from Manager?
+          </Text>
+          <Alert color="blue">
+            Installed files, models, opening books, tablebases, timing evidence, receipts,
+            and external data are kept. The detected installed engine can be registered again.
+          </Alert>
+          {removeEngine.error && <Alert color="red">{removeEngine.error.message}</Alert>}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setEngineToRemove(null)}>
+              Keep registration
+            </Button>
+            <Button
+              color="red"
+              loading={removeEngine.isPending}
+              disabled={!engineToRemove}
+              onClick={() => engineToRemove && removeEngine.mutate(engineToRemove)}
+            >
+              Remove registration
             </Button>
           </Group>
         </Stack>

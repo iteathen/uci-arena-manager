@@ -61,6 +61,21 @@ local_security:
         prevent a cross-origin caller from reading the recovered value.
   cli_bearer_key:
     authority: manager_data_root_client_key_file
+    server_authentication: >
+      Before transmitting the bearer key, every CLI or desktop pairing client
+      must restrict the endpoint to an explicit numeric loopback HTTP origin
+      and verify a fresh bounded challenge using a domain-separated keyed
+      Manager proof derived from that same client key and bound to the service's
+      own configured numeric loopback origin. The service derives the proof
+      audience from its listener configuration rather than caller input, and
+      the client requires that audience to equal its configured endpoint before
+      transmitting bearer authority. A listening port, successful TCP
+      connection, or relayable proof from another Manager port is not Manager
+      identity.
+    transport_bounds: >
+      Client responses are byte-bounded before JSON interpretation. Redirects,
+      DNS names, user information, paths in the configured origin, and
+      non-loopback endpoints are rejected before credential use.
     rotation: >
       The service reloads a structurally valid on-disk key after an in-memory
       mismatch so installer-preserved state, repair, and restore cannot strand

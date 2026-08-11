@@ -1,8 +1,38 @@
-import type { MatchPlanData, Resource } from '../api/types'
+import type { EngineData, MatchPlanData, Resource } from '../api/types'
 
 export type LifecycleAction = 'start' | 'pause' | 'resume' | 'cancel'
 
 type Competition = Resource<MatchPlanData>
+
+export function competitionEngineOptions(engines: Resource<EngineData>[]) {
+  const displayNameCounts = new Map<string, number>()
+  for (const engine of engines) {
+    const key = engine.data.display_name.toLocaleLowerCase()
+    displayNameCounts.set(key, (displayNameCounts.get(key) ?? 0) + 1)
+  }
+  return [...engines]
+    .sort((left, right) => {
+      const leftPreferred =
+        left.data.component_id === 'uci_arena.engine' && left.data.recommended === true
+      const rightPreferred =
+        right.data.component_id === 'uci_arena.engine' && right.data.recommended === true
+      if (leftPreferred !== rightPreferred) return leftPreferred ? -1 : 1
+      return left.data.display_name.localeCompare(right.data.display_name)
+    })
+    .map((engine) => {
+      const preferred =
+        engine.data.component_id === 'uci_arena.engine' && engine.data.recommended === true
+      const duplicated =
+        (displayNameCounts.get(engine.data.display_name.toLocaleLowerCase()) ?? 0) > 1
+      const identity = duplicated
+        ? ` · ${engine.data.component_version ?? 'unversioned'} · ${engine.id.slice(0, 8)}`
+        : ''
+      return {
+        value: engine.id,
+        label: `${engine.data.display_name}${preferred ? ' · preferred' : ''}${identity}`,
+      }
+    })
+}
 
 function isRevisionConflict(error: unknown): boolean {
   return typeof error === 'object' && error !== null &&
@@ -37,7 +67,9 @@ export async function submitCompetitionLifecycleAction<T>(
       if (!isRevisionConflict(error) || attempt === 2) throw error
       const refreshed = await operations.refresh()
       if (!refreshed) {
-        throw new Error('Competition no longer exists; refresh the tournament list.')
+        throw new Error('Competition no longer exists; refresh the tournament list.', {
+          cause: error,
+        })
       }
       current = refreshed
     }

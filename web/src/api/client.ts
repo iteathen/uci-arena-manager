@@ -6,10 +6,10 @@ import type {
   BotControlAction,
   BotControlResult,
   BotProbeResult,
+  BotQualificationResult,
   BotOptions,
   BotOptionsUpdate,
   BotProfile,
-  BotTokenReferenceResult,
   CommandEnvelope,
   ComponentInventory,
   EngineCandidates,
@@ -97,6 +97,7 @@ export async function exchangePairingToken(): Promise<boolean> {
 export type LocalSetupRequest =
   | {
       operation: 'discover'
+      roots?: string[]
     }
   | {
       operation: 'import'
@@ -225,8 +226,26 @@ export function planLocalSetup(request: LocalSetupRequest) {
   })
 }
 
-export function discoverLocalAssets() {
-  return planLocalSetup({ operation: 'discover' })
+export function discoverLocalAssets(roots: string[] = []) {
+  return planLocalSetup(
+    roots.length > 0 ? { operation: 'discover', roots } : { operation: 'discover' },
+  )
+}
+
+export interface LocalCredentialPlan {
+  schema: 'arena_ui_credential_plan_v1'
+  credential: 'lichess_bot_token'
+  storage: 'private_operator_external_file'
+  provider_startup_must_be_disabled: true
+  actions: Array<{ action: string }>
+}
+
+export interface LocalCredentialResult {
+  schema: 'arena_ui_credential_result_v1'
+  state: 'committed'
+  credential: 'lichess_bot_token'
+  locator_committed: true
+  consumer_configuration_regenerated: true
 }
 
 export function applyLocalSetup(request: LocalSetupRequest) {
@@ -241,6 +260,63 @@ export function applyLocalSetup(request: LocalSetupRequest) {
     schema: 'arena_ui_setup_request_v1',
     ...request,
   })
+}
+
+export function planLocalLichessCredential(): Promise<LocalCredentialPlan> {
+  if (!localSetupAvailable()) {
+    throw new ApiError(
+      'API-key setup is available only in the native desktop application.',
+      503,
+      'credential_capability_unavailable',
+    )
+  }
+  return localHelperRequest<LocalCredentialPlan>('/v1/bot-credential-plan', {
+    schema: 'arena_ui_credential_plan_request_v1',
+  })
+}
+
+export async function applyLocalLichessCredential(
+  credential: string,
+): Promise<LocalCredentialResult> {
+  const port = sessionStorage.getItem(pickerPortKey)
+  const token = sessionStorage.getItem(pickerTokenKey)
+  if (!localSetupAvailable() || !port || !token) {
+    throw new ApiError(
+      'Open UCI Arena Manager from its desktop launcher and keep it open to save the API key.',
+      503,
+      'credential_capability_unavailable',
+    )
+  }
+  let response: Response
+  try {
+    response = await fetch(`http://127.0.0.1:${port}/v1/bot-credential-apply`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/octet-stream',
+      },
+      body: credential,
+    })
+  } catch {
+    throw new ApiError(
+      'The interactive-user helper is no longer running. Reopen UCI Arena Manager and try again.',
+      503,
+      'interactive_helper_unavailable',
+    )
+  }
+  const result = (await response.json()) as LocalCredentialResult & {
+    code?: string
+    detail?: string
+  }
+  if (!response.ok) {
+    throw new ApiError(
+      result.detail ?? 'The API key could not be saved',
+      response.status,
+      result.code ?? 'credential_setup_failed',
+    )
+  }
+  return result
 }
 
 export interface LocalPathFilter {
@@ -387,6 +463,14 @@ export async function controlLocalBot(action: BotControlAction): Promise<BotCont
   return body
 }
 
+export function qualifyLocalBot(): Promise<BotQualificationResult> {
+  return interactiveBotRequest<BotQualificationResult>(
+    '/v1/bot-qualification',
+    { schema: 'arena_ui_bot_qualification_request_v1' },
+    'Installed Engine qualification did not complete',
+  )
+}
+
 async function interactiveBotRequest<T>(
   path: string,
   body: Record<string, unknown>,
@@ -484,11 +568,6 @@ export const api = {
   components: () => request<ComponentInventory>('/api/v1/components'),
   botProfiles: () => request<BotProfile[]>('/api/v1/bot-profiles'),
   botCandidates: () => request<BotCandidates>('/api/v1/bot-candidates'),
-  saveBotTokenReference: (path: string) =>
-    request<BotTokenReferenceResult>('/api/v1/bot-token-reference', {
-      method: 'POST',
-      body: JSON.stringify({ path }),
-    }),
   discoverService: (profileId: ServiceProfile['profile_id']) =>
     request<ServiceDiscovery>(`/api/v1/service-profiles/${profileId}/discovery`),
   engineCandidates: (root = '') =>

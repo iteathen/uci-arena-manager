@@ -6,6 +6,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import { DashboardErrorBoundary } from './components/DashboardErrorBoundary'
+import { recoverDashboardGeneration } from './dashboardGenerationRecovery'
+
+window.addEventListener('vite:preloadError', (event) => {
+  recoverDashboardGeneration(event, window.sessionStorage, () => window.location.reload())
+})
 
 const theme = createTheme({
   primaryColor: 'indigo',
@@ -28,7 +34,9 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <MantineProvider theme={theme} defaultColorScheme="dark">
       <QueryClientProvider client={queryClient}>
-        <App />
+        <DashboardErrorBoundary>
+          <App />
+        </DashboardErrorBoundary>
       </QueryClientProvider>
     </MantineProvider>
   </StrictMode>,

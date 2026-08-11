@@ -20,7 +20,9 @@ import { useMemo, useState } from 'react'
 import { api, makeCommand } from '../api/client'
 import type { EngineData, MatchPlanData, Resource } from '../api/types'
 import { CompetitionList } from '../components/CompetitionList'
+import { PathPickerInput } from '../components/PathPickerInput'
 import {
+  competitionEngineOptions,
   competitionPairingPreview,
   competitionPlanTarget,
   competitionScheduleSize,
@@ -57,27 +59,7 @@ export function MatchPlannerPage({ navigate }: { navigate: (page: string) => voi
   const [beta, setBeta] = useState<number | string>(0.05)
   const [engineOverrides, setEngineOverrides] = useState<Record<string, Record<string, string>>>({})
   const [dryRunPreview, setDryRunPreview] = useState<MatchPlanData | null>(null)
-  const options = useMemo(
-    () =>
-      [...(engines.data ?? [])]
-        .sort((left, right) => {
-          const leftPreferred =
-            left.data.component_id === 'uci_arena.engine' && left.data.recommended === true
-          const rightPreferred =
-            right.data.component_id === 'uci_arena.engine' && right.data.recommended === true
-          if (leftPreferred !== rightPreferred) return leftPreferred ? -1 : 1
-          return left.data.display_name.localeCompare(right.data.display_name)
-        })
-        .map((engine) => ({
-          value: engine.id,
-          label:
-            engine.data.component_id === 'uci_arena.engine' &&
-            engine.data.recommended === true
-              ? `${engine.data.display_name} · preferred`
-              : engine.data.display_name,
-        })),
-    [engines.data],
-  )
+  const options = useMemo(() => competitionEngineOptions(engines.data ?? []), [engines.data])
   const scheduledGames = competitionScheduleSize(
     format,
     selected.length,
@@ -307,12 +289,17 @@ export function MatchPlannerPage({ navigate }: { navigate: (page: string) => voi
                     <Accordion.Panel>
                       <Grid>
                         <Grid.Col span={12}>
-                          <TextInput
+                          <PathPickerInput
                             label="Opening suite JSON path"
                             description="Optional bounded arena_opening_suite_v1 file. Book Forge and service controls are linked above."
                             placeholder="C:\\path\\to\\opening-suite.json"
                             value={openingSuite}
-                            onChange={(event) => setOpeningSuite(event.currentTarget.value)}
+                            onChange={setOpeningSuite}
+                            mode="file"
+                            title="Select an opening suite"
+                            filters={[
+                              { name: 'UCI Arena opening suite', patterns: ['*.json'] },
+                            ]}
                           />
                         </Grid.Col>
                         <Grid.Col span={{ base: 6, sm: 3 }}><NumberInput label="Maximum plies" min={2} max={2048} value={maxPlies} onChange={setMaxPlies} /></Grid.Col>

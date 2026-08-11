@@ -17,10 +17,6 @@
     }
   },
   "dependencies": [],
-  "exclude_by_target": {
-    "windows-x86_64": ["bin/arena-setup.exe"],
-    "linux-x86_64": ["bin/arena-setup"]
-  },
   "capabilities": ["control_plane", "broker", "desktop_host"],
   "startup": {
     "windows": "windows_service",
@@ -32,8 +28,8 @@
     "web_npm": "web/package-lock.json"
   },
   "build_flags_by_target": {
-    "windows-x86_64": ["CMAKE_PRESET=windows-release", "CMAKE_BUILD_TYPE=Release"],
-    "linux-x86_64": ["CMAKE_PRESET=linux-release", "CMAKE_BUILD_TYPE=Release"]
+    "windows-x86_64": ["CMAKE_PRESET=windows-component-release", "CMAKE_BUILD_TYPE=Release", "VCPKG_TARGET_TRIPLET=x64-windows-release"],
+    "linux-x86_64": ["CMAKE_PRESET=linux-component-release", "CMAKE_BUILD_TYPE=Release", "VCPKG_TARGET_TRIPLET=x64-linux-release"]
   },
   "tests": [
     "manager_spec_web_release_checks",

@@ -1,4 +1,5 @@
 #include "arena/adapters/sqlite_store.hpp"
+#include "arena/adapters/uci_process.hpp"
 #include "arena/application/control_plane.hpp"
 #include "arena/domain/uuid.hpp"
 
@@ -8,6 +9,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -180,13 +182,23 @@ TEST_CASE("legacy receipt engines launch tournaments with their packaged default
             root / "arena.db");
         arena::application::ControlPlane control_plane(store);
         control_plane.initialize();
+        const std::map<std::string, std::string> options{
+            {"ModelRoot", fs::weakly_canonical(model_root).string()},
+        };
+        const auto probe = arena::adapters::UciProcess::probe(
+            executable,
+            engine_root,
+            {"--require-model-root", model_root.string()},
+            arena::adapters::UciProbeTimeouts{},
+            options);
+        REQUIRE(probe.ok);
         const json engine_data{
             {"display_name", "Legacy receipt engine"},
             {"executable", executable.string()},
             {"working_directory", engine_root.string()},
             {"arguments", {"--require-model-root", model_root.string()}},
-            {"option_overrides", json::object()},
-            {"fingerprint", std::string(64, 'a')},
+            {"option_overrides", {{"Threads", 2}, {"Ponder", false}}},
+            {"fingerprint", probe.fingerprint},
             {"onboarding_source", "install_receipt"},
             {"default_model",
              {{"model_id", "example_model_v1"},
@@ -232,6 +244,231 @@ TEST_CASE("legacy receipt engines launch tournaments with their packaged default
                 games.at(0).at("data").at("black_engine").at("options")
                     .at("ModelRoot").get<std::string>()) ==
             fs::weakly_canonical(model_root));
+        REQUIRE(
+            games.at(0).at("data").at("white_engine").at("options")
+                .at("Threads") == "2");
+        REQUIRE(
+            games.at(0).at("data").at("black_engine").at("options")
+                .at("Ponder") == "false");
+    }
+    fs::remove_all(root);
+}
+
+TEST_CASE("competition options are validated against each selected engine") {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() /
+        ("arena-tournament-options-" + arena::domain::uuid_v7());
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(
+            root / "arena.db");
+        arena::application::ControlPlane control_plane(store);
+        control_plane.initialize();
+        const std::vector<std::string> engines{
+            register_engine(control_plane, "Option Alpha"),
+            register_engine(control_plane, "Option Beta"),
+        };
+
+        try {
+            (void)create_competition(
+                control_plane,
+                "match.plan",
+                "match_plan",
+                engines,
+                1,
+                {{"engine_option_overrides",
+                  {{engines.at(0), {{"Threads", "99"}}}}}});
+            FAIL("out-of-range engine option was accepted");
+        } catch (const arena::application::CommandFailure& error) {
+            REQUIRE(error.code() == "invalid_engine_options");
+        }
+
+        try {
+            (void)create_competition(
+                control_plane,
+                "match.plan",
+                "match_plan",
+                engines,
+                1,
+                {{"engine_option_overrides",
+                  {{engines.at(0), {{"UnknownOption", "value"}}}}}});
+            FAIL("unknown engine option was accepted");
+        } catch (const arena::application::CommandFailure& error) {
+            REQUIRE(error.code() == "invalid_engine_options");
+        }
+
+        const json valid = create_competition(
+            control_plane,
+            "match.plan",
+            "match_plan",
+            engines,
+            1,
+            {{"engine_option_overrides",
+              {{engines.at(0), {{"Threads", "4"}, {"Style", "Solid"}}}}}});
+        REQUIRE(
+            valid.at("resource")
+                    .at("data")
+                    .at("engine_option_overrides")
+                    .at(engines.at(0))
+                    .at("Threads") == "4");
+    }
+    fs::remove_all(root);
+}
+
+TEST_CASE("changed engine identity fails before tournament game admission") {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() /
+        ("arena-tournament-identity-" + arena::domain::uuid_v7());
+    fs::create_directories(root);
+    const fs::path executable =
+        root / fs::path(ARENA_MOCK_UCI_PATH).filename();
+    fs::copy_file(
+        ARENA_MOCK_UCI_PATH,
+        executable,
+        fs::copy_options::overwrite_existing);
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(
+            root / "arena.db");
+        arena::application::ControlPlane control_plane(store);
+        control_plane.initialize();
+        const auto register_copy = [&](const std::string& name) {
+            return control_plane
+                .submit(
+                    command(
+                        "engine.register",
+                        "engine",
+                        nullptr,
+                        {
+                            {"display_name", name},
+                            {"executable", executable.string()},
+                            {"working_directory", root.string()},
+                            {"arguments", json::array()},
+                        }),
+                    "test")
+                .at("resource")
+                .at("id")
+                .get<std::string>();
+        };
+        const std::vector<std::string> engines{
+            register_copy("Identity Alpha"),
+            register_copy("Identity Beta"),
+        };
+        const json created = create_competition(
+            control_plane,
+            "match.plan",
+            "match_plan",
+            engines,
+            1);
+        std::ofstream(executable, std::ios::binary | std::ios::app).put('\0');
+
+        const std::string id = created.at("resource").at("id");
+        control_plane.submit(
+            command(
+                "match.start",
+                "match_plan",
+                id,
+                json::object(),
+                created.at("resource").at("revision")),
+            "test");
+        const json failed = wait_for_lifecycle(
+            control_plane, "match_plan", id, "failed");
+        REQUIRE(failed.at("data").at("lifecycle") == "failed");
+        INFO(failed.at("data").at("failure_detail").get<std::string>());
+        REQUIRE(
+            failed.at("data")
+                .at("failure_detail")
+                .get<std::string>()
+                .find("registered engine identity changed") !=
+            std::string::npos);
+        REQUIRE(control_plane.list("game", 10, 0).empty());
+    }
+    fs::remove_all(root);
+}
+
+TEST_CASE("qualified runtime identity is revalidated before game admission") {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() /
+        ("arena-tournament-runtime-" + arena::domain::uuid_v7());
+    fs::create_directories(root);
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(
+            root / "arena.db");
+        arena::application::ControlPlane control_plane(store);
+        control_plane.initialize();
+        const std::vector<std::string> engines{
+            register_engine(control_plane, "Runtime Alpha"),
+            register_engine(control_plane, "Runtime Beta"),
+        };
+        const auto existing = store->get_resource("engine", engines.at(0));
+        REQUIRE(existing.has_value());
+        arena::ports::ResourceRecord updated = *existing;
+        json engine_data = json::parse(updated.data_json);
+        engine_data["launch_profile"] = {
+            {"schema", "arena_uci_engine_launch_profile_v1"},
+            {"state", "qualified_timing"},
+            {"timing_profile", {{"available", true}}},
+            {"expected_runtime",
+             {
+                 {"timing_contract_version", "persistent_mcgs_relative_clock_temporal_v4"},
+                 {"model_id", "example_model_v1"},
+                 {"model_fingerprint", "8104116015256418347"},
+                 {"adapter_id", "dense_planes_v1"},
+                 {"provider_requested", "cpu"},
+                 {"provider_effective", "cpu"},
+                 {"provider_numeric_fingerprint", "5805769137532863231"},
+                 {"hardware_driver_fingerprint", "15113055170282736144"},
+                 {"onnx_runtime_version", "1.24.4"},
+                 {"search_core", "mcgs"},
+             }},
+        };
+        const std::string now = arena::domain::utc_now();
+        const std::string command_id = arena::domain::uuid_v7();
+        updated.revision += 1;
+        updated.updated_at = now;
+        updated.data_json = engine_data.dump();
+        store->update_resource(
+            updated,
+            existing->revision,
+            {
+                command_id,
+                arena::domain::uuid_v7(),
+                arena::domain::uuid_v7(),
+                "test.engine.runtime_drift",
+                "completed",
+                "{}",
+                now,
+            },
+            {
+                0,
+                arena::domain::uuid_v7(),
+                now,
+                "state",
+                "engine.runtime_drifted",
+                "engine",
+                updated.id,
+                updated.revision,
+                command_id,
+                "{}",
+            });
+
+        const json created = create_competition(
+            control_plane, "match.plan", "match_plan", engines, 1);
+        const std::string id = created.at("resource").at("id");
+        control_plane.submit(
+            command(
+                "match.start",
+                "match_plan",
+                id,
+                json::object(),
+                created.at("resource").at("revision")),
+            "test");
+        const json failed = wait_for_lifecycle(
+            control_plane, "match_plan", id, "failed");
+        REQUIRE(failed.at("data").at("lifecycle") == "failed");
+        INFO(failed.at("data").at("failure_detail").get<std::string>());
+        REQUIRE(
+            failed.at("data").at("failure_detail").get<std::string>().find(
+                "hardware_driver_fingerprint") != std::string::npos);
+        REQUIRE(control_plane.list("game", 10, 0).empty());
     }
     fs::remove_all(root);
 }

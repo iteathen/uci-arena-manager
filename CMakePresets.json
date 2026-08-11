@@ -22,6 +22,26 @@
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
         "VCPKG_TARGET_TRIPLET": "x64-linux"
       }
+    },
+    {
+      "name": "windows-component-release",
+      "displayName": "Windows Manager Component Release",
+      "inherits": "windows-release",
+      "binaryDir": "${sourceDir}/build/windows-component-release",
+      "cacheVariables": {
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/triplets",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-release"
+      }
+    },
+    {
+      "name": "linux-component-release",
+      "displayName": "Linux Manager Component Release",
+      "inherits": "linux-release",
+      "binaryDir": "${sourceDir}/build/linux-component-release",
+      "cacheVariables": {
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/triplets",
+        "VCPKG_TARGET_TRIPLET": "x64-linux-release"
+      }
     }
   ],
   "buildPresets": [
@@ -33,6 +53,15 @@
     {
       "name": "linux-release",
       "configurePreset": "linux-release"
+    },
+    {
+      "name": "windows-component-release",
+      "configurePreset": "windows-component-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "linux-component-release",
+      "configurePreset": "linux-component-release"
     }
   ],
   "testPresets": [
@@ -47,6 +76,21 @@
     {
       "name": "linux-release",
       "configurePreset": "linux-release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "windows-component-release",
+      "configurePreset": "windows-component-release",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-component-release",
+      "configurePreset": "linux-component-release",
       "output": {
         "outputOnFailure": true
       }

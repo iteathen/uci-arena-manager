@@ -47,7 +47,18 @@ launcher and does not require a terminal.
 List registered UCI engines.
 .TP
 .BI "engine probe " EXECUTABLE
-Probe a UCI executable without registering it.
+Probe a UCI executable without registering it. Use
+.BI "--model-root " PATH
+to apply an advertised ModelRoot option before readiness validation.
+.TP
+.B engine add
+Probe and register a UCI engine. The optional
+.BI "--model-root " PATH
+uses the same advertised option contract.
+.TP
+.BI "engine set-model " ENGINE-ID " --model-root " PATH
+Select ModelRoot for a registered UCI Arena Engine through a
+revision-checked full refresh.
 .TP
 .B service profiles
 List external service adapter profiles.
@@ -60,16 +71,16 @@ arena status
 arena --output json health
 arena ui
 arena engine probe /opt/engines/my-engine
+arena engine set-model ENGINE-ID --model-root /opt/uci-arena/models/selected
 arena engine list
 arena service profiles
 arena --endpoint http://127.0.0.1:47831 doctor
 .fi
 .SH SETUP
 Suite component installation is performed by
-.BR arena-setup (1).
-Run
-.B arena-setup \-\-help
-for inventory, plan, apply, verify, repair, upgrade, and uninstall operations.
+.B arena-setup
+from the independently installed UCI Arena Suite Setup package. The Manager
+desktop host invokes only that adjacent typed Installer boundary.
 .SH FILES
 .TP
 .I /var/lib/uci-arena/client.key

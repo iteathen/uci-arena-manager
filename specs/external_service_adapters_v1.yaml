@@ -45,6 +45,18 @@ common_contract:
         malformed envelopes, oversized projections, and output path escape
         evidence mark the integration incompatible.
       - Additive fields and compatible minor versions may be ignored.
+    transport_limits:
+      maximum_machine_output_bytes: 1048576
+      maximum_transport_line_bytes: 1048576
+      maximum_queued_transport_bytes: 8388608
+      rules:
+        - Provider output is byte-bounded before JSON parsing; a process cannot
+          consume unbounded Manager memory by omitting newlines or streaming
+          an oversized response.
+        - A bounded-output or malformed-output violation is incompatible
+          contract evidence. A launch failure or timeout is temporary
+          unavailability and preserves the last validated output projection as
+          stale.
   required_fields:
     - profile_id
     - display_name
@@ -111,9 +123,11 @@ common_contract:
       contract even when component digests are unchanged, so output
       integrations and observed state cannot remain stale across an installer
       restart.
-    - A provider daemon reported active and non-stale by its public status
-      contract is observed as running even when the Manager process supervisor
-      did not launch that per-user startup instance.
+    - A provider daemon reported explicitly active, process-alive, and non-stale
+      by its public status contract is observed as running even when the Manager
+      process supervisor did not launch that per-user startup instance. A
+      remembered phase, pid, heartbeat, startup registration, or desired state
+      is not live runtime authority.
     - Per-user provider startup registrations remain provider-owned. Manager
       never starts a duplicate daemon when startup_installed is true; status,
       pause, and resume remain available, while process start/stop/restart are
@@ -134,6 +148,10 @@ common_contract:
       - A provider status payload whose daemon phase is stopped, failed, empty,
         or stale cannot be projected as running solely because desired_state
         is running or a launch request returned successfully.
+      - Provider-owned runtime status without explicit daemon active,
+        process-alive, and stale booleans fails closed to stopped with unknown
+        health. Validated output projections remain available, but they never
+        substitute for live process authority.
       - Compatible saved, environment, PATH, and receipt hints are merged into
         complete candidates before partial candidates are returned.
       - Describe, status, and configuration probes use the normal bounded
@@ -242,6 +260,11 @@ profiles:
           qualification state, and record count are projected without
           rewriting the snapshot.
         - A digest, identity, channel, or schema mismatch marks the integration incompatible.
+        - The bounded projection retains the validated snapshot root solely so
+          the authenticated desktop setup helper can offer an explicit
+          opening-book import plan. Manager never opens the snapshot or treats
+          the path as activation authority; Installer revalidates it before
+          committing the locator and regenerating consumers.
     safety:
       - Book Forge remains authority for its workspace, catalog, resource governor, and publication.
       - The manager invokes only its public CLI and reads only its machine-readable status.
@@ -331,9 +354,25 @@ profiles:
           kind; service-specific schema and identity remain in the typed
           compatibility projection.
         - Manager stores only a bounded allowlisted projection of dataset identity, campaign, state, target identity, authority, observation count, and timestamps; unknown fields are discarded and sensitive-looking nested fields are redacted.
-        - Every timing-profile output retains its path, digest, exact runtime identity, permissions, publication source, and service-publication metadata.
-        - A timing profile is visible but remains non-consumable by an engine whose exact identity does not match; Manager never rewrites profile identity or permissions.
+        - Dataset lifecycle is provider-authoritative and accepts collecting,
+          completed, and cancelled. A cancelled dataset remains valid retained
+          evidence and must not make the complete Evidence integration
+          incompatible.
+        - Every timing-profile output retains its path, digest, semantic timing
+          identity, qualified and current engine-build provenance, permissions,
+          publication source, and service-publication metadata.
+        - A timing profile is visible but remains non-consumable when its
+          timing-relevant identity does not match the configured time and
+          search contract, model semantics, provider and runtime, hardware, or
+          search topology. An engine-build digest mismatch alone remains
+          visible provenance and does not block reuse. Manager never decides
+          compatibility or rewrites profile identity or permissions.
         - Manager never requests or stores raw observations and never reads the service SQLite catalog.
+        - A qualified profile may be explicitly selected through the
+          authenticated desktop setup helper. Installer remains locator and
+          consumer-configuration authority, and Manager then refreshes only
+          the existing receipt-managed Engine through its normal full probe.
+          Publication alone never changes live Engine authority.
         - Waiting for a target and an empty dataset set remain healthy.
         - A dataset schema or identity mismatch marks the integration incompatible.
     orchestration_integration:
@@ -349,8 +388,10 @@ profiles:
           bounded returned summary and refreshed orchestration projection.
         - Manager may enqueue only the provider-defined first campaign against
           the active deployment or an existing service-issued target UUID.
-          A sole projected target is selected automatically; any explicit
-          target must be a member of the current provider projection, and the
+          An omitted target remains omitted so Evidence Service can apply its
+          provider-owned active/fallback resolution policy. Manager never
+          derives a default from projected target count. Any explicit target
+          must be a member of the current provider projection, and the
           resulting jobs retain that target id.
         - Manager may cancel or retry only a service-issued job UUID; arbitrary
           adapter commands, flags, paths, and raw catalog access are forbidden.

@@ -1,11 +1,24 @@
 #include "arena/adapters/report_renderer.hpp"
 #include "arena/application/local_auth.hpp"
 #include "arena/domain/uuid.hpp"
+#include "arena/platform/operator_credential_file.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+
+namespace {
+
+std::string read_text(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    return {
+        std::istreambuf_iterator<char>(input),
+        std::istreambuf_iterator<char>()};
+}
+
+}  // namespace
 
 TEST_CASE("pairing tokens are one-time and browser sessions require CSRF") {
     const auto directory =
@@ -20,9 +33,29 @@ TEST_CASE("pairing tokens are one-time and browser sessions require CSRF") {
     input.close();
     REQUIRE(auth.authenticate_bearer("Bearer " + key));
     REQUIRE_FALSE(auth.authenticate_bearer("Bearer wrong"));
+    const std::string challenge(64, 'a');
+    const std::string audience = "http://127.0.0.1:47831";
+    const std::string proof = auth.server_proof(challenge, audience);
+    REQUIRE(proof.size() == 64);
+    REQUIRE(
+        proof == arena::application::LocalAuth::compute_server_proof(
+                     key, challenge, audience));
+    REQUIRE(
+        proof != arena::application::LocalAuth::compute_server_proof(
+                     key, challenge, "http://127.0.0.1:47832"));
+    REQUIRE_THROWS_AS(
+        auth.server_proof("not-a-challenge", audience),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        auth.server_proof(challenge, "http://localhost:47831"),
+        std::invalid_argument);
     const std::string rotated_key(64, 'a');
     std::ofstream(auth.client_key_path(), std::ios::binary | std::ios::trunc)
         << rotated_key << '\n';
+    REQUIRE(
+        auth.server_proof(challenge, audience) ==
+        arena::application::LocalAuth::compute_server_proof(
+            rotated_key, challenge, audience));
     REQUIRE(auth.authenticate_bearer("Bearer " + rotated_key));
     REQUIRE_FALSE(auth.authenticate_bearer("Bearer " + key));
 
@@ -38,6 +71,54 @@ TEST_CASE("pairing tokens are one-time and browser sessions require CSRF") {
     REQUIRE_FALSE(auth.resume_browser_session("missing"));
     REQUIRE(auth.validate_csrf(session->id, session->csrf_token));
     REQUIRE_FALSE(auth.validate_csrf(session->id, "wrong"));
+
+    std::filesystem::remove_all(directory);
+}
+
+TEST_CASE("operator credential files commit atomically and roll back cleanly") {
+    const auto directory =
+        std::filesystem::temp_directory_path() /
+        ("arena-operator-credential-" + arena::domain::uuid_v7());
+    const auto destination = directory / "credentials" / "lichess-bot.token";
+
+    {
+        arena::platform::OperatorCredentialFileUpdate update(
+            destination, "synthetic-first-value");
+        REQUIRE(read_text(destination) == "synthetic-first-value");
+    }
+    REQUIRE_FALSE(std::filesystem::exists(destination));
+
+    {
+        arena::platform::OperatorCredentialFileUpdate update(
+            destination, "synthetic-authoritative-value");
+        update.commit();
+    }
+    REQUIRE(read_text(destination) == "synthetic-authoritative-value");
+
+    {
+        arena::platform::OperatorCredentialFileUpdate update(
+            destination, "synthetic-rejected-value");
+        REQUIRE(read_text(destination) == "synthetic-rejected-value");
+    }
+    REQUIRE(read_text(destination) == "synthetic-authoritative-value");
+
+    {
+        arena::platform::OperatorCredentialFileUpdate update(
+            destination, "synthetic-replacement-value");
+        update.commit();
+    }
+    REQUIRE(read_text(destination) == "synthetic-replacement-value");
+    for (const auto& entry :
+         std::filesystem::directory_iterator(destination.parent_path())) {
+        REQUIRE(entry.path() == destination);
+    }
+#ifndef _WIN32
+    const auto permissions = std::filesystem::status(destination).permissions();
+    REQUIRE(
+        (permissions &
+         (std::filesystem::perms::group_all |
+          std::filesystem::perms::others_all)) == std::filesystem::perms::none);
+#endif
 
     std::filesystem::remove_all(directory);
 }

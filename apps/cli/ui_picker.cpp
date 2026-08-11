@@ -2,6 +2,7 @@
 
 #include "arena/application/process_supervisor.hpp"
 #include "arena/application/service_catalog.hpp"
+#include "arena/platform/operator_credential_file.hpp"
 
 #include <drogon/drogon.h>
 #include <nlohmann/json.hpp>
@@ -53,10 +54,12 @@ struct SetupRequest {
     std::string asset_kind;
     std::string component_id;
     std::filesystem::path path;
+    std::vector<std::filesystem::path> roots;
     bool managed_copy{};
 };
 
 constexpr std::size_t max_setup_result_bytes = 1024 * 1024;
+constexpr std::size_t max_lichess_token_bytes = 512;
 
 json problem(const std::string& code, const std::string& detail) {
     return {
@@ -150,9 +153,28 @@ SetupRequest parse_setup_request(const drogon::HttpRequestPtr& request) {
     SetupRequest result;
     result.operation = input.value("operation", "");
     if (result.operation == "discover") {
-        if (input.size() != 2) {
+        if (input.size() < 2 || input.size() > 3 ||
+            (input.size() == 3 && !input.contains("roots")) ||
+            (input.contains("roots") &&
+             (!input.at("roots").is_array() || input.at("roots").size() > 8))) {
             throw std::invalid_argument(
-                "discover setup accepts no additional fields");
+                "discover setup accepts at most eight absolute roots");
+        }
+        if (input.contains("roots")) {
+            for (const auto& value : input.at("roots")) {
+                if (!value.is_string()) {
+                    throw std::invalid_argument(
+                        "discover roots must be absolute path strings");
+                }
+                const std::string root = value.get<std::string>();
+                const std::filesystem::path path(root);
+                if (root.empty() || root.size() > 32767 ||
+                    root.find('\0') != std::string::npos || !path.is_absolute()) {
+                    throw std::invalid_argument(
+                        "discover roots must be bounded absolute paths");
+                }
+                result.roots.push_back(path.lexically_normal());
+            }
         }
         return result;
     }
@@ -451,6 +473,10 @@ json run_setup(
     };
     if (request.operation == "discover") {
         arguments.push_back("inventory");
+        for (const auto& root : request.roots) {
+            arguments.push_back("--scan-root");
+            arguments.push_back(root.string());
+        }
     } else if (request.operation == "component") {
         if (apply && !per_user_install) {
             arguments.push_back("--restart-manager-service");
@@ -541,6 +567,109 @@ json run_setup(
         }
         throw;
     }
+}
+
+json plan_lichess_credential() {
+    return {
+        {"schema", "arena_ui_credential_plan_v1"},
+        {"credential", "lichess_bot_token"},
+        {"storage", "private_operator_external_file"},
+        {"elevation_required", false},
+        {"manager_service_restart", false},
+        {"provider_startup_must_be_disabled", true},
+        {"actions",
+         json::array({
+             {{"action", "materialize_private_operator_file"}},
+             {{"action", "commit_installer_locator"}},
+             {{"action", "regenerate_consumer_configuration"}},
+         })},
+    };
+}
+
+bool valid_direct_lichess_token(const std::string_view value) {
+    return !value.empty() && value.size() <= max_lichess_token_bytes &&
+           std::none_of(
+               value.begin(), value.end(), [](const unsigned char character) {
+                   return character == 0 || character == '\r' ||
+                          character == '\n' || std::isspace(character) != 0;
+               });
+}
+
+json materialize_lichess_credential(
+    const std::string_view credential,
+    const std::filesystem::path& manager_data_root,
+    const std::filesystem::path& setup_executable) {
+    if (!valid_direct_lichess_token(credential)) {
+        throw std::invalid_argument(
+            "the API key must be one bounded value without whitespace");
+    }
+
+    arena::application::ProcessSupervisor process;
+    const json status = arena::application::ServiceCatalog::control_bot(
+        manager_data_root, process, "status");
+    if (status.value("installed", false)) {
+        throw std::runtime_error(
+            "Disable Lichess Bot startup before replacing its API key");
+    }
+
+    const std::filesystem::path destination =
+        arena::platform::default_operator_credential_root() /
+        "lichess-bot.token";
+    arena::platform::OperatorCredentialFileUpdate update(
+        destination, credential);
+    SetupRequest import;
+    import.operation = "import";
+    import.asset_kind = "lichess_token_path";
+    import.path = update.path();
+    static_cast<void>(run_setup(
+        setup_executable, manager_data_root, import, true));
+    update.commit();
+    return {
+        {"schema", "arena_ui_credential_result_v1"},
+        {"state", "committed"},
+        {"credential", "lichess_bot_token"},
+        {"locator_committed", true},
+        {"consumer_configuration_regenerated", true},
+    };
+}
+
+json qualify_and_import_lichess_profiles(
+    const std::filesystem::path& manager_data_root,
+    const std::filesystem::path& setup_executable) {
+    arena::application::ProcessSupervisor process;
+    const json qualification =
+        arena::application::ServiceCatalog::qualify_bot(
+            manager_data_root, process);
+
+    SetupRequest single_game;
+    single_game.operation = "import";
+    single_game.asset_kind = "lichess_single_game_profile";
+    single_game.path = qualification.at("single_game_profile").get<std::string>();
+    single_game.managed_copy = true;
+    static_cast<void>(run_setup(
+        setup_executable, manager_data_root, single_game, true));
+
+    SetupRequest capacity;
+    capacity.operation = "import";
+    capacity.asset_kind = "lichess_capacity_profile";
+    capacity.path = qualification.at("capacity_profile").get<std::string>();
+    static_cast<void>(run_setup(
+        setup_executable, manager_data_root, capacity, true));
+
+    return {
+        {"schema", "arena_bot_qualification_result_v1"},
+        {"schema_version", 1},
+        {"state", "committed"},
+        {"single_game_profile_imported", true},
+        {"capacity_profile_imported", true},
+        {"reused", qualification.at("reused")},
+        {"maximum_concurrency", qualification.at("maximum_concurrency")},
+        {"search_core", qualification.at("search_core")},
+        {"model_id", qualification.at("model_id")},
+        {"provider", qualification.at("provider")},
+        {"timing_identity_sha256",
+         qualification.at("timing_identity_sha256")},
+    };
 }
 
 #ifdef _WIN32
@@ -1170,6 +1299,213 @@ void run_ui_picker(
         },
         {drogon::Post, drogon::Options});
     if (allow_setup) {
+        application.registerHandler(
+            "/v1/bot-qualification",
+            [bearer_token,
+             dashboard_origin,
+             manager_data_root,
+             setup_executable](
+                const drogon::HttpRequestPtr& request,
+                std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+                if (request->method() == drogon::Options) {
+                    if (request->getHeader("Origin") != dashboard_origin) {
+                        callback(json_response(
+                            problem(
+                                "origin_rejected",
+                                "Dashboard origin is not authorized"),
+                            drogon::k403Forbidden,
+                            dashboard_origin));
+                        return;
+                    }
+                    callback(json_response(
+                        json::object(),
+                        drogon::k204NoContent,
+                        dashboard_origin));
+                    return;
+                }
+                if (request->getHeader("Origin") != dashboard_origin ||
+                    request->getHeader("Authorization") !=
+                        "Bearer " + bearer_token) {
+                    callback(json_response(
+                        problem(
+                            "qualification_unauthorized",
+                            "Native installed qualification capability is unavailable"),
+                        drogon::k401Unauthorized,
+                        dashboard_origin));
+                    return;
+                }
+                try {
+                    if (request->body().size() > 1024) {
+                        throw std::invalid_argument(
+                            "installed qualification request is too large");
+                    }
+                    const json input = json::parse(request->body());
+                    if (!input.is_object() || input.size() != 1 ||
+                        input.value("schema", "") !=
+                            "arena_ui_bot_qualification_request_v1") {
+                        throw std::invalid_argument(
+                            "invalid installed qualification request");
+                    }
+                    callback(json_response(
+                        qualify_and_import_lichess_profiles(
+                            manager_data_root, setup_executable),
+                        drogon::k200OK,
+                        dashboard_origin));
+                } catch (const std::invalid_argument&) {
+                    callback(json_response(
+                        problem(
+                            "invalid_bot_qualification_request",
+                            "Installed BOT qualification request is invalid"),
+                        drogon::k400BadRequest,
+                        dashboard_origin));
+                } catch (const json::exception&) {
+                    callback(json_response(
+                        problem(
+                            "invalid_bot_qualification_request",
+                            "Installed BOT qualification request is invalid"),
+                        drogon::k400BadRequest,
+                        dashboard_origin));
+                } catch (
+                    const arena::application::BotQualificationFailure& error) {
+                    callback(json_response(
+                        problem(
+                            error.code(),
+                            "Installed Engine qualification did not commit during " +
+                                error.stage() + ": " + error.detail() +
+                                ". No profile locators changed. Correct the reported provider condition and retry."),
+                        drogon::k422UnprocessableEntity,
+                        dashboard_origin));
+                } catch (const std::exception&) {
+                    callback(json_response(
+                        problem(
+                            "bot_qualification_failed",
+                            "Installed Engine qualification did not commit. Disable BOT startup, then review Engine, Evidence, timing, and knowledge readiness before retrying."),
+                        drogon::k422UnprocessableEntity,
+                        dashboard_origin));
+                }
+            },
+            {drogon::Post, drogon::Options});
+        application.registerHandler(
+            "/v1/bot-credential-plan",
+            [bearer_token, dashboard_origin](
+                const drogon::HttpRequestPtr& request,
+                std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+                if (request->method() == drogon::Options) {
+                    if (request->getHeader("Origin") != dashboard_origin) {
+                        callback(json_response(
+                            problem(
+                                "origin_rejected",
+                                "Dashboard origin is not authorized"),
+                            drogon::k403Forbidden,
+                            dashboard_origin));
+                        return;
+                    }
+                    callback(json_response(
+                        json::object(), drogon::k204NoContent, dashboard_origin));
+                    return;
+                }
+                if (request->getHeader("Origin") != dashboard_origin ||
+                    request->getHeader("Authorization") !=
+                        "Bearer " + bearer_token) {
+                    callback(json_response(
+                        problem(
+                            "credential_unauthorized",
+                            "Native credential capability is unavailable"),
+                        drogon::k401Unauthorized,
+                        dashboard_origin));
+                    return;
+                }
+                try {
+                    if (request->body().size() > 1024) {
+                        throw std::invalid_argument(
+                            "credential plan request is too large");
+                    }
+                    const json input = json::parse(request->body());
+                    if (!input.is_object() || input.size() != 1 ||
+                        input.value("schema", "") !=
+                            "arena_ui_credential_plan_request_v1") {
+                        throw std::invalid_argument(
+                            "invalid credential plan request");
+                    }
+                    callback(json_response(
+                        plan_lichess_credential(),
+                        drogon::k200OK,
+                        dashboard_origin));
+                } catch (const std::exception&) {
+                    callback(json_response(
+                        problem(
+                            "invalid_credential_plan_request",
+                            "Native credential plan request is invalid"),
+                        drogon::k400BadRequest,
+                        dashboard_origin));
+                }
+            },
+            {drogon::Post, drogon::Options});
+        application.registerHandler(
+            "/v1/bot-credential-apply",
+            [bearer_token,
+             dashboard_origin,
+             manager_data_root,
+             setup_executable](
+                const drogon::HttpRequestPtr& request,
+                std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+                if (request->method() == drogon::Options) {
+                    if (request->getHeader("Origin") != dashboard_origin) {
+                        callback(json_response(
+                            problem(
+                                "origin_rejected",
+                                "Dashboard origin is not authorized"),
+                            drogon::k403Forbidden,
+                            dashboard_origin));
+                        return;
+                    }
+                    callback(json_response(
+                        json::object(), drogon::k204NoContent, dashboard_origin));
+                    return;
+                }
+                if (request->getHeader("Origin") != dashboard_origin ||
+                    request->getHeader("Authorization") !=
+                        "Bearer " + bearer_token) {
+                    callback(json_response(
+                        problem(
+                            "credential_unauthorized",
+                            "Native credential capability is unavailable"),
+                        drogon::k401Unauthorized,
+                        dashboard_origin));
+                    return;
+                }
+                try {
+                    if (request->getHeader("Content-Type") !=
+                            "application/octet-stream" ||
+                        request->body().empty() ||
+                        request->body().size() > max_lichess_token_bytes) {
+                        throw std::invalid_argument(
+                            "credential materialization request is invalid");
+                    }
+                    callback(json_response(
+                        materialize_lichess_credential(
+                            request->body(),
+                            manager_data_root,
+                            setup_executable),
+                        drogon::k200OK,
+                        dashboard_origin));
+                } catch (const std::invalid_argument&) {
+                    callback(json_response(
+                        problem(
+                            "invalid_credential_request",
+                            "Enter one API key without spaces or line breaks"),
+                        drogon::k400BadRequest,
+                        dashboard_origin));
+                } catch (const std::exception&) {
+                    callback(json_response(
+                        problem(
+                            "credential_setup_failed",
+                            "The API key could not be saved; the preceding credential remains authoritative"),
+                        drogon::k422UnprocessableEntity,
+                        dashboard_origin));
+                }
+            },
+            {drogon::Post, drogon::Options});
         const auto register_setup_handler =
             [&application,
              bearer_token,

@@ -14,23 +14,78 @@ sources:
     - discovered
   rules:
     - Managed engines are resolved from their verified install receipt and
-      arena-component.json UCI entrypoint; their filenames are not guessed.
+      an arena-component.json `uci_engine` discovery declaration; their
+      component identity, capability names, entrypoint names, and filenames
+      are not interpreted as discovery roles.
+    - The discovery locator names either a declared entrypoint or an explicit
+      safe component-relative path. The selected executable must be listed in
+      the immutable component file inventory and match its size and SHA-256.
     - Saved uci_engine locators are projected as candidates without copying or
       silently registering the engine.
     - Additional discovery is restricted to an explicitly selected file or
       bounded root, exact well-known names on PATH, and bounded platform
       application locations.
+    - A filesystem-discovered path is an advisory discovery_hint only. It is
+      never process-launch, registration, component, or installation authority.
+    - The platform path-inspection adapter owns no-follow link/reparse
+      classification and returns only Manager-owned path-observation types.
     - Whole-disk recursive discovery is forbidden.
     - Symbolic links, missing files, unsafe relative entrypoints, malformed
       receipts, and malformed manifests are never returned as ready candidates.
 
+explicit_root_budget:
+  max_roots: 8
+  max_depth_below_root: 1
+  max_total_entries: 4096
+  max_metadata_calls: 8192
+  max_candidates: 512
+  max_elapsed_ms: 2000
+  max_diagnostics: 16
+  behavior:
+    - Every observed entry consumes the total-entry budget before classification.
+    - Directories, links, special files, rejected executables, disappearing
+      entries, and classification failures consume the same work budget as
+      accepted executable hints.
+    - A classification failure never permits recursion into that entry.
+    - Iterator or classification failure marks explicit-root inspection
+      incomplete with a bounded typed diagnostic; partial hints remain
+      explicitly non-authoritative.
+    - Cancellation or deadline exhaustion stops additional traversal and marks
+      the inspection incomplete.
+    - A selected regular executable file is inspected directly without a
+      directory traversal.
+
+candidate_authority:
+  discovered:
+    value: discovery_hint
+    rules:
+      - The candidate includes the observed platform object identity only as
+        race-detection evidence for the current observation.
+      - The identity is not retained as launch authority and cannot replace a
+        full UCI probe.
+      - The candidate state ready_to_probe means only that probing may be
+        attempted; it never means launch-safe, registered, or trusted.
+  installed_receipt:
+    value: verified_component_inventory
+  saved_locator:
+    value: retained_locator_hint
+
 probe:
   authority: manager_service
+  phase_timeouts_ms:
+    uci_discovery: 10000
+    ready_after_options: 60000
+    runtime_status: 10000
+    first_bestmove: 60000
   behavior:
     - Dashboard and CLI probes use the same Manager service identity and the
       same engine.register dry-run path used immediately before persistence.
     - A passing probe performs process launch, uciok, readyok, typed option
       discovery, and a legal start-position bestmove.
+    - Each protocol phase owns an independent bounded deadline. Time spent in
+      UCI discovery cannot consume the readiness, runtime-status, or first-move
+      budget, and cold model/provider initialization after option application
+      uses the longer ready-after-options bound without weakening later checks.
     - Probe failure is returned with its stable failure code and remediation
       detail and never creates a resource.
     - A probe returns the UCI-reported display name and separately reported
@@ -39,34 +94,102 @@ probe:
       component-relative default_model.root projects the resolved model
       directory through the candidate's canonical uci_options.ModelRoot field.
       The model label and component name never select this behavior.
+    - A current managed-engine receipt whose verified component declares
+      uci_engine_launch_profile_v1 must select an
+      arena_uci_engine_launch_profile_v1 through its configuration_path. A
+      generic configuration_path without that capability remains private to
+      its owning component and is never interpreted as an Engine profile. The
+      profile is consumed only when that path is bounded by a receipt-declared
+      preserved data root and the profile independently binds the exact
+      component id, version, active root, executable, and working directory
+      selected by the verified component inventory.
+    - A valid managed launch profile replaces the default-model-only option
+      projection with its bounded scalar uci_options and exposes its explicit
+      conservative or qualified_timing state. Manager never interprets timing,
+      search, model, opening-book, or tablebase semantics to construct those
+      options.
+    - A malformed, stale, escaping, linked, identity-mismatched, or unbounded
+      managed launch profile makes that receipt candidate unavailable.
+      Retained profile bytes without a current receipt never create engine
+      authority.
     - Probe and registration validate that every requested UCI option was
       advertised by the engine, apply the options before readyok and the legal
       bestmove check, and retain the same normalized values for later games.
+    - Dashboard and CLI may explicitly replace a receipt candidate's
+      advertised ModelRoot with an operator-selected directory. For a managed
+      launch profile every other argument and option remains exact, and the
+      complete probe must load the selected deployment and republish its
+      post-selection runtime identity before the selection can be persisted.
+    - A custom ModelRoot cannot retain the packaged qualified-timing claim or
+      its expected runtime identity. The packaged default-model label remains
+      non-authoritative provenance and is displayed separately from the
+      selected path.
+    - A qualified_timing profile requires the declared runtime_status command
+      after options and readyok. Its typed identity must match every expected
+      model, adapter, provider, provider numeric, hardware/driver, runtime,
+      search-core, and timing-contract field before the legal bestmove can
+      authorize registration. Conservative and ordinary UCI candidates do not
+      require this optional Engine capability.
 
 registration:
   confirmation: explicit_only
   behavior:
     - Candidate discovery never creates or updates an engine resource.
-    - The dashboard requires a successful probe before enabling registration.
-    - Registration probes again to close the probe-to-register race and then
-      persists through the existing transactional command path.
+    - The dashboard's explicit Use or Register action performs the complete
+      probe and persists through the existing transactional command path in
+      one operator action. Test only remains an optional non-mutating preview;
+      it is not a second confirmation prerequisite.
+    - Test only forwards the exact candidate identity into the same dry-run
+      registration path, including qualified runtime-status matching. A
+      successful preview is correlation evidence only; the mutating action
+      probes again and never treats an earlier result as current authority.
+    - Discovery identity is never trusted across the probe or registration
+      boundary. Registration persists the fingerprint produced by its own full
+      process probe.
     - Existing raw launch-spec registration remains compatible for automation.
-    - Dashboard registration binds to a successful short-lived probe id,
-      repeats the probe, and retains verified installed-component provenance.
+    - Dashboard registration repeats the probe at mutation time and retains
+      verified installed-component provenance. The preview probe id correlates
+      diagnostics but does not authorize or replace that current probe.
     - The public uci_options request field is persisted as option_overrides;
       the legacy option_overrides spelling remains input-compatible for
-      existing automation but cannot conflict with uci_options.
+      existing automation but cannot conflict with uci_options. String,
+      boolean, and integer inputs are normalized once to UCI strings before
+      persistence and every later launch uses those exact values. Retained
+      pre-normalization registrations are accepted through the same bounded
+      conversion and become canonical on explicit refresh.
     - Registrations retained from an earlier Manager version may lack the
       receipt-derived ModelRoot override. When such a resource still carries
       verified install_receipt provenance and a safe default_model.root,
       tournament and Evidence launches derive the same exact component-local
       option without mutating the resource; each game records the effective
       option set it actually launched.
+    - A current receipt-managed candidate whose launch arguments, options, or
+      managed-profile identity differ from an existing registration is shown
+      as needing refresh rather than merely registered by executable path.
+      A new receipt version or immutable root for the same component identity
+      also refreshes that managed resource instead of creating a duplicate.
+      Refresh targets that exact resource revision, repeats the complete
+      candidate probe including qualified runtime-status matching, and keeps
+      the prior registration authoritative on failure.
+    - Refresh is rejected while a running or paused competition or active game
+      references the engine so one persisted competition cannot silently
+      change topology, timing evidence, or knowledge bindings between games.
+    - A stopped engine registration may be explicitly removed when no active
+      game or running or paused competition references it. Removing a Manager
+      registration never removes an installed component, executable, model,
+      knowledge asset, receipt, or preserved state.
+    - The dashboard model-root directory control and `arena engine set-model`
+      submit the same revision-checked engine.refresh command. Both repeat the
+      full managed UCI Arena Engine candidate probe, preserve the prior
+      registration on failure, and are rejected by the existing active-use
+      gates.
 
 recommendation:
   component_id: uci_arena.engine
   behavior:
-    - The verified UCI Arena component is ordered first and marked recommended.
+    - A verified candidate already admitted through a `uci_engine` discovery
+      declaration is ordered first and marked recommended when its component
+      id is uci_arena.engine.
     - Recommendation never depends on filename guessing, candidate order, or a model label.
 
 installation:
@@ -81,9 +204,21 @@ installation:
 acceptance:
   - A clean Complete Arena installation yields UCI Arena and Stockfish engine
     candidates from receipts.
+  - A component with a UCI-looking entrypoint, capability, or identity but no
+    `uci_engine` discovery declaration is not projected as an engine.
+  - A differently identified component with a valid `uci_engine` discovery
+    declaration is projected without Manager source changes.
+  - A discovery declaration whose selected file no longer matches the
+    immutable manifest is rejected before probing.
   - Both candidates can be probed, explicitly registered, and recovered after
     a Manager service restart.
   - A renamed UCI executable under an explicitly selected root is discoverable.
+  - More than 4096 irrelevant entries cannot extend traversal or masquerade as
+    a complete discovery result.
+  - Link, junction, reparse, disappearing-entry, permission, iterator,
+    cancellation, and deadline cases fail closed with bounded diagnostics.
+  - A discovered candidate is visibly a discovery_hint and replacement after
+    discovery cannot bypass the registration-time UCI probe.
   - A path usable by the interactive user but unavailable to the service fails
     during probe with no persisted engine resource.
   - Selecting one external executable automatically derives its display name
@@ -92,3 +227,20 @@ acceptance:
     registered with the exact packaged model root, emits its typed runtime
     model identity, and reuses that same option during tournament and Evidence
     Service launches.
+  - The Engines dashboard and CLI can select another directory through the
+    advertised ModelRoot option, show the packaged default separately, and
+    persist the custom path only after a successful post-selection probe.
+  - Selecting a custom ModelRoot keeps every other managed option exact and
+    removes packaged qualified-timing authority until the packaged root is
+    explicitly selected and successfully probed again.
+  - A differently identified conforming engine component can publish the
+    managed launch-profile schema and have every rendered option probed,
+    registered, reused by tournaments, and forwarded to Evidence target
+    registration without Manager source changes.
+  - Selecting a Book Forge snapshot or qualified Evidence timing profile
+    through the desktop setup helper refreshes an existing managed Engine only
+    after the Installer commits the locator and the repeated runtime probe
+    succeeds; otherwise the prior registration remains visibly stale.
+  - Conservative and qualified-timing launch-profile states remain visible in
+    the engine candidate UI; a rejected profile is actionable and cannot be
+    registered through the dashboard.

@@ -9,6 +9,7 @@ import {
   type LocalSetupRequest,
   type LocalSetupResult,
 } from '../api/client'
+import { setupCommitNotice } from './configurationModel'
 
 type ComponentId = Extract<
   LocalSetupRequest,
@@ -114,8 +115,7 @@ export function ComponentSetupButton({
             <Alert color="red" key={index}>{JSON.stringify(blocker)}</Alert>
           ))}
           <Alert color="orange">
-            Administrator confirmation is required. Manager will restart and reconnect
-            after the verified transaction.
+            {setupCommitNotice(plan!)}
           </Alert>
           <Group justify="flex-end">
             <Button

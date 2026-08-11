@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   availableCompetitionActions,
+  competitionEngineOptions,
   competitionPairingPreview,
   competitionPlanTarget,
   competitionScheduleSize,
@@ -22,6 +23,39 @@ function competition(lifecycle: string, revision: number): Resource<MatchPlanDat
 }
 
 describe('competition operator model', () => {
+  it('makes duplicate engine registrations distinguishable without hiding preference', () => {
+    const engines = [
+      {
+        id: '019fe5c3-first-engine',
+        data: {
+          display_name: 'UCI Arena Engine',
+          component_id: 'uci_arena.engine',
+          component_version: '0.1.6',
+          recommended: true,
+        },
+      },
+      {
+        id: '019e0000-stale-engine',
+        data: {
+          display_name: 'UCI Arena Engine',
+          component_id: 'uci_arena.engine',
+          component_version: '0.1.4',
+          recommended: true,
+        },
+      },
+    ] as Resource<import('../api/types').EngineData>[]
+    expect(competitionEngineOptions(engines)).toEqual([
+      {
+        value: '019fe5c3-first-engine',
+        label: 'UCI Arena Engine · preferred · 0.1.6 · 019fe5c3',
+      },
+      {
+        value: '019e0000-stale-engine',
+        label: 'UCI Arena Engine · preferred · 0.1.4 · 019e0000',
+      },
+    ])
+  })
+
   it('stores every multi-engine format as a tournament resource', () => {
     for (const format of ['round_robin', 'gauntlet', 'swiss', 'sprt']) {
       expect(competitionPlanTarget(format)).toEqual({

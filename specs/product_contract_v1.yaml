@@ -71,11 +71,58 @@ engine_contract:
         dispatch. Receipt onboarding resolves it beneath the immutable
         component root and supplies it only through an engine-advertised
         ModelRoot UCI option.
+      - An explicit operator model selection may replace only the advertised
+        ModelRoot value in a receipt-managed launch profile. The repeated
+        probe must observe a post-selection runtime identity before Manager
+        persists that identity; a model label never selects a path.
   installed_candidate_entrypoints:
     rules:
-      - A verified managed-component receipt contributes an engine candidate through an explicit `uci` entrypoint.
-      - A component that declares the `uci_engine` capability may instead expose the same boundary through its managed `executable` entrypoint, as Stockfish packages do.
-      - Discovery never guesses from an arbitrary manifest entrypoint, filename, model label, or enumeration order.
+      - A verified managed-component receipt contributes an engine candidate
+        only when its component manifest declares a `uci_engine` discovery
+        role whose locator resolves to a digest-verified component file.
+      - A discovery locator may name any declared entrypoint or an explicit
+        component-relative path; the entrypoint key itself carries no role.
+      - An entrypoint name, capability, component id, filename, model label,
+        or enumeration order never implies that a component is a UCI engine.
+  managed_launch_profile:
+    schema: arena_uci_engine_launch_profile_v1
+    component_capability: uci_engine_launch_profile_v1
+    rules:
+      - A component that declares the versioned launch-profile capability must
+        select one profile through its current receipt's bounded preserved
+        configuration path. Manager never interprets an unrelated component's
+        generic configuration path as this contract. The profile must bind the
+        exact verified component and UCI entrypoint before its scalar options
+        can enter the universal registration probe.
+      - Manager consumes the flat engine launch contract and does not parse or
+        synthesize provider timing, search, model, opening-book, or tablebase
+        semantics. Those remain owned by the producing engine component.
+      - A consumer of schema version 1 validates and uses its required bounded
+        fields while safely ignoring additive fields it does not understand.
+        Additive metadata cannot make a compatible profile unavailable; an
+        unknown schema or major version still fails closed.
+      - The profile state and redacted timing-evidence availability are
+        discovery metadata. Every option still must be advertised, applied,
+        and followed by readyok plus a legal bestmove before registration. A
+        qualified_timing profile additionally requires the capability-owned
+        runtime_status response to match its model, adapter, provider,
+        hardware/driver, runtime, search-core, and timing-contract identity;
+        mismatch or absence fails the probe without persisting a resource.
+      - A receipt-managed engine whose current candidate profile differs from
+        its persisted registration exposes one explicit refresh operation.
+        Refresh repeats the same full candidate and runtime-identity probe,
+        updates that existing resource by revision, and is rejected while a
+        running or paused competition or active game references the engine.
+        A new immutable root or version for the same verified component id is
+        such a refresh; it must not create a second managed Engine authority.
+        Removing an idle Engine resource removes Manager registration state
+        only and never deletes installed or preserved component data.
+        Provider-output adoption never silently rewrites a registered engine.
+      - An operator-selected ModelRoot keeps every other Engine-owned launch
+        argument and UCI option exact. It does not inherit the packaged
+        qualified-timing claim or expected runtime identity; returning to the
+        packaged ModelRoot restores those claims only after the normal full
+        managed-candidate probe succeeds.
   naming_boundary:
     product_engine_executable: uci_arena_engine
     requirements:
@@ -94,9 +141,18 @@ engine_contract:
       - Verified component identity, never enumeration order or a model label,
         marks the recommended engine.
       - The bundled model is projected as separate model-package metadata.
+      - Packaged default-model metadata remains discovery provenance when an
+        operator selects another ModelRoot and is never presented as the
+        effective selected model.
       - A successful registration copied from a verified installation receipt
         persists component_id, onboarding_source, recommended, and
         default_model as non-authoritative discovery provenance.
+      - UCI option scalars are normalized to bounded string values at the
+        registration boundary and that canonical map is reused for every
+        tournament, Evidence, and bot-facing launch.
+      - Tournament participant selectors distinguish duplicate display names
+        with component version and stable resource identity while retaining
+        the preferred-engine indicator.
       - A registration without component_id remains usable but cannot become
         preferred by matching its display name, reported engine name,
         executable stem, or persisted creation order.
@@ -120,9 +176,14 @@ bot_contract:
     - health
   invariants:
     - Every installation supplies an operator-owned token file outside the
-      repository and installed immutable component roots.
+      repository and installed immutable component roots. The authenticated
+      native helper may materialize that file from a write-only direct entry,
+      or the operator may select an existing external file.
     - Account identity comes from the verified adapter's BOT-only account probe.
-    - Credential contents never enter Manager state, APIs, logs, argv, or receipts.
+    - Credential contents never enter Manager service state or APIs, logs,
+      argv, receipts, setup results, browser storage, or provider configuration.
+      The direct-entry value crosses only the authenticated interactive helper
+      request body and is discarded after the external locator transaction.
     - Discovery, probing, and installation never register or start a bot.
     - Provider-owned per-user startup cannot be duplicated by Manager.
     - The bot account is a verified adapter projection, not a generic resource
@@ -165,6 +226,15 @@ local_match_planner:
     - Engine-specific overrides do not mutate catalog defaults.
     - Plans are deterministic for the same normalized inputs and seed.
     - Every scheduled game records both engine fingerprints and options.
+    - Before admitting the first game, Manager repeats the complete UCI probe
+      for every distinct participant with that competition's effective option
+      set and verifies the executable fingerprint still equals the registered
+      identity. A persisted qualified managed profile also repeats its typed
+      runtime-status identity comparison. Failure terminates the competition
+      before creating a game.
+    - Competition-specific option overrides must name options advertised by
+      the registered engine and satisfy their declared type and bounds before
+      the plan is persisted.
     - Color-paired formats schedule reversed colors together.
   opening_suite:
     schema: arena_opening_suite_v1

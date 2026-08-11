@@ -61,6 +61,9 @@ export interface CommandEnvelope {
 export interface EngineData extends Record<string, unknown> {
   display_name: string
   executable: string
+  working_directory?: string
+  arguments?: string[]
+  option_overrides?: Record<string, unknown>
   engine_name: string
   engine_author: string
   fingerprint: string
@@ -89,6 +92,7 @@ export interface EngineData extends Record<string, unknown> {
     provider: string
     provider_numeric_fingerprint: string
   }
+  launch_profile?: EngineCandidate['launch_profile']
 }
 
 export interface EngineCandidate {
@@ -110,6 +114,28 @@ export interface EngineCandidate {
     display_name: string
     input_adapter_id: string
     root: string
+  }
+  launch_profile?: {
+    schema: 'arena_uci_engine_launch_profile_v1'
+    state: 'conservative' | 'qualified_timing'
+    timing_profile: {
+      available: boolean
+      schema?: string
+      identity_sha256?: string
+    }
+    expected_runtime: null | {
+      timing_contract_version: string
+      model_id: string
+      model_fingerprint: string
+      adapter_id: string
+      provider_requested: string
+      provider_effective: string
+      provider_numeric_fingerprint: string
+      hardware_driver_fingerprint: string
+      onnx_runtime_version: string
+      search_core: string
+      [key: string]: unknown
+    }
   }
   fingerprint?: string
   issues: Array<{ code: string; detail: string }>
@@ -333,6 +359,7 @@ export interface EvidenceOrchestrationProjection {
 export interface BookSnapshotProjection {
   snapshot_id: string
   channel: string
+  path: string
   manifest_sha256: string
   artifact_files: Array<{ name: string; sha256: string }>
   record_count: number
@@ -416,7 +443,9 @@ export interface BotCandidate {
   configuration_state: 'configured' | 'missing'
   token_reference_available: boolean
   startup_state: 'installed' | 'disabled'
+  qualification_state: 'available' | 'unavailable'
   state: 'ready_to_probe' | 'blocked'
+  startup_eligibility: 'ready' | 'blocked'
   options_state: 'interactive_helper_required'
   default_model?: {
     model_id: string
@@ -425,7 +454,7 @@ export interface BotCandidate {
   }
   readiness: Record<
     string,
-    'ready' | 'missing' | 'not_verified' | 'verified' | 'disabled' | 'enabled'
+    'ready' | 'configured' | 'bootstrap' | 'missing' | 'not_verified' | 'verified' | 'disabled' | 'enabled'
   >
   issues: Array<{ code: string; detail: string }>
 }
@@ -445,6 +474,20 @@ export interface BotProbeResult {
   games: number
 }
 
+export interface BotQualificationResult {
+  schema: 'arena_bot_qualification_result_v1'
+  schema_version: 1
+  state: 'committed'
+  single_game_profile_imported: true
+  capacity_profile_imported: true
+  reused: boolean
+  maximum_concurrency: number
+  search_core: 'mcgs' | 'v2'
+  model_id: string
+  provider: 'directml' | 'cuda'
+  timing_identity_sha256: string
+}
+
 export type BotControlAction = 'status' | 'enable_startup' | 'disable_startup'
 
 export interface BotControlResult {
@@ -459,13 +502,6 @@ export interface BotControlResult {
   stream_connected: boolean
   blockers: string[]
   account_name?: string
-}
-
-export interface BotTokenReferenceResult {
-  schema: 'arena_bot_token_reference_result_v1'
-  schema_version: 1
-  state: 'saved'
-  validation: 'path_reference_only'
 }
 
 export interface BotOptions {

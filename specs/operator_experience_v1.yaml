@@ -59,6 +59,11 @@ interaction_feedback:
     - The page hash is a durable deep link. Direct hash navigation, browser
       back/forward, and a newly delivered pairing hash update the rendered
       surface without reauthenticating ordinary page changes.
+    - If an installed upgrade replaces a lazy-loaded dashboard chunk while a
+      tab from the prior generation remains open, the web shell performs at
+      most one full reload for that exact failed chunk so the tab joins the
+      current installed generation. A repeated failure renders an actionable
+      reload surface instead of looping or leaving a blank window.
     - A direct same-origin tab that inherits a valid HttpOnly session cookie
       resynchronizes the existing session's per-tab CSRF value before it is
       presented as mutation-ready. Read success with a missing CSRF value must
@@ -79,16 +84,37 @@ engine_identity_experience:
       or status labels.
     - Show the model package as separate metadata only when reported by the
       registered engine.
+    - When a receipt-managed candidate supplies an advertised ModelRoot, show
+      its current selected directory in an editable directory-picker control,
+      keep the packaged default label separate, and provide a reset-to-default
+      action. Test, register, and refresh use the selected path through the
+      normal full probe rather than mutating React-only state.
+    - Explain that a custom model selection does not retain packaged qualified
+      timing evidence. A failed selection leaves the prior registered model
+      authoritative and reports the backend diagnostic beside that candidate.
     - Put the receipt-verified uci_arena.engine candidate first and offer one
       explicit Use this engine action; that action performs the complete
       bounded UCI interrogation before creating the registration and does not
       require a redundant probe-confirm-register sequence.
+    - When that current receipt replaces an older immutable component root,
+      present one Refresh configuration action for the existing managed Engine
+      resource instead of creating a second registration.
+    - Show an explicitly confirmed Remove registration action for stopped
+      engines. Explain that it removes only Manager registration state, retains
+      installed files and valuable data, and report active-use conflicts.
+    - A successful retry clears the prior failure for that exact engine action;
+      stale error text must not remain beside a successful current state.
     - Auto-detect searches only receipts, saved locators, provider manifests,
       PATH, and bounded standard roots. Scan folder uses the native picker and
       inspects only the selected root and direct children.
     - Persist the verified component id, candidate source, recommendation flag,
       and separate default-model metadata on a registered candidate so planner
       ordering never depends on enumeration order or a model-branded label.
+    - Show whether a managed candidate's Engine-owned launch profile is using
+      selected qualified timing evidence or conservative defaults. Selection
+      is not described as active until the runtime-identity probe succeeds; a
+      successful generic executable probe must not conceal missing timing
+      integration.
     - Preserved registrations lacking verified component identity remain
       available as external peers but are never selected as the preferred
       product engine.
@@ -132,6 +158,10 @@ managed_service_experience:
       Pause/Resume controls and a startup-owned status hint; do not show
       process Start, Stop, or Restart controls that would create a duplicate
       daemon.
+    - Render Pause only for an observed active or degraded provider and Resume
+      only for an observed paused provider. Unknown, stopped, failed, or
+      unavailable provider state keeps Probe available without presenting an
+      already-invalid lifecycle action.
     - Do not show an unconfigured optional service as an unhealthy manager resource.
     - Show Installed/Missing, Configured/Not configured, and current runtime
       activity as separate states on the catalog card.
@@ -149,6 +179,24 @@ managed_service_experience:
       bounded Manager output projection without opening Book Forge storage.
     - Show Evidence dataset and qualified timing-profile identities from the
       bounded Manager output projection without opening Evidence storage.
+    - Each Book Forge snapshot and qualified timing profile offers an explicit
+      Use in Engine action in the authenticated desktop host. The action first
+      previews and commits the Installer-owned import transaction, then repeats
+      the managed Engine probe and reports whether the existing registration
+      was refreshed or remains safely stale.
+    - Every projected Book Forge snapshot and qualified timing profile shows
+      Provider current and Engine active as separate identity states. Engine
+      active is derived only from the receipt-managed Engine registration that
+      completed its runtime probe; a matching provider path or timing identity
+      is labelled active, a non-matching current output keeps Use in Engine,
+      and an unavailable registration is labelled Engine not registered.
+    - The Services surface shows the active Engine book path and timing
+      identity in a bounded copyable form so the operator can tell which
+      provider-owned files are being updated and which exact selection the
+      Engine will consume without opening provider-private storage.
+    - An external browser may inspect output identity but cannot claim to
+      activate it. Provider publication never silently changes a registered
+      Engine, a running game, or a running/paused competition.
     - Reports and configuration surfaces consume only these projected public
       outputs and visibly distinguish unavailable, incompatible, empty, and
       ready output sets.
@@ -193,8 +241,10 @@ desktop_launcher:
     - The shell identifies the connection as an authenticated local session
       and never labels it administrator, elevated, or privileged unless that
       exact authority is supplied by a typed backend contract.
-    - Verifies the local service, obtains a one-use pairing URL, and hosts the
-      packaged React dashboard inside a thin native desktop window.
+    - Verifies the local service with a fresh keyed challenge bound to the
+      service's own configured loopback origin before sending bearer
+      authority, obtains a one-use pairing URL, and hosts the packaged
+      React dashboard inside a thin native desktop window.
     - The Manager service remains the sole runtime and persistence authority;
       the native host owns only window lifecycle, pairing, native dialogs, and
       typed setup handoff.
@@ -239,6 +289,11 @@ cli_experience:
       the same names for --endpoint, --data-dir, --output, and common commands.
     - Help documents that global flags precede the subcommand and includes
       status, health, doctor, ui, engine, service, and setup examples.
+    - Engine probe and add accept an optional --model-root directory that is
+      supplied only through the advertised ModelRoot UCI option. Engine
+      set-model accepts a registered UCI Arena Engine id plus required
+      --model-root and
+      uses the same revision-checked full refresh path as the dashboard.
 
 bot_experience:
   profile: lichess_bot
@@ -250,20 +305,51 @@ bot_experience:
       dependencies before token-file onboarding.
       If the adapter is missing but retained media is unavailable, keep an
       explicit Suite Setup repair prerequisite visible.
+    - Present a masked direct Lichess API-key field as the normal credential
+      setup path. Keep selection of an existing token file behind an explicit
+      advanced control rather than showing both paths at once.
+    - Direct entry is available only through the authenticated native desktop
+      helper. It creates or atomically replaces one access-restricted per-user
+      operator-owned token file outside Manager data and installed roots, then
+      commits only its path through the same Installer-owned import transaction.
+      Provider startup must be disabled before replacement.
     - Use an operator-owned token-file path permanently. Local installations
-      provide their own credential; repositories, packages, tests, and Manager
-      state never contain one.
+      provide their own credential; repositories, packages, tests, setup
+      results, browser storage, Manager service APIs, and Manager state never
+      contain one. Normal uninstall preserves the external file and purge has
+      no authority to remove it.
+    - Saving or replacing the token-file reference uses the same reviewed
+      Installer-owned import plan and commit from both Bots and Configuration.
+      The Manager HTTP API remains read-only for saved locators and cannot
+      report success before consumer configuration regeneration commits.
     - Detect and reject non-BOT accounts through the verified adapter.
     - Default engine selection to the verified uci_arena.engine component and
       show its model package separately.
     - Show every engine, knowledge, evidence, capacity, transport, credential,
       and startup blocker without claiming the bot is active.
+    - Show absent learned transport evidence as a visible provider bootstrap
+      reserve rather than a blocker or a qualified profile. Account verification
+      remains available before engine qualification, while startup remains
+      gated by the separately projected live-play prerequisites.
     - Show provider-owned startup as disabled, enabled, active, or unavailable
       from the authenticated interactive-user helper; do not infer live state
       from catalog availability or a stale installer receipt.
     - Offer typed Refresh status, Enable startup, and Disable startup controls
       without a terminal. Enablement performs a fresh BOT probe and never lets
       the browser provide the account identity.
+    - Offer Requalify installed engine whenever the verified adapter is
+      installed and provider startup is disabled. The control invokes one fixed
+      provider-owned workflow, displays a long-running state, and refreshes
+      readiness only after both validated profile locators commit through
+      Installer. It accepts no browser-supplied paths or commands.
+    - Qualification success names the retained timing identity, current model,
+      provider, search core, and concurrency without exposing filesystem paths.
+      Failure remains actionable, leaves startup disabled, and links the
+      operator to Engines, Reports, and Services for owning prerequisites.
+    - While the installed adapter's Bots surface is open, sample the same
+      credential-free provider/startup status on a bounded five-second interval.
+      Manual Refresh remains available; polling never reads the token or contacts
+      Lichess and never converts missing query data into an inactive conclusion.
     - Explain that closing the desktop helper removes account-control
       authority but does not stop provider-owned startup.
     - Every readiness blocker links to the owning Engines, Services, Reports,
@@ -310,7 +396,9 @@ tournament_experience:
     - The planner exposes rounds for Swiss, the even maximum game count plus
       Elo hypotheses and alpha/beta for SPRT, moves-to-go, opening-suite path,
       maximum-ply and optional draw/win adjudication controls, and all supported
-      variants. Controls hidden by format are omitted from the command.
+      variants. The opening-suite path supports the native file picker when the
+      desktop helper is present while retaining manual entry. Controls hidden
+      by format are omitted from the command.
     - The schedule preview labels Swiss capacity as games per round, never as color pairs. Other formats report complete color-reversed sets and disclose any odd unpaired game instead of rounding it into a fictitious pair.
     - Competition cards show a terminal SPRT verdict and likelihood ratio,
       Swiss round/bye progress, and direct links to the planner, Engines, and
@@ -330,8 +418,10 @@ evidence_service_experience:
       counts, individual safe job summaries, datasets, and qualified timing
       profiles from provider-authoritative projections.
     - A configured compatible Evidence Service exposes one guided action to
-      enqueue its built-in first campaign; an absent exact target explains how
-      to start or register a compatible model deployment before collecting.
+      enqueue its built-in first campaign against the provider-owned default;
+      retained historical targets never silently replace the active deployment.
+      An absent exact target explains how to start or register a compatible
+      model deployment before collecting.
     - When no target exists, the Services surface offers one guided Use
       preferred engine action if a receipt-verified UCI Arena Engine with
       default-model metadata is registered. The action repeats the full UCI
@@ -361,10 +451,11 @@ evidence_service_experience:
 knowledge_asset_setup:
   location: configuration
   requirements:
-    - Offer one Auto-detect large local assets action for opening books,
-      Syzygy tables, and timing evidence. The native host delegates this
-      read-only operation to the adjacent Installer-owned arena-setup binary;
-      Manager does not duplicate file-index or package-discovery mechanism.
+    - Offer one Auto-detect retained assets action for opening books, Syzygy
+      tables, timing evidence, and Lichess single-game, capacity, and transport
+      profiles. The native host delegates this read-only operation to the
+      adjacent Installer-owned arena-setup binary; Manager does not duplicate
+      file-index, content-inspection, or package-discovery mechanism.
     - Auto-detect uses the operating-system file index with a bounded result
       count and time budget. It never starts a recursive whole-volume walk,
       never writes a locator, and never enables a discovered asset.
@@ -372,13 +463,25 @@ knowledge_asset_setup:
       and validation classification. An unavailable, stale, timed-out, empty,
       or partially populated index is a visible non-blocking result and keeps
       every manual browse and signed-download alternative available.
+    - Offer a folder-assisted bounded fallback when useful assets are outside
+      the operating-system index. The interactive helper forwards only the
+      explicitly selected absolute roots, with at most eight roots per request,
+      as repeated typed scan-root arguments; the
+      Installer inspects the selected root and its direct children without a
+      recursive drive crawl or mutation.
     - Discovery is deliberately permissive: partial Syzygy WDL or DTZ sets,
       standalone or sidecar-backed opening books, and parseable legacy,
       incomplete, or runtime-mismatched timing evidence remain catalogued.
       Exact qualification and identity are checked only when the operator asks
       to apply an asset to a runtime or make a protected-live safety claim.
-    - Every discovered path has an explicit Review import action. Discovery
-      itself never implies compatibility, installation, selection, or trust.
+    - Every discovered path has an explicit Review import action. The selected
+      candidate and all retained alternatives remain visible with provenance
+      and classification. Discovery itself never implies compatibility,
+      installation, selection, or trust.
+    - Import review dialogs describe the selected asset's actual ownership and
+      validation behavior. Credential-specific language appears only for a
+      Lichess token-file reference; knowledge, timing, engine, and service
+      imports never imply that they contain or expose credential material.
     - Offer browse-assisted opening-book, Syzygy directory, and Lichess
       token-file-reference selection with format-specific hints and filters.
     - Offer browse-assisted qualified timing, Lichess single-game, Lichess

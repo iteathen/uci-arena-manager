@@ -1,17 +1,22 @@
 #include <curl/curl.h>
+#include <sodium.h>
 
 #include <CLI/CLI.hpp>
+#include <array>
+#include <charconv>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
-#include "arena/adapters/uci_process.hpp"
 #include "arena/application/broker_policy.hpp"
+#include "arena/application/local_auth.hpp"
 #include "arena/domain/uuid.hpp"
 #include "ui_picker.hpp"
 
@@ -73,11 +78,53 @@ std::filesystem::path current_executable_directory() {
 struct HttpResult {
     long status{};
     std::string body;
+    bool exceeded{};
 };
 
 std::size_t receive_body(char* data, std::size_t size, std::size_t count, void* target) {
-    static_cast<std::string*>(target)->append(data, size * count);
-    return size * count;
+    constexpr std::size_t maximum_response_bytes = 1024 * 1024;
+    auto& result = *static_cast<HttpResult*>(target);
+    if (count != 0 && size > maximum_response_bytes / count) {
+        result.exceeded = true;
+        return 0;
+    }
+    const std::size_t bytes = size * count;
+    if (result.body.size() > maximum_response_bytes - bytes) {
+        result.exceeded = true;
+        return 0;
+    }
+    result.body.append(data, bytes);
+    return bytes;
+}
+
+void validate_loopback_endpoint(const std::string& endpoint) {
+    constexpr std::string_view prefix = "http://127.0.0.1:";
+    if (!endpoint.starts_with(prefix)) {
+        throw std::invalid_argument(
+            "Manager endpoint must be an explicit numeric loopback HTTP origin");
+    }
+    const std::string_view port{
+        endpoint.data() + prefix.size(), endpoint.size() - prefix.size()};
+    unsigned number = 0;
+    const auto parsed =
+        std::from_chars(port.data(), port.data() + port.size(), number);
+    if (port.empty() || parsed.ec != std::errc{} ||
+        parsed.ptr != port.data() + port.size() || number == 0 ||
+        number > 65'535) {
+        throw std::invalid_argument(
+            "Manager endpoint must contain one valid numeric loopback port");
+    }
+}
+
+std::string fresh_challenge() {
+    if (sodium_init() < 0) {
+        throw std::runtime_error("libsodium initialization failed");
+    }
+    std::array<unsigned char, 32> bytes{};
+    randombytes_buf(bytes.data(), bytes.size());
+    std::array<char, 65> encoded{};
+    sodium_bin2hex(encoded.data(), encoded.size(), bytes.data(), bytes.size());
+    return encoded.data();
 }
 
 class HttpClient final {
@@ -87,11 +134,29 @@ class HttpClient final {
         while (!endpoint_.empty() && endpoint_.back() == '/') {
             endpoint_.pop_back();
         }
+        validate_loopback_endpoint(endpoint_);
         std::ifstream input(key_path, std::ios::binary);
         std::getline(input, key_);
-        if (key_.empty()) {
+        if (key_.size() != 64) {
             throw std::runtime_error(
                 "client key is unavailable; start arena-service or set --data-dir");
+        }
+        const std::string challenge = fresh_challenge();
+        const json identity = request(
+            "POST",
+            "/api/v1/auth/server-proof",
+            json{{"challenge", challenge}}.dump(),
+            false);
+        const std::string observed = identity.value("proof", "");
+        const std::string expected =
+            arena::application::LocalAuth::compute_server_proof(
+                key_, challenge, endpoint_);
+        if (identity.value("schema", "") != "arena_manager_server_proof_v1" ||
+            identity.value("audience", "") != endpoint_ ||
+            observed.size() != expected.size() ||
+            sodium_memcmp(observed.data(), expected.data(), expected.size()) != 0) {
+            throw std::runtime_error(
+                "the loopback endpoint did not prove Manager identity");
         }
     }
 
@@ -105,15 +170,19 @@ class HttpClient final {
 
   private:
     [[nodiscard]] json request(const std::string& method, const std::string& path,
-                               const std::optional<std::string>& body) const {
+                               const std::optional<std::string>& body,
+                               const bool authenticated = true) const {
         CURL* handle = curl_easy_init();
         if (handle == nullptr) {
             throw std::runtime_error("cannot initialize HTTP client");
         }
         HttpResult result;
         curl_slist* headers = nullptr;
-        const std::string authorization = "Authorization: Bearer " + key_;
-        headers = curl_slist_append(headers, authorization.c_str());
+        std::string authorization;
+        if (authenticated) {
+            authorization = "Authorization: Bearer " + key_;
+            headers = curl_slist_append(headers, authorization.c_str());
+        }
         headers = curl_slist_append(headers, "Accept: application/json");
         if (body) {
             headers = curl_slist_append(headers, "Content-Type: application/json");
@@ -122,7 +191,8 @@ class HttpClient final {
         curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
         curl_easy_setopt(handle, CURLOPT_HTTPHEADER, headers);
         curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, receive_body);
-        curl_easy_setopt(handle, CURLOPT_WRITEDATA, &result.body);
+        curl_easy_setopt(handle, CURLOPT_WRITEDATA, &result);
+        curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
         curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 2000L);
         curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 30000L);
         curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
@@ -135,6 +205,10 @@ class HttpClient final {
         curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &result.status);
         curl_slist_free_all(headers);
         curl_easy_cleanup(handle);
+        if (result.exceeded) {
+            throw std::runtime_error(
+                "service response exceeded the one MiB client boundary");
+        }
         if (performed != CURLE_OK) {
             throw std::runtime_error(std::string("service request failed: ") +
                                      curl_easy_strerror(performed));
@@ -157,7 +231,9 @@ class HttpClient final {
 };
 
 json command(const std::string& action, const std::string& kind, json parameters,
-             const bool dry_run = false, const std::optional<std::string>& id = std::nullopt) {
+             const bool dry_run = false,
+             const std::optional<std::string>& id = std::nullopt,
+             const std::optional<std::uint64_t> expected_revision = std::nullopt) {
     const std::string request_id = arena::domain::uuid_v7();
     return {
         {"schema_version", 1},
@@ -165,7 +241,8 @@ json command(const std::string& action, const std::string& kind, json parameters
         {"idempotency_key", "cli-" + request_id},
         {"target", {{"kind", kind}, {"id", id ? json(*id) : json(nullptr)}}},
         {"action", action},
-        {"expected_revision", nullptr},
+        {"expected_revision",
+         expected_revision ? json(*expected_revision) : json(nullptr)},
         {"dry_run", dry_run},
         {"parameters", std::move(parameters)},
     };
@@ -251,15 +328,21 @@ int main(int argc, char** argv) {
         auto* engine_probe = engine->add_subcommand("probe", "Probe an engine without registering");
         std::filesystem::path probe_executable;
         std::filesystem::path probe_working_directory;
+        std::filesystem::path probe_model_root;
         std::vector<std::string> probe_arguments;
         engine_probe->add_option("executable", probe_executable)->required();
         engine_probe->add_option("--working-directory", probe_working_directory);
         engine_probe->add_option("--arg", probe_arguments);
+        engine_probe->add_option(
+            "--model-root",
+            probe_model_root,
+            "Model package directory supplied through the advertised ModelRoot option");
 
         auto* engine_add = engine->add_subcommand("add", "Probe and register a UCI engine");
         std::string engine_name;
         std::filesystem::path engine_executable;
         std::filesystem::path engine_working_directory;
+        std::filesystem::path engine_model_root;
         std::vector<std::string> engine_arguments;
         bool engine_dry_run = false;
         engine_add->add_option(
@@ -268,7 +351,24 @@ int main(int argc, char** argv) {
         engine_add->add_option("--executable", engine_executable)->required();
         engine_add->add_option("--working-directory", engine_working_directory);
         engine_add->add_option("--arg", engine_arguments);
+        engine_add->add_option(
+            "--model-root",
+            engine_model_root,
+            "Model package directory supplied through the advertised ModelRoot option");
         engine_add->add_flag("--dry-run", engine_dry_run);
+
+        auto* engine_set_model = engine->add_subcommand(
+            "set-model",
+            "Select ModelRoot for a registered UCI Arena Engine");
+        std::string engine_set_model_id;
+        std::filesystem::path selected_model_root;
+        engine_set_model->add_option("id", engine_set_model_id)->required();
+        engine_set_model
+            ->add_option(
+                "--model-root",
+                selected_model_root,
+                "Model package directory selected through the advertised ModelRoot option")
+            ->required();
 
         auto* match = app.add_subcommand("match", "Plan local engine matches");
         match->require_subcommand(1);
@@ -395,28 +495,6 @@ int main(int argc, char** argv) {
 
         CLI11_PARSE(app, argc, argv);
 
-        if (*engine_probe) {
-            if (probe_working_directory.empty()) {
-                probe_working_directory = probe_executable.parent_path();
-            }
-            const auto result = arena::adapters::UciProcess::probe(
-                probe_executable, probe_working_directory, probe_arguments);
-            print_json(
-                {
-                    {"ok", result.ok},
-                    {"engine_name", result.engine_name},
-                    {"engine_author", result.engine_author},
-                    {"fingerprint", result.fingerprint},
-                    {"bestmove", result.bestmove},
-                    {"option_count", result.options.size()},
-                    {"elapsed_ms", result.elapsed_ms},
-                    {"error", result.error},
-                },
-                output);
-            curl_global_cleanup();
-            return result.ok ? 0 : 3;
-        }
-
         if (*daemon_status || *daemon_start || *daemon_stop || *daemon_restart) {
             const std::string action = *daemon_start     ? "start"
                                        : *daemon_stop    ? "stop"
@@ -491,11 +569,33 @@ int main(int argc, char** argv) {
                     setup_executable,
                     desktop_host);
             }
+        } else if (*engine_probe) {
+            if (probe_working_directory.empty()) {
+                probe_working_directory = probe_executable.parent_path();
+            }
+            json options = json::object();
+            if (!probe_model_root.empty()) {
+                options["ModelRoot"] = probe_model_root.string();
+            }
+            print_json(
+                client.post(
+                    "/api/v1/engine-probes",
+                    {
+                        {"executable", probe_executable.string()},
+                        {"working_directory", probe_working_directory.string()},
+                        {"arguments", probe_arguments},
+                        {"uci_options", std::move(options)},
+                    }),
+                output);
         } else if (*engine_list) {
             print_json(client.get("/api/v1/resources/engine"), output);
         } else if (*engine_add) {
             if (engine_working_directory.empty()) {
                 engine_working_directory = engine_executable.parent_path();
+            }
+            json options = json::object();
+            if (!engine_model_root.empty()) {
+                options["ModelRoot"] = engine_model_root.string();
             }
             print_json(
                 client.post("/api/v1/commands",
@@ -505,8 +605,86 @@ int main(int argc, char** argv) {
                                         {"executable", engine_executable.string()},
                                         {"working_directory", engine_working_directory.string()},
                                         {"arguments", engine_arguments},
+                                        {"uci_options", std::move(options)},
                                     },
                                     engine_dry_run)),
+                output);
+        } else if (*engine_set_model) {
+            const json engines = client.get("/api/v1/resources/engine");
+            json registered = nullptr;
+            for (const auto& candidate : engines) {
+                if (candidate.value("id", "") == engine_set_model_id) {
+                    registered = candidate;
+                    break;
+                }
+            }
+            if (registered.is_null()) {
+                throw std::runtime_error("registered engine id was not found");
+            }
+            const json& registered_data = registered.at("data");
+            if (registered_data.value("onboarding_source", "") !=
+                    "install_receipt" ||
+                registered_data.value("component_id", "") !=
+                    "uci_arena.engine") {
+                throw std::runtime_error(
+                    "engine set-model requires a receipt-managed UCI Arena Engine");
+            }
+            const std::string registered_candidate_id =
+                registered_data.value("candidate_id", "");
+            const std::string registered_component_id =
+                registered_data.value("component_id", "");
+            const json discovery = client.get("/api/v1/engine-candidates");
+            json selected_candidate = nullptr;
+            for (const auto& candidate : discovery.at("candidates")) {
+                if (!registered_candidate_id.empty() &&
+                    candidate.value("candidate_id", "") ==
+                        registered_candidate_id) {
+                    selected_candidate = candidate;
+                    break;
+                }
+            }
+            if (selected_candidate.is_null() &&
+                !registered_component_id.empty()) {
+                for (const auto& candidate : discovery.at("candidates")) {
+                    if (candidate.value("source", "") == "install_receipt" &&
+                        candidate.value("component_id", "") ==
+                            registered_component_id) {
+                        selected_candidate = candidate;
+                        break;
+                    }
+                }
+            }
+            if (selected_candidate.is_null() ||
+                selected_candidate.value("state", "") != "ready_to_probe") {
+                throw std::runtime_error(
+                    "the current receipt-managed engine candidate is unavailable");
+            }
+            json options = selected_candidate.at("uci_options");
+            if (!options.is_object() || !options.contains("ModelRoot")) {
+                throw std::runtime_error(
+                    "the selected engine candidate does not publish ModelRoot");
+            }
+            options["ModelRoot"] = selected_model_root.string();
+            print_json(
+                client.post(
+                    "/api/v1/commands",
+                    command(
+                        "engine.refresh",
+                        "engine",
+                        {
+                            {"display_name",
+                             registered_data.value("display_name", "")},
+                            {"executable", selected_candidate.at("executable")},
+                            {"working_directory",
+                             selected_candidate.at("working_directory")},
+                            {"arguments", selected_candidate.at("arguments")},
+                            {"uci_options", std::move(options)},
+                            {"candidate_id",
+                             selected_candidate.at("candidate_id")},
+                        },
+                        false,
+                        engine_set_model_id,
+                        registered.at("revision").get<std::uint64_t>())),
                 output);
         } else if (*match_plan) {
             print_json(

@@ -6,10 +6,27 @@
 #include <filesystem>
 #include <functional>
 #include <nlohmann/json.hpp>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace arena::application {
+
+class BotQualificationFailure final : public std::runtime_error {
+  public:
+    BotQualificationFailure(
+        const std::string& code,
+        const std::string& stage,
+        const std::string& detail);
+    [[nodiscard]] const std::string& code() const noexcept;
+    [[nodiscard]] const std::string& stage() const noexcept;
+    [[nodiscard]] const std::string& detail() const noexcept;
+
+  private:
+    std::string code_;
+    std::string stage_;
+    std::string detail_;
+};
 
 class ServiceCatalog final {
   public:
@@ -32,10 +49,22 @@ class ServiceCatalog final {
     [[nodiscard]] static nlohmann::json bot_profiles();
     [[nodiscard]] static nlohmann::json discover_bot(
         const std::filesystem::path& manager_data_root);
+    [[nodiscard]] static nlohmann::json discover_bot(
+        const std::filesystem::path& manager_data_root,
+        const ProcessSupervisor& process_supervisor);
+    [[nodiscard]] static nlohmann::json discover_bot(
+        const std::filesystem::path& manager_data_root,
+        const BotCommandRunner& command_runner);
     [[nodiscard]] static nlohmann::json probe_bot(
         const std::filesystem::path& manager_data_root,
         const ProcessSupervisor& process_supervisor);
     [[nodiscard]] static nlohmann::json probe_bot(
+        const std::filesystem::path& manager_data_root,
+        const BotCommandRunner& command_runner);
+    [[nodiscard]] static nlohmann::json qualify_bot(
+        const std::filesystem::path& manager_data_root,
+        const ProcessSupervisor& process_supervisor);
+    [[nodiscard]] static nlohmann::json qualify_bot(
         const std::filesystem::path& manager_data_root,
         const BotCommandRunner& command_runner);
     [[nodiscard]] static nlohmann::json control_bot(

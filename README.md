@@ -14,10 +14,14 @@ limits, and identity fingerprint.
 - `arena-service`: authoritative C++ service and local HTTP/WebSocket API
 - `arena`: native CLI using the same public control contract
 - `uci-arena-manager`: thin native desktop host for the packaged React view
-- `arena-setup`: typed, provenance-verifying component installer
 - `arena-broker`: minimal allowlisted privileged service-control boundary
 - `web`: React and TypeScript operator dashboard
 - `specs`: authoritative product, API, persistence, lifecycle, and UX contracts
+
+The adjacent `arena-setup` executable is produced by the independent
+[`uci-arena-installer`](https://github.com/iteathen/uci-arena-installer)
+repository. Manager calls it only through the authenticated typed desktop
+helper and does not compile or publish a second installer engine.
 
 ## Start the installed application
 
@@ -39,6 +43,7 @@ arena doctor
 arena ui
 arena engine list
 arena engine probe PATH-TO-ENGINE
+arena engine set-model ENGINE-ID --model-root PATH-TO-MODEL-PACKAGE
 arena service profiles
 ```
 
@@ -96,9 +101,14 @@ No engine names are hardcoded.
 arena engine add --executable C:\engines\stockfish.exe
 arena engine add --executable C:\engines\lc0.exe
 arena engine add --executable C:\engines\uci_arena_engine.exe
+arena engine set-model <uci-arena-engine-id> --model-root C:\models\selected-package
 arena match plan --name "LC0 vs Stockfish" --engine <lc0-id> --engine <stockfish-id> --games-per-pair 20 --initial-ms 60000 --increment-ms 600
 arena tournament create --name "Local round robin" --format round_robin --engine <stockfish-id> --engine <lc0-id> --engine <uci-arena-engine-id>
 ```
+
+`engine probe` and `engine add` also accept `--model-root PATH`. Manager sends
+the value only through an advertised `ModelRoot` UCI option and repeats the
+full probe before a selection is registered.
 
 ## External services
 
@@ -131,10 +141,20 @@ Installed Book Forge and Evidence Service components are reconciled from
 manifests must match before Manager registers either service. A status refresh
 validates every
 advertised Book Forge snapshot through `book-forge validate` and projects only
-the snapshot identity, channel, manifest digest, qualification, and record
-count. Evidence integration similarly validates the public dataset-list
-contract and projects bounded dataset identities and authority. Manager never
-opens either provider's database or rewrites provider output.
+the snapshot identity, channel, manifest digest, qualification, record count,
+and validated artifact root. Evidence integration similarly validates the
+public dataset-list contract and projects bounded dataset identities and
+authority. Manager never opens either provider's database or rewrites provider
+output.
+
+The Services page presents **Use in Engine** beside validated Book Forge
+snapshots and qualified Evidence timing profiles. The native setup helper first
+previews and commits the Installer-owned locator transaction. Manager then
+rediscovers the receipt-managed Engine and repeats its complete UCI and typed
+runtime-identity probe before updating the same engine resource by revision. A
+failed probe or active competition leaves the prior registration authoritative
+and visibly marks the candidate as needing refresh. Provider publication alone
+never changes a registered Engine or a running game.
 
 When Evidence is waiting for its first exact target, the Services page offers
 **Use UCI Arena Engine** if the receipt-verified recommended engine is already
@@ -154,9 +174,16 @@ immutable component directory and projects it through the engine's advertised
 the legal-bestmove check, then persists it for matches and Evidence probes. A
 model label or product name never selects an engine path or parser.
 
-The Bots dashboard installs and detects the packaged Lichess adapter, lets the
-operator select an existing token file, and verifies the BOT account without a
-terminal. Manager saves only normalized path metadata. The credential probe
+The Bots dashboard installs and detects the packaged Lichess adapter, presents
+a masked direct API-key field by default, keeps existing token-file selection
+behind **Use an existing key file instead**, and verifies the BOT account
+without a terminal. Direct entry is sent only to the authenticated native
+helper as a bounded octet-stream body. The helper atomically materializes an
+access-restricted per-user file outside Manager data and installed software;
+only that file path enters the same reviewed Installer import transaction used
+by Configuration. The preceding file is restored if locator commit fails, and
+replacement requires provider startup to be disabled. The Manager service only
+reads and projects redacted locator availability. The credential probe
 runs through the authenticated, ephemeral helper hosted by the desktop
 launcher under the interactive user; only the receipt-verified adapter may
 open the token file, and only redacted account identity returns to the
@@ -165,8 +192,9 @@ UCI Arena Engine and default model, opening book, Syzygy, timing, single-game,
 capacity and transport evidence, token reference, account probe, and provider
 startup; a missing dimension is never collapsed into a generic active state.
 Every installation supplies its own operator-owned token file outside the
-repository, Manager data, and installed provider component. Manager stores only
-the normalized external path and rejects a file placed under Manager-owned data.
+repository, Manager data, and installed provider component. Installer stores
+only the normalized external path, rejects a file placed under Manager-owned
+data, and regenerates affected consumer configuration before commit.
 The same desktop-helper session provides **Refresh startup status**, **Enable
 startup**, and **Disable startup** controls. Enablement repeats the BOT-only
 account probe and uses that verified identity; the browser cannot provide an
@@ -174,17 +202,39 @@ account name. Status and disable do not open the token file. Closing the
 desktop helper removes control authority but does not stop provider-owned
 startup that is already enabled.
 
+When an Engine upgrade makes exact single-game or capacity evidence stale,
+disable BOT startup and choose **Requalify installed engine** on the Bots page.
+The desktop helper invokes the provider's fixed receipt-verified qualification
+operation; the dashboard cannot supply an executable, path, command, option, or
+credential. Compatible timing evidence remains the timing authority while fresh
+complete-game, single-game, and capacity evidence bind the installed Engine.
+Successful outputs are imported through adjacent Suite Setup and the dashboard
+returns only model, provider, search-core, concurrency, and completion status.
+
+Provider-owned behavior controls on the same page cover qualified connection
+capacity, human and bot slots, accepted inbound speeds and casual/rated modes,
+base and increment limits, public-human and bot challenge policy, outbound
+clock and color, rated play, wait-for-incoming versus actively-seek-games mode,
+scheduler timing, opponent limits and cooldowns, owners, reservations, and a
+live scheduler pause. Saves cross only the typed Lichess options contract; the
+Manager dashboard does not edit provider configuration directly.
+
 ## Installer and releases
 
-This repository is the suite composition and release authority. Provider
-repositories build immutable component candidates; they cannot publish suite
-installers or advance release channels.
+This repository publishes only the immutable `manager.core` candidate. The
+independent `uci-arena-installer` repository owns suite composition, release
+locks, platform installers, install/upgrade/repair/removal transactions, and
+release-channel advancement.
 
-A fix merged in a provider repository is not present in the suite until it has
-a new immutable component version for each supported platform and this
-repository's reviewed release lock selects those exact signed artifacts. The
-installer never silently substitutes newer provider source for its locked
-component bytes.
+A fix merged here is not present in the suite until Manager has a new immutable
+component version for each supported platform and the Installer repository's
+reviewed release lock selects those exact signed artifacts. Installer never
+silently substitutes newer source for locked component bytes.
+
+That normal component release changes the Manager artifact, its component
+manifest, and the suite composition lock; it does not require a change to the
+Installer engine. Installer mechanism changes are reserved for new lifecycle,
+transaction, platform, or component-contract behavior.
 
 Complete Arena setup presents UCI Arena Engine, Book Forge, UCI Arena Evidence
 Service, and the Lichess Bot adapter as named, selected-by-default components.
@@ -260,12 +310,7 @@ preserves the installed scope; moving between scopes requires an explicit
 uninstall and install so two Manager authorities cannot compete for the same
 loopback port.
 
-Installer sources and official output locations are:
-
-- Windows: `packaging/windows` → `dist/windows`
-- Linux: `packaging/linux` → `dist/linux`
-
-`arena-setup` supports `inventory`, `plan`, `apply`, `verify`, `repair`,
+The installed Installer-owned `arena-setup` supports `inventory`, `plan`, `apply`, `verify`, `repair`,
 `upgrade`, and `uninstall`; every command supports `--json`. It detects
 Restaurant but never installs or changes it. To review signed catalog actions
 for missing chess knowledge:
@@ -288,8 +333,10 @@ local client key, knowledge assets, saved locators, verified repair media,
 rollback-protection state, content cache, and transaction evidence. Managed
 component roots, startup registrations, receipt documents, the Windows
 service, and MSI-owned program files are removed. The exact retention contract
-and the reversible clean-install test procedure are documented in
-`specs/installation_contract_v1.yaml` and `release/README.md`.
+and reversible clean-install test procedure are owned by
+`uci-arena-installer`; Manager's read-only consumption and component
+publication boundary is documented in
+`specs/manager_component_release_v1.yaml` and `release/README.md`.
 
 ## License
 

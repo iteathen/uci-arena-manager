@@ -3,7 +3,7 @@
 #include "arena/adapters/report_renderer.hpp"
 #include "arena/adapters/uci_process.hpp"
 #include "arena/application/engine_onboarding.hpp"
-#include "arena/application/installer/setup.hpp"
+#include "arena/application/engine_option_values.hpp"
 #include "arena/application/service_catalog.hpp"
 #include "arena/domain/match_planner.hpp"
 #include "arena/domain/uuid.hpp"
@@ -28,6 +28,78 @@ namespace {
 using nlohmann::json;
 
 std::vector<std::string> string_array(const json& object, const char* name);
+
+struct ProviderRuntimeProjection final {
+    std::string observed_state;
+    std::string health_state;
+    std::string health_reason;
+};
+
+ProviderRuntimeProjection project_provider_runtime(
+    const json& daemon,
+    const bool paused,
+    const bool manager_process_running,
+    const std::string& last_error,
+    const std::string& healthy_reason) {
+    if (!daemon.is_object()) {
+        throw std::runtime_error("provider daemon status must be an object");
+    }
+    const std::string phase = daemon.value("phase", "stopped");
+    const bool has_active = daemon.contains("active");
+    const bool has_process_alive = daemon.contains("processAlive");
+    const bool has_stale = daemon.contains("stale");
+    if ((has_active && !daemon.at("active").is_boolean()) ||
+        (has_process_alive && !daemon.at("processAlive").is_boolean()) ||
+        (has_stale && !daemon.at("stale").is_boolean())) {
+        throw std::runtime_error(
+            "provider daemon liveness fields must be booleans");
+    }
+    const bool liveness_declared =
+        has_active && has_process_alive && has_stale;
+    const bool process_alive =
+        liveness_declared && daemon.at("processAlive").get<bool>();
+    const bool stale =
+        liveness_declared && daemon.at("stale").get<bool>();
+    const bool phase_can_be_active =
+        !phase.empty() && phase != "stopped" && phase != "failed";
+    const bool derived_active =
+        liveness_declared && process_alive && !stale && phase_can_be_active;
+    const bool reported_active =
+        liveness_declared && daemon.at("active").get<bool>();
+    const bool inconsistent_liveness =
+        liveness_declared && reported_active != derived_active;
+    const bool active =
+        manager_process_running || (reported_active && derived_active);
+    const bool degraded =
+        phase == "failed" || !last_error.empty() || inconsistent_liveness;
+
+    ProviderRuntimeProjection projection;
+    projection.observed_state =
+        degraded ? "degraded" :
+        active && paused ? "paused" :
+        active ? "running" : "stopped";
+    projection.health_state =
+        degraded ? "degraded" :
+        !manager_process_running && !liveness_declared ? "unknown" : "healthy";
+    if (phase == "failed") {
+        projection.health_reason =
+            last_error.empty() ? "provider daemon failed" : last_error;
+    } else if (!last_error.empty()) {
+        projection.health_reason = last_error;
+    } else if (inconsistent_liveness) {
+        projection.health_reason =
+            "provider daemon liveness fields contradict one another";
+    } else if (!manager_process_running && !liveness_declared) {
+        projection.health_reason =
+            "provider status omitted authoritative daemon liveness";
+    } else if (!active) {
+        projection.health_reason =
+            "provider reports no live daemon; API contracts validated";
+    } else {
+        projection.health_reason = healthy_reason;
+    }
+    return projection;
+}
 
 struct RenderedReportArtifact final {
     std::string format;
@@ -190,46 +262,37 @@ std::vector<std::string> string_array(const json& object, const char* name) {
     return values;
 }
 
-std::map<std::string, std::string, std::less<>> uci_option_overrides(
+std::map<std::string, std::string> uci_option_overrides(
     const json& value) {
-    if (!value.is_object() || value.size() > 128) {
-        throw CommandFailure(
-            "invalid_engine_options",
-            "registered engine option overrides must be an object with at most 128 entries",
-            422);
+    try {
+        return normalize_engine_option_values(value);
+    } catch (const std::invalid_argument& error) {
+        throw CommandFailure("invalid_engine_options", error.what(), 422);
     }
-    std::map<std::string, std::string, std::less<>> result;
-    for (const auto& [name, raw] : value.items()) {
-        if (name.empty() || name.size() > 128 ||
-            std::ranges::any_of(name, [](const unsigned char character) {
-                return character < 0x20 || character == 0x7f;
-            })) {
-            throw CommandFailure(
-                "invalid_engine_options", "registered UCI option name is invalid", 422);
-        }
-        std::string text;
-        if (raw.is_string()) {
-            text = raw.get<std::string>();
-        } else if (raw.is_boolean()) {
-            text = raw.get<bool>() ? "true" : "false";
-        } else if (raw.is_number_integer()) {
-            text = std::to_string(raw.get<std::int64_t>());
-        } else if (raw.is_number_unsigned()) {
-            text = std::to_string(raw.get<std::uint64_t>());
-        } else {
-            throw CommandFailure(
-                "invalid_engine_options",
-                "registered UCI option values must be strings, booleans, or integers",
-                422);
-        }
-        if (text.size() > 512 || text.find('\n') != std::string::npos ||
-            text.find('\r') != std::string::npos || text.find('\0') != std::string::npos) {
-            throw CommandFailure(
-                "invalid_engine_options", "registered UCI option value is invalid", 422);
-        }
-        result.emplace(name, std::move(text));
+}
+
+bool is_model_root_only_override(
+    const json& requested_options,
+    const json& candidate_options) {
+    if (!requested_options.is_object() || !candidate_options.is_object() ||
+        !requested_options.contains("ModelRoot") ||
+        !candidate_options.contains("ModelRoot") ||
+        !requested_options.at("ModelRoot").is_string() ||
+        !candidate_options.at("ModelRoot").is_string()) {
+        return false;
     }
-    return result;
+    const std::string requested_root =
+        requested_options.at("ModelRoot").get<std::string>();
+    const std::string candidate_root =
+        candidate_options.at("ModelRoot").get<std::string>();
+    if (requested_root.empty() || requested_root == candidate_root) {
+        return false;
+    }
+    json requested_without_root = requested_options;
+    json candidate_without_root = candidate_options;
+    requested_without_root.erase("ModelRoot");
+    candidate_without_root.erase("ModelRoot");
+    return requested_without_root == candidate_without_root;
 }
 
 json labels_from(const json& parameters) {
@@ -257,6 +320,69 @@ json uci_option_json(const domain::UciOption& option) {
         {"maximum", option.maximum},
         {"variants", option.variants},
     };
+}
+
+std::vector<domain::UciOption> persisted_uci_options(const json& value) {
+    if (!value.is_array() || value.size() > 256) {
+        throw CommandFailure(
+            "invalid_engine_options",
+            "registered engine option metadata is invalid",
+            422);
+    }
+    std::vector<domain::UciOption> options;
+    options.reserve(value.size());
+    for (const auto& item : value) {
+        if (!item.is_object() || !item.contains("name") ||
+            !item.at("name").is_string() || !item.contains("type") ||
+            !item.at("type").is_string()) {
+            throw CommandFailure(
+                "invalid_engine_options",
+                "registered engine option metadata is incomplete",
+                422);
+        }
+        domain::UciOption option;
+        option.name = item.at("name").get<std::string>();
+        option.type = item.at("type").get<std::string>();
+        option.default_value = item.value("default", std::string{});
+        if (item.contains("minimum") && !item.at("minimum").is_null()) {
+            if (!item.at("minimum").is_number_integer()) {
+                throw CommandFailure(
+                    "invalid_engine_options",
+                    "registered UCI option minimum is invalid",
+                    422);
+            }
+            option.minimum = item.at("minimum").get<std::int64_t>();
+        }
+        if (item.contains("maximum") && !item.at("maximum").is_null()) {
+            if (!item.at("maximum").is_number_integer()) {
+                throw CommandFailure(
+                    "invalid_engine_options",
+                    "registered UCI option maximum is invalid",
+                    422);
+            }
+            option.maximum = item.at("maximum").get<std::int64_t>();
+        }
+        if (item.contains("variants")) {
+            if (!item.at("variants").is_array() ||
+                item.at("variants").size() > 128) {
+                throw CommandFailure(
+                    "invalid_engine_options",
+                    "registered UCI option variants are invalid",
+                    422);
+            }
+            for (const auto& variant : item.at("variants")) {
+                if (!variant.is_string()) {
+                    throw CommandFailure(
+                        "invalid_engine_options",
+                        "registered UCI option variants must be strings",
+                        422);
+                }
+                option.variants.push_back(variant.get<std::string>());
+            }
+        }
+        options.push_back(std::move(option));
+    }
+    return options;
 }
 
 json pairing_json(const domain::GamePairing& pairing) {
@@ -715,7 +841,7 @@ json ControlPlane::submit(const json& raw_request, const std::string& actor) {
 
     const std::string action = request.at("action");
     try {
-        if (action == "engine.register") {
+        if (action == "engine.register" || action == "engine.refresh") {
             return register_engine(request, actor);
         }
         if (action == "match.plan" || action == "tournament.plan") {
@@ -753,6 +879,94 @@ json ControlPlane::submit(const json& raw_request, const std::string& actor) {
 }
 
 json ControlPlane::register_engine(const json& request, const std::string& actor) {
+    const bool refresh = request.at("action") == "engine.refresh";
+    std::unique_lock authority_lock(engine_authority_mutex_, std::defer_lock);
+    std::optional<ports::ResourceRecord> existing_engine;
+    json existing_engine_data = nullptr;
+    std::uint64_t expected_revision = 0;
+    if (refresh) {
+        authority_lock.lock();
+        const json& target = request.at("target");
+        if (required_string(target, "kind") != "engine") {
+            throw CommandFailure(
+                "invalid_target", "engine.refresh requires an engine target", 400);
+        }
+        const std::string engine_id = required_string(target, "id");
+        existing_engine = store_->get_resource("engine", engine_id);
+        if (!existing_engine) {
+            throw CommandFailure(
+                "resource_not_found", "registered engine does not exist", 404);
+        }
+        if (!request.contains("expected_revision") ||
+            request.at("expected_revision").is_null() ||
+            !(request.at("expected_revision").is_number_unsigned() ||
+              request.at("expected_revision").is_number_integer())) {
+            throw CommandFailure(
+                "expected_revision_required",
+                "engine.refresh requires the current engine revision",
+                400);
+        }
+        if (request.at("expected_revision").is_number_integer() &&
+            request.at("expected_revision").get<std::int64_t>() < 0) {
+            throw CommandFailure(
+                "expected_revision_required",
+                "engine.refresh requires a non-negative current engine revision",
+                400);
+        }
+        expected_revision =
+            request.at("expected_revision").get<std::uint64_t>();
+        if (expected_revision != existing_engine->revision) {
+            throw CommandFailure(
+                "resource_revision_conflict",
+                "resource changed; refresh its current revision and retry",
+                409);
+        }
+        existing_engine_data = json::parse(existing_engine->data_json);
+        if (existing_engine_data.value("onboarding_source", "") != "install_receipt" ||
+            existing_engine_data.value("component_id", "") != "uci_arena.engine") {
+            throw CommandFailure(
+                "engine_refresh_not_managed",
+                "only the receipt-managed UCI Arena Engine can be refreshed in place",
+                409);
+        }
+        for (const auto* kind : {"match_plan", "tournament"}) {
+            for (const auto& competition :
+                 store_->list_resources(kind, 10'000, 0)) {
+                const json data = json::parse(competition.data_json);
+                const std::string lifecycle = data.value("lifecycle", "planned");
+                if (lifecycle != "running" && lifecycle != "paused") {
+                    continue;
+                }
+                const json engine_ids = data.value("engine_ids", json::array());
+                if (engine_ids.is_array() && std::ranges::any_of(
+                        engine_ids,
+                        [&engine_id](const json& value) {
+                            return value.is_string() && value == engine_id;
+                        })) {
+                    throw CommandFailure(
+                        "engine_refresh_in_use",
+                        "stop or cancel the active competition before refreshing this engine",
+                        409);
+                }
+            }
+        }
+        for (const auto& game : store_->list_resources("game", 10'000, 0)) {
+            const json data = json::parse(game.data_json);
+            if (data.value("lifecycle", "") != "running") {
+                continue;
+            }
+            const auto uses_engine = [&engine_id](const json& identity) {
+                return identity.is_object() && identity.value("id", "") == engine_id;
+            };
+            if (uses_engine(data.value("white_engine", json::object())) ||
+                uses_engine(data.value("black_engine", json::object()))) {
+                throw CommandFailure(
+                    "engine_refresh_in_use",
+                    "an active game still references this engine; wait for it to finish",
+                    409);
+            }
+        }
+    }
     const json& parameters = request.at("parameters");
     const std::filesystem::path executable = required_string(parameters, "executable");
     if (!std::filesystem::is_regular_file(executable)) {
@@ -777,21 +991,114 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
         ? parameters.at("uci_options")
         : parameters.value("option_overrides", json::object());
     const auto option_overrides = uci_option_overrides(raw_options);
+    const json normalized_options = engine_option_values_json(option_overrides);
+    json expected_runtime = nullptr;
+    json selected_candidate = nullptr;
+    bool model_root_overridden = false;
+    if (parameters.contains("candidate_id") &&
+        parameters.at("candidate_id").is_string() &&
+        !parameters.at("candidate_id").get_ref<const std::string&>().empty() &&
+        !manager_data_root_.empty()) {
+        const std::string requested_candidate_id =
+            parameters.at("candidate_id").get<std::string>();
+        const json discovery = EngineOnboarding::discover(manager_data_root_);
+        for (const auto& candidate : discovery.at("candidates")) {
+            if (candidate.value("candidate_id", "") != requested_candidate_id ||
+                !candidate.contains("executable") ||
+                !candidate.at("executable").is_string()) {
+                continue;
+            }
+            std::error_code error;
+            if (!std::filesystem::equivalent(
+                    executable,
+                    candidate.at("executable").get<std::string>(),
+                    error) ||
+                error) {
+                continue;
+            }
+            selected_candidate = candidate;
+            const json normalized_candidate_options =
+                engine_option_values_json(
+                    uci_option_overrides(candidate.at("uci_options")));
+            model_root_overridden = is_model_root_only_override(
+                normalized_options, normalized_candidate_options);
+            if (candidate.contains("launch_profile") &&
+                candidate.at("launch_profile").is_object()) {
+                std::error_code working_error;
+                const bool same_working_directory =
+                    std::filesystem::equivalent(
+                        working_directory,
+                        candidate.at("working_directory").get<std::string>(),
+                        working_error) &&
+                    !working_error;
+                if (candidate.value("state", "") != "ready_to_probe" ||
+                    json(arguments) != candidate.at("arguments") ||
+                    (normalized_options != normalized_candidate_options &&
+                     !model_root_overridden) ||
+                    !same_working_directory) {
+                    throw CommandFailure(
+                        "engine_candidate_parameters_changed",
+                        "the managed launch parameters no longer match the selected candidate; refresh discovery and probe again",
+                        409);
+                }
+                const json& launch_profile = candidate.at("launch_profile");
+                if (!model_root_overridden &&
+                    launch_profile.value("state", "") == "qualified_timing") {
+                    expected_runtime = launch_profile.at("expected_runtime");
+                }
+            }
+            break;
+        }
+    }
+    if (refresh &&
+        (selected_candidate.is_null() ||
+         selected_candidate.value("source", "") != "install_receipt" ||
+         selected_candidate.value("component_id", "") != "uci_arena.engine")) {
+        throw CommandFailure(
+            "engine_refresh_candidate_changed",
+            "the registered managed Engine no longer matches the current verified candidate",
+            409);
+    }
     const auto probe = adapters::UciProcess::probe(
         executable,
         working_directory,
         arguments,
-        std::chrono::seconds(10),
-        option_overrides);
+        adapters::UciProbeTimeouts{},
+        option_overrides,
+        !expected_runtime.is_null());
     if (!probe.ok) {
         throw CommandFailure("uci_probe_failed", probe.error, 422);
+    }
+    if (model_root_overridden &&
+        (probe.runtime_model_fingerprint.empty() ||
+         probe.runtime_provider.empty())) {
+        throw CommandFailure(
+            "model_runtime_identity_unavailable",
+            "the selected ModelRoot did not publish a post-selection runtime identity",
+            422);
+    }
+    if (!expected_runtime.is_null()) {
+        if (!probe.runtime_status.has_value()) {
+            throw CommandFailure(
+                "timing_runtime_identity_unavailable",
+                "the qualified timing profile requires a typed runtime status response",
+                422);
+        }
+        if (const auto mismatch = EngineOnboarding::runtime_identity_mismatch(
+                expected_runtime, *probe.runtime_status)) {
+            throw CommandFailure(
+                "timing_runtime_identity_mismatch",
+                "the qualified timing profile does not match the probed runtime field: " +
+                    *mismatch,
+                422);
+        }
     }
     const std::string display_name =
         parameters.value("display_name", std::string{}).empty()
             ? (probe.engine_name.empty() ? "UCI engine" : probe.engine_name)
             : parameters.at("display_name").get<std::string>();
 
-    const std::string id = domain::uuid_v7();
+    const std::string id = refresh ? existing_engine->id : domain::uuid_v7();
     json options = json::array();
     for (const auto& option : probe.options) {
         options.push_back(uci_option_json(option));
@@ -801,7 +1108,7 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
         {"executable", std::filesystem::absolute(executable).string()},
         {"working_directory", std::filesystem::absolute(working_directory).string()},
         {"arguments", arguments},
-        {"option_overrides", raw_options},
+        {"option_overrides", normalized_options},
         {"discovered_options", options},
         {"engine_name", probe.engine_name},
         {"engine_author", probe.engine_author},
@@ -821,62 +1128,52 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
              probe.runtime_provider_fingerprint},
         };
     }
-    if (parameters.contains("candidate_id") &&
-        parameters.at("candidate_id").is_string() &&
-        !parameters.at("candidate_id").get_ref<const std::string&>().empty() &&
-        !manager_data_root_.empty()) {
-        const std::string requested_candidate_id =
-            parameters.at("candidate_id").get<std::string>();
-        const json discovery =
-            EngineOnboarding::discover(manager_data_root_);
-        for (const auto& candidate : discovery.at("candidates")) {
-            if (candidate.value("candidate_id", "") !=
-                    requested_candidate_id ||
-                !candidate.contains("executable") ||
-                !candidate.at("executable").is_string()) {
-                continue;
+    if (selected_candidate.is_object()) {
+        data["candidate_id"] = selected_candidate.at("candidate_id");
+        data["onboarding_source"] =
+            selected_candidate.value("source", "discovered");
+        for (const auto* field : {"component_id", "component_version"}) {
+            if (selected_candidate.contains(field) &&
+                selected_candidate.at(field).is_string() &&
+                !selected_candidate.at(field)
+                     .get_ref<const std::string&>()
+                     .empty()) {
+                data[field] = selected_candidate.at(field);
             }
-            std::error_code error;
-            if (!std::filesystem::equivalent(
-                    executable,
-                    candidate.at("executable").get<std::string>(),
-                    error) ||
-                error) {
-                continue;
+        }
+        if (selected_candidate.contains("recommended") &&
+            selected_candidate.at("recommended").is_boolean()) {
+            data["recommended"] = selected_candidate.at("recommended");
+        }
+        if (selected_candidate.contains("default_model") &&
+            selected_candidate.at("default_model").is_object()) {
+            const json& model = selected_candidate.at("default_model");
+            if (!model.value("model_id", "").empty() &&
+                !model.value("display_name", "").empty() &&
+                !model.value("input_adapter_id", "").empty()) {
+                data["default_model"] = model;
             }
-            data["candidate_id"] = requested_candidate_id;
-            data["onboarding_source"] =
-                candidate.value("source", "discovered");
-            for (const auto* field :
-                 {"component_id", "component_version"}) {
-                if (candidate.contains(field) &&
-                    candidate.at(field).is_string() &&
-                    !candidate.at(field)
-                         .get_ref<const std::string&>()
-                         .empty()) {
-                    data[field] = candidate.at(field);
-                }
-            }
-            if (candidate.contains("recommended") &&
-                candidate.at("recommended").is_boolean()) {
-                data["recommended"] =
-                    candidate.at("recommended");
-            }
-            if (candidate.contains("default_model") &&
-                candidate.at("default_model").is_object()) {
-                const json& model =
-                    candidate.at("default_model");
-                if (!model.value("model_id", "").empty() &&
-                    !model.value("display_name", "").empty() &&
-                    !model.value("input_adapter_id", "").empty()) {
-                    data["default_model"] = model;
-                }
-            }
-            break;
+        }
+        if (!model_root_overridden &&
+            selected_candidate.contains("launch_profile") &&
+            selected_candidate.at("launch_profile").is_object()) {
+            data["launch_profile"] = selected_candidate.at("launch_profile");
         }
     }
 
     const std::string now = domain::utc_now();
+    if (refresh) {
+        ports::ResourceRecord updated = *existing_engine;
+        updated.revision = existing_engine->revision + 1;
+        updated.updated_at = now;
+        updated.data_json = data.dump();
+        return complete_update(
+            request,
+            actor,
+            std::move(updated),
+            expected_revision,
+            "engine.profile_refreshed");
+    }
     return complete_create(
         request,
         actor,
@@ -910,13 +1207,19 @@ json ControlPlane::plan_match(const json& request, const std::string& actor) {
     }
     plan.variant = *variant;
     plan.engine_ids = string_array(parameters, "engine_ids");
+    std::map<std::string, json, std::less<>> registered_engines;
     for (const auto& engine_id : plan.engine_ids) {
-        if (!domain::is_uuid(engine_id) || !store_->get_resource("engine", engine_id)) {
+        const auto engine = domain::is_uuid(engine_id)
+            ? store_->get_resource("engine", engine_id)
+            : std::nullopt;
+        if (!engine) {
             throw CommandFailure(
                 "engine_not_registered",
                 "match plan references an unknown engine: " + engine_id,
                 422);
         }
+        registered_engines.emplace(
+            engine_id, json::parse(engine->data_json));
     }
     plan.games_per_pair = parameters.value("games_per_pair", 2U);
     plan.rounds = parameters.value("rounds", 1U);
@@ -983,9 +1286,36 @@ json ControlPlane::plan_match(const json& request, const std::string& actor) {
         plan.sprt.beta = sprt.value("beta", 0.05);
     }
     if (parameters.contains("engine_option_overrides")) {
-        plan.engine_option_overrides =
-            parameters.at("engine_option_overrides")
-                .get<std::map<std::string, std::map<std::string, std::string>>>();
+        const json& requested = parameters.at("engine_option_overrides");
+        if (!requested.is_object() || requested.size() > plan.engine_ids.size()) {
+            throw CommandFailure(
+                "invalid_engine_options",
+                "competition engine option overrides must be an object keyed by selected engine id",
+                422);
+        }
+        for (const auto& [engine_id, raw_options] : requested.items()) {
+            const auto engine = registered_engines.find(engine_id);
+            if (engine == registered_engines.end()) {
+                throw CommandFailure(
+                    "invalid_engine_options",
+                    "competition option overrides reference an unselected engine",
+                    422);
+            }
+            const auto overrides = uci_option_overrides(raw_options);
+            try {
+                adapters::UciProcess::validate_option_overrides(
+                    persisted_uci_options(
+                        engine->second.value(
+                            "discovered_options", json::array())),
+                    overrides);
+            } catch (const CommandFailure&) {
+                throw;
+            } catch (const std::exception& error) {
+                throw CommandFailure(
+                    "invalid_engine_options", error.what(), 422);
+            }
+            plan.engine_option_overrides.emplace(engine_id, overrides);
+        }
     }
 
     try {
@@ -1109,6 +1439,7 @@ json ControlPlane::plan_match(const json& request, const std::string& actor) {
 json ControlPlane::manage_competition(
     const json& request,
     const std::string& actor) {
+    std::scoped_lock authority_lock(engine_authority_mutex_);
     const json& target = request.at("target");
     const std::string kind = required_string(target, "kind");
     const std::string action = request.at("action").get<std::string>();
@@ -1305,18 +1636,8 @@ json ControlPlane::bot_profiles() const {
 }
 
 json ControlPlane::bot_candidates() const {
-    return ServiceCatalog::discover_bot(manager_data_root_);
-}
-
-json ControlPlane::save_bot_token_reference(
-    const std::filesystem::path& path) const {
-    try {
-        return installer::SetupEngine::save_lichess_token_reference(
-            manager_data_root_, path);
-    } catch (const std::exception& error) {
-        throw CommandFailure(
-            "bot_token_reference_invalid", error.what(), 422);
-    }
+    return ServiceCatalog::discover_bot(
+        manager_data_root_, process_supervisor_);
 }
 
 json ControlPlane::generate_report(const json& request, const std::string& actor) {
@@ -1701,6 +2022,28 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
         throw CommandFailure("resource_not_found", "managed service does not exist", 404);
     }
     json data = json::parse(existing->data_json);
+    const auto record_status_failure = [&data](
+                                           const std::string& detail,
+                                           const bool transient) {
+        data["integration_state"] =
+            transient ? "unavailable" : "incompatible";
+        data["observed_state"] = "degraded";
+        data["health"] = {
+            {"state", "degraded"},
+            {"reason", detail},
+            {"observed_at", domain::utc_now()},
+        };
+        if (transient) {
+            data["output_projection_stale"] =
+                data.contains("output_integration");
+        } else {
+            data.erase("output_integration");
+            data.erase("output_cursor");
+            data.erase("manager_api_projection");
+            data.erase("last_successful_status_at");
+            data.erase("output_projection_stale");
+        }
+    };
     const std::string profile = data.value("profile_id", "");
     const std::string action = request.at("action");
     if (action == "service.configure") {
@@ -1887,7 +2230,7 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                 executable,
                 working_directory,
                 string_array(engine_data, "arguments"),
-                std::chrono::seconds(10),
+                adapters::UciProbeTimeouts{},
                 typed_options);
             if (!probe.ok) {
                 throw CommandFailure("uci_probe_failed", probe.error, 422);
@@ -1956,15 +2299,6 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                         422);
                 }
                 selected_target = target_id;
-            } else if (projected_targets.size() == 1 &&
-                       projected_targets.front().is_object() &&
-                       uuid_v4(projected_targets.front().value("id", ""))) {
-                selected_target = projected_targets.front().at("id").get<std::string>();
-            } else if (projected_targets.size() > 1) {
-                throw CommandFailure(
-                    "evidence_target_selection_required",
-                    "Evidence campaign enqueue requires one projected target selection",
-                    422);
             }
             if (selected_target.has_value()) {
                 operation_arguments.insert(
@@ -2132,6 +2466,20 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
             {"observed_at", domain::utc_now()},
         };
     } else if (action == "service.pause" || action == "service.resume") {
+        const std::string observed = data.value("observed_state", "unknown");
+        if (action == "service.pause" && observed != "running" &&
+            observed != "degraded") {
+            throw CommandFailure(
+                "invalid_service_lifecycle",
+                "pause requires an observed active or degraded provider",
+                409);
+        }
+        if (action == "service.resume" && observed != "paused") {
+            throw CommandFailure(
+                "invalid_service_lifecycle",
+                "resume requires an observed paused provider",
+                409);
+        }
         auto arguments = base;
         arguments.push_back(action == "service.pause" ? "pause" : "resume");
         add_locator_options(arguments);
@@ -2139,12 +2487,21 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
             arguments.insert(arguments.end(), {"--reason", "uci-arena-manager"});
         }
         if (!request.at("dry_run").get<bool>()) {
-            data["last_control_result"] = process_supervisor_.run_json(
-                node, cli.parent_path(), arguments);
+            data["last_control_result"] = bounded_redacted_external_value(
+                process_supervisor_.run_json(
+                    node, cli.parent_path(), arguments),
+                64 * 1024,
+                "External service control result");
         }
         data["desired_state"] = action == "service.pause" ? "paused" : "running";
-        data["observed_state"] = action == "service.pause" ? "paused" :
-            (startup_owned || process_supervisor_.running(id) ? "running" : "stopped");
+        if (!request.at("dry_run").get<bool>()) {
+            data["observed_state"] = "unknown";
+            data["health"] = {
+                {"state", "unknown"},
+                {"reason", "provider control accepted; awaiting a fresh status sample"},
+                {"observed_at", domain::utc_now()},
+            };
+        }
     } else if (action == "service.status") {
         auto arguments = base;
         arguments.push_back("status");
@@ -2360,7 +2717,10 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                                              "collecting" &&
                                          output.at("state").value(
                                              "lifecycle", "") !=
-                                             "completed") ||
+                                             "completed" &&
+                                         output.at("state").value(
+                                             "lifecycle", "") !=
+                                             "cancelled") ||
                                         !output.contains("summary") ||
                                         !output.at("summary").is_object() ||
                                         !output.at("summary").contains(
@@ -2634,6 +2994,7 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                                         {"snapshot_id",
                                          snapshot_id},
                                         {"channel", channel},
+                                        {"path", artifact_root.string()},
                                         {"manifest_sha256",
                                          artifact.at(
                                              "manifest_sha256")},
@@ -2677,35 +3038,22 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                             "daemon", json::object());
                     const bool paused =
                         control.value("paused", false);
-                    const std::string daemon_phase =
-                        daemon.value("phase", "stopped");
                     const std::string last_error =
                         daemon.value(
                             "lastError",
                             daemon.value("last_error", ""));
-                    const bool daemon_active =
-                        process_supervisor_.running(id) ||
-                        (!daemon.value("stale", false) &&
-                         daemon_phase != "stopped" &&
-                         daemon_phase != "failed" &&
-                         !daemon_phase.empty());
-                    const bool degraded =
-                        daemon_phase == "failed" ||
-                        !last_error.empty();
+                    const ProviderRuntimeProjection runtime =
+                        project_provider_runtime(
+                            daemon,
+                            paused,
+                            process_supervisor_.running(id),
+                            last_error,
+                            "Manager service API contracts validated");
                     data["integration_state"] = "available";
-                    data["observed_state"] =
-                        degraded ? "degraded" :
-                        paused ? "paused" :
-                        daemon_active ? "running" : "stopped";
+                    data["observed_state"] = runtime.observed_state;
                     data["health"] = {
-                        {"state",
-                         degraded ? "degraded" : "healthy"},
-                        {"reason",
-                         degraded
-                             ? (last_error.empty()
-                                    ? "service daemon failed"
-                                    : last_error)
-                             : "Manager service API contracts validated"},
+                        {"state", runtime.health_state},
+                        {"reason", runtime.health_reason},
                         {"observed_at", domain::utc_now()},
                     };
                     data["manager_api_projection"] = {
@@ -2734,30 +3082,16 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                     data["last_successful_status_at"] =
                         domain::utc_now();
                     data["output_projection_stale"] = false;
+                } catch (const ProcessCommandFailure& error) {
+                    record_status_failure(
+                        error.what(),
+                        error.kind() == ProcessCommandFailureKind::launch ||
+                            error.kind() == ProcessCommandFailureKind::timeout);
                 } catch (const std::exception& error) {
-                    const bool transient_timeout =
-                        std::string_view(error.what()) ==
-                        "managed service command timed out";
-                    data["integration_state"] =
-                        transient_timeout ? "unavailable" : "incompatible";
-                    data["observed_state"] = "degraded";
-                    data["health"] = {
-                        {"state", "degraded"},
-                        {"reason", error.what()},
-                        {"observed_at", domain::utc_now()},
-                    };
-                    if (transient_timeout) {
-                        data["output_projection_stale"] =
-                            data.contains("output_integration");
-                    } else {
-                        data.erase("output_integration");
-                        data.erase("output_cursor");
-                        data.erase("manager_api_projection");
-                        data.erase("last_successful_status_at");
-                        data.erase("output_projection_stale");
-                    }
+                    record_status_failure(error.what(), false);
                 }
             } else {
+            try {
             const json status = process_supervisor_.run_json(
                 node, cli.parent_path(), arguments);
             json status_payload =
@@ -2777,15 +3111,11 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                  actual_schema.size() > book_forge_status_suffix.size() &&
                  actual_schema.ends_with(book_forge_status_suffix));
             if (!compatible_schema) {
-                data["integration_state"] = "incompatible";
-                data["observed_state"] = "degraded";
-                data["health"] = {
-                    {"state", "degraded"},
-                    {"reason",
-                     evidence_service
-                         ? "UCI Arena Evidence Service status schema is incompatible"
-                         : "Book Forge status schema is incompatible"},
-                };
+                record_status_failure(
+                    evidence_service
+                        ? "UCI Arena Evidence Service status schema is incompatible"
+                        : "Book Forge status schema is incompatible",
+                    false);
             } else {
                 status_payload["schema"] = expected_schema;
                 try {
@@ -2867,17 +3197,17 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                         }
                         json profile_projection = json::array();
                         json selected_profile = nullptr;
-                        for (const auto& profile : profiles) {
+                        for (const auto& profile_entry : profiles) {
                             const std::string source =
-                                required_string(profile, "source");
+                                required_string(profile_entry, "source");
                             const std::string path =
-                                required_string(profile, "path");
+                                required_string(profile_entry, "path");
                             const std::string sha256 =
-                                required_string(profile, "sha256");
+                                required_string(profile_entry, "sha256");
                             const std::string identity_sha256 =
                                 required_string(
-                                    profile, "identitySha256");
-                            if (profile.value("schema", "") !=
+                                    profile_entry, "identitySha256");
+                            if (profile_entry.value("schema", "") !=
                                     "uci_arena_evidence_profile_v1" ||
                                 (source != "service_live_cache" &&
                                  source != "explicit_import") ||
@@ -2890,16 +3220,16 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                                     }) ||
                                 identity_sha256.size() != 71 ||
                                 !identity_sha256.starts_with("sha256:") ||
-                                profile.value("qualified", false) != true ||
-                                !profile.contains("targetIdentity") ||
-                                !profile.at("targetIdentity").is_object() ||
-                                !profile.contains("permissions") ||
-                                !profile.at("permissions").is_object()) {
+                                profile_entry.value("qualified", false) != true ||
+                                !profile_entry.contains("targetIdentity") ||
+                                !profile_entry.at("targetIdentity").is_object() ||
+                                !profile_entry.contains("permissions") ||
+                                !profile_entry.at("permissions").is_object()) {
                                 throw std::runtime_error(
                                     "Evidence Service timing-profile identity contract mismatch");
                             }
                             const json permissions =
-                                profile.at("permissions");
+                                profile_entry.at("permissions");
                             for (const auto* field :
                                  {"provider_safety_qualified",
                                   "forecast_shadow_qualified",
@@ -2917,21 +3247,21 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                                 {"path", path},
                                 {"sha256", sha256},
                                 {"profile_schema",
-                                 profile.value("profileSchema", "")},
+                                 profile_entry.value("profileSchema", "")},
                                 {"qualified", true},
                                 {"published_at",
-                                 profile.value("publishedAt", "")},
+                                 profile_entry.value("publishedAt", "")},
                                 {"identity_sha256", identity_sha256},
                                 {"target_identity",
                                  bounded_redacted_external_value(
-                                     profile.at("targetIdentity"),
+                                     profile_entry.at("targetIdentity"),
                                      64 * 1024,
                                      "Evidence timing-profile target identity")},
                                 {"permissions", permissions},
                                 {"service_publication",
-                                 profile.contains("servicePublication")
+                                 profile_entry.contains("servicePublication")
                                      ? bounded_redacted_external_value(
-                                           profile.at("servicePublication"),
+                                           profile_entry.at("servicePublication"),
                                            64 * 1024,
                                            "Evidence timing-profile publication")
                                      : json(nullptr)},
@@ -2957,33 +3287,26 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                         const json daemon =
                             status_payload.value("daemon", json::object());
                         const bool paused = control.value("paused", false);
-                        const std::string daemon_phase =
-                            daemon.value("phase", "stopped");
                         const std::string last_error =
                             daemon.value("lastError", "");
-                        const bool daemon_active =
-                            process_supervisor_.running(id) ||
-                            (!daemon.value("stale", false) &&
-                             daemon_phase != "stopped" &&
-                             daemon_phase != "failed" &&
-                             !daemon_phase.empty());
-                        const bool degraded =
-                            daemon_phase == "failed" || !last_error.empty();
+                        const ProviderRuntimeProjection runtime =
+                            project_provider_runtime(
+                                daemon,
+                                paused,
+                                process_supervisor_.running(id),
+                                last_error,
+                                "Evidence Service status and dataset contracts validated");
                         data["integration_state"] = "available";
-                        data["observed_state"] =
-                            degraded ? "degraded" :
-                            paused ? "paused" :
-                            daemon_active ? "running" : "stopped";
+                        data["observed_state"] = runtime.observed_state;
                         data["health"] = {
-                            {"state", degraded ? "degraded" : "healthy"},
+                            {"state", runtime.health_state},
                             {"reason",
-                             degraded ?
-                                 last_error.empty() ?
-                                     "Evidence Service daemon failed" :
-                                     last_error :
-                                 collection.value(
-                                     "reason",
-                                     "Evidence Service status and dataset contracts validated")},
+                             runtime.health_state == "healthy" &&
+                                     runtime.observed_state != "stopped"
+                                 ? collection.value(
+                                       "reason",
+                                       runtime.health_reason)
+                                 : runtime.health_reason},
                             {"observed_at", domain::utc_now()},
                         };
                         data["output_integration"] = {
@@ -3037,6 +3360,7 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                             snapshots.push_back(
                                 {{"snapshot_id", snapshot_id},
                                  {"channel", channel_name},
+                                 {"path", directory},
                                  {"manifest_sha256",
                                   validation.at("manifestSha256")},
                                  {"record_count",
@@ -3048,29 +3372,26 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                                  {"published_at",
                                   channel.value("published_at", "")}});
                         }
+                        const json control =
+                            status_payload.value("control", json::object());
+                        const json daemon =
+                            status_payload.value("daemon", json::object());
+                        const std::string last_error =
+                            daemon.value(
+                                "lastError",
+                                daemon.value("last_error", ""));
+                        const ProviderRuntimeProjection runtime =
+                            project_provider_runtime(
+                                daemon,
+                                control.value("paused", false),
+                                process_supervisor_.running(id),
+                                last_error,
+                                "Book Forge status and snapshot contracts validated");
                         data["integration_state"] = "available";
-                        data["observed_state"] =
-                            status_payload.value("control", json::object())
-                                    .value("paused", false)
-                                ? "paused"
-                                : process_supervisor_.running(id) ||
-                                          (!status_payload
-                                                .value("daemon", json::object())
-                                                .value("stale", false) &&
-                                           status_payload
-                                                   .value("daemon", json::object())
-                                                   .value("phase", "stopped") !=
-                                               "stopped" &&
-                                           status_payload
-                                                   .value("daemon", json::object())
-                                                   .value("phase", "failed") !=
-                                               "failed")
-                                      ? "running"
-                                      : "stopped";
+                        data["observed_state"] = runtime.observed_state;
                         data["health"] = {
-                            {"state", "healthy"},
-                            {"reason",
-                             "Book Forge status and snapshot contracts validated"},
+                            {"state", runtime.health_state},
+                            {"reason", runtime.health_reason},
                             {"observed_at", domain::utc_now()},
                         };
                         data["output_integration"] = {
@@ -3083,16 +3404,19 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                             status_payload,
                             1024 * 1024,
                             "External service status");
-                } catch (const std::exception& error) {
-                    data["integration_state"] = "incompatible";
-                    data["observed_state"] = "degraded";
-                    data["health"] = {
-                        {"state", "degraded"},
-                        {"reason", error.what()},
-                        {"observed_at", domain::utc_now()},
-                    };
-                    data.erase("output_integration");
+                    data["last_successful_status_at"] = domain::utc_now();
+                    data["output_projection_stale"] = false;
+                } catch (const std::exception&) {
+                    throw;
                 }
+            }
+            } catch (const ProcessCommandFailure& error) {
+                record_status_failure(
+                    error.what(),
+                    error.kind() == ProcessCommandFailureKind::launch ||
+                        error.kind() == ProcessCommandFailureKind::timeout);
+            } catch (const std::exception& error) {
+                record_status_failure(error.what(), false);
             }
             }
         }
@@ -3137,6 +3461,55 @@ json ControlPlane::remove_resource(const json& request, const std::string& actor
                 "service_active",
                 "stop the manual service before removing its locator",
                 409);
+        }
+    }
+    if (kind == "engine") {
+        const json data = json::parse(existing->data_json);
+        const std::string observed = data.value("observed_state", "stopped");
+        if (observed != "stopped") {
+            throw CommandFailure(
+                "engine_active",
+                "stop the engine before removing its Manager registration",
+                409);
+        }
+        for (const auto* competition_kind : {"match_plan", "tournament"}) {
+            for (const auto& competition :
+                 store_->list_resources(competition_kind, 10'000, 0)) {
+                const json competition_data = json::parse(competition.data_json);
+                const std::string lifecycle =
+                    competition_data.value("lifecycle", "planned");
+                if (lifecycle != "running" && lifecycle != "paused") {
+                    continue;
+                }
+                const json engine_ids =
+                    competition_data.value("engine_ids", json::array());
+                if (engine_ids.is_array() && std::ranges::any_of(
+                        engine_ids,
+                        [&id](const json& value) {
+                            return value.is_string() && value == id;
+                        })) {
+                    throw CommandFailure(
+                        "engine_in_use",
+                        "stop or cancel the active competition before removing this engine registration",
+                        409);
+                }
+            }
+        }
+        for (const auto& game : store_->list_resources("game", 10'000, 0)) {
+            const json game_data = json::parse(game.data_json);
+            if (game_data.value("lifecycle", "") != "running") {
+                continue;
+            }
+            const auto uses_engine = [&id](const json& identity) {
+                return identity.is_object() && identity.value("id", "") == id;
+            };
+            if (uses_engine(game_data.value("white_engine", json::object())) ||
+                uses_engine(game_data.value("black_engine", json::object()))) {
+                throw CommandFailure(
+                    "engine_in_use",
+                    "wait for the active game to finish before removing this engine registration",
+                    409);
+            }
         }
     }
     if (kind == "match_plan" || kind == "tournament") {

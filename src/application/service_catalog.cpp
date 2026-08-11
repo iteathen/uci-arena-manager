@@ -689,6 +689,75 @@ const json& required_object(
     return value.at(field);
 }
 
+bool bot_live_prerequisites_ready(const json& readiness) {
+    static constexpr std::array required{
+        "verified_adapter",
+        "adapter_runtime",
+        "verified_uci_arena_engine",
+        "active_model",
+        "opening_book",
+        "syzygy",
+        "timing_profile",
+        "single_game_profile",
+        "capacity_profile",
+        "token_reference",
+    };
+    return std::ranges::all_of(required, [&readiness](const char* dimension) {
+        return readiness.value(dimension, "missing") == "ready";
+    });
+}
+
+bool valid_qualification_failure_detail(const std::string_view value) {
+    if (value.empty() || value.size() > 1024U ||
+        value.find('/') != std::string_view::npos ||
+        value.find('\\') != std::string_view::npos ||
+        std::ranges::any_of(value, [](const unsigned char character) {
+            return std::iscntrl(character) != 0;
+        })) {
+        return false;
+    }
+    std::string lowercase(value);
+    std::ranges::transform(lowercase, lowercase.begin(), [](const unsigned char value) {
+        return static_cast<char>(std::tolower(value));
+    });
+    return std::ranges::none_of(
+        std::array{
+            std::string_view{"authorization"},
+            std::string_view{"bearer"},
+            std::string_view{"password"},
+            std::string_view{"secret"},
+            std::string_view{"token"},
+        },
+        [&lowercase](const std::string_view marker) {
+            return lowercase.find(marker) != std::string::npos;
+        });
+}
+
+bool valid_prefixed_sha256(const std::string& value) {
+    return value.size() == 71U && value.starts_with("sha256:") &&
+           std::ranges::all_of(
+               std::string_view(value).substr(7),
+               [](const unsigned char character) {
+                   return std::isdigit(character) != 0 ||
+                          (character >= 'a' && character <= 'f');
+               });
+}
+
+void require_exact_fields(
+    const json& source,
+    const std::initializer_list<std::string_view> fields) {
+    if (!source.is_object() || source.size() != fields.size()) {
+        throw std::runtime_error(
+            "the provider returned undeclared BOT option fields");
+    }
+    for (const auto field : fields) {
+        if (!source.contains(std::string(field))) {
+            throw std::runtime_error(
+                "the provider returned incomplete BOT options");
+        }
+    }
+}
+
 json selected_fields(
     const json& source,
     const std::initializer_list<std::string_view> fields) {
@@ -763,12 +832,28 @@ void require_string_choices(
 }
 
 void validate_projected_bot_options(const json& options) {
+    require_exact_fields(
+        options,
+        {"schema", "capacity", "inbound_challenges",
+         "outbound_challenge", "scheduler", "opponent_selection"});
+    if (!options.at("schema").is_string() ||
+        options.at("schema") != "uci_arena_lichess_manager_options_v1") {
+        throw std::runtime_error(
+            "the provider returned an unsupported BOT options schema");
+    }
     const json& capacity = required_object(options, "capacity");
+    require_exact_fields(
+        capacity,
+        {"total_slots", "startup_parallelism", "human", "bot",
+         "evidence"});
     const int total_slots =
         required_integer(capacity, "total_slots", 1, 64);
     required_integer(capacity, "startup_parallelism", 1, 64);
     const json& human = required_object(capacity, "human");
     const json& bot = required_object(capacity, "bot");
+    require_exact_fields(
+        human, {"slots", "allow_borrowing", "accept_public"});
+    require_exact_fields(bot, {"slots", "target_active"});
     const int human_slots = required_integer(human, "slots", 0, 64);
     const int bot_slots = required_integer(bot, "slots", 0, 64);
     if (human_slots + bot_slots != total_slots) {
@@ -779,9 +864,14 @@ void validate_projected_bot_options(const json& options) {
     static_cast<void>(required_boolean(human, "accept_public"));
     required_integer(bot, "target_active", 0, bot_slots);
     const json& evidence = required_object(capacity, "evidence");
+    require_exact_fields(
+        evidence, {"status", "qualified", "maximum_concurrency"});
+    static const std::set<std::string> evidence_statuses{
+        "legacy_shared", "standard_uci_startup_probe_required",
+        "runtime_revalidation_required", "missing", "qualified",
+        "rejected"};
     if (!evidence.contains("status") || !evidence.at("status").is_string() ||
-        evidence.at("status").get_ref<const std::string&>().empty() ||
-        evidence.at("status").get_ref<const std::string&>().size() > 64U ||
+        !evidence_statuses.contains(evidence.at("status").get<std::string>()) ||
         !evidence.contains("qualified") ||
         !evidence.at("qualified").is_boolean() ||
         !evidence.contains("maximum_concurrency") ||
@@ -803,6 +893,10 @@ void validate_projected_bot_options(const json& options) {
     }
 
     const json& inbound = required_object(options, "inbound_challenges");
+    require_exact_fields(
+        inbound,
+        {"accept_bots", "min_base", "max_base", "min_increment",
+         "max_increment", "speeds", "modes"});
     static_cast<void>(required_boolean(inbound, "accept_bots"));
     const int minimum_base =
         required_integer(inbound, "min_base", 0, 86400);
@@ -825,6 +919,8 @@ void validate_projected_bot_options(const json& options) {
     require_string_choices(inbound, "modes", {"casual", "rated"});
 
     const json& outbound = required_object(options, "outbound_challenge");
+    require_exact_fields(
+        outbound, {"rated", "color", "clock_limit", "clock_increment"});
     static_cast<void>(required_boolean(outbound, "rated"));
     require_string_choice(
         outbound, "color", {"random", "white", "black"});
@@ -832,12 +928,21 @@ void validate_projected_bot_options(const json& options) {
     required_integer(outbound, "clock_increment", 0, 300);
 
     const json& scheduler = required_object(options, "scheduler");
+    require_exact_fields(
+        scheduler,
+        {"enabled", "discovery_interval_seconds",
+         "challenge_interval_seconds", "reservation_retry_seconds",
+         "challenge_timeout_seconds"});
     static_cast<void>(required_boolean(scheduler, "enabled"));
     required_integer(scheduler, "discovery_interval_seconds", 15, 3600);
     required_integer(scheduler, "challenge_interval_seconds", 1, 300);
     required_integer(scheduler, "reservation_retry_seconds", 5, 600);
     required_integer(scheduler, "challenge_timeout_seconds", 10, 300);
     const json& opponents = required_object(options, "opponent_selection");
+    require_exact_fields(
+        opponents,
+        {"max_games_per_opponent_per_day", "timeout_cooldown_minutes",
+         "decline_cooldown_minutes", "rating_target", "rating_spread"});
     required_integer(opponents, "max_games_per_opponent_per_day", 1, 100);
     required_integer(opponents, "timeout_cooldown_minutes", 1, 1440);
     required_integer(opponents, "decline_cooldown_minutes", 1, 10080);
@@ -846,62 +951,12 @@ void validate_projected_bot_options(const json& options) {
 }
 
 json project_bot_options(const json& result) {
-    if (!result.is_object() || result.dump().size() > 64U * 1024U ||
-        result.value("status", "") != "ready" ||
-        !result.contains("editable") ||
-        !result.at("editable").is_object()) {
+    if (!result.is_object() || result.dump().size() > 32U * 1024U) {
         throw std::runtime_error(
             "the provider returned invalid BOT options");
     }
-    const json& editable = result.at("editable");
-    if (editable.value("schema", "") !=
-        "uci_arena_lichess_manager_options_v1") {
-        throw std::runtime_error(
-            "the provider returned an unsupported BOT options schema");
-    }
-    const json& capacity = required_object(editable, "capacity");
-    json projected_capacity = selected_fields(
-        capacity, {"total_slots", "startup_parallelism"});
-    projected_capacity["human"] = selected_fields(
-        required_object(capacity, "human"),
-        {"slots", "allow_borrowing", "accept_public"});
-    projected_capacity["bot"] = selected_fields(
-        required_object(capacity, "bot"),
-        {"slots", "target_active"});
-    projected_capacity["evidence"] = selected_fields(
-        required_object(capacity, "evidence"),
-        {"status", "qualified", "maximum_concurrency"});
-    json projection{
-        {"schema", "uci_arena_lichess_manager_options_v1"},
-        {"capacity", std::move(projected_capacity)},
-        {"inbound_challenges",
-         selected_fields(
-             required_object(editable, "inbound_challenges"),
-             {"accept_bots", "min_base", "max_base", "min_increment",
-              "max_increment", "speeds", "modes"})},
-        {"outbound_challenge",
-         selected_fields(
-             required_object(editable, "outbound_challenge"),
-             {"rated", "color", "clock_limit", "clock_increment"})},
-        {"scheduler",
-         selected_fields(
-             required_object(editable, "scheduler"),
-             {"enabled", "discovery_interval_seconds",
-              "challenge_interval_seconds", "reservation_retry_seconds",
-              "challenge_timeout_seconds"})},
-        {"opponent_selection",
-         selected_fields(
-             required_object(editable, "opponent_selection"),
-             {"max_games_per_opponent_per_day",
-              "timeout_cooldown_minutes", "decline_cooldown_minutes",
-              "rating_target", "rating_spread"})},
-    };
-    if (projection.dump().size() > 32U * 1024U) {
-        throw std::runtime_error(
-            "the provider BOT options projection is too large");
-    }
-    validate_projected_bot_options(projection);
-    return projection;
+    validate_projected_bot_options(result);
+    return result;
 }
 
 void require_parameter_keys(
@@ -1302,6 +1357,24 @@ SavedServiceLocator saved_service_locator(
 
 }  // namespace
 
+BotQualificationFailure::BotQualificationFailure(
+    const std::string& code,
+    const std::string& stage,
+    const std::string& detail)
+    : std::runtime_error(detail), code_(code), stage_(stage), detail_(detail) {}
+
+const std::string& BotQualificationFailure::code() const noexcept {
+    return code_;
+}
+
+const std::string& BotQualificationFailure::stage() const noexcept {
+    return stage_;
+}
+
+const std::string& BotQualificationFailure::detail() const noexcept {
+    return detail_;
+}
+
 json ServiceCatalog::profiles() {
     return json::array({book_forge_profile(), evidence_service_profile()});
 }
@@ -1700,8 +1773,8 @@ json ServiceCatalog::bot_profiles() {
             {"optional", true},
             {"capabilities",
              {"account_probe", "startup_status", "enable_startup",
-              "disable_startup", "options", "owners", "reservations",
-              "scheduler", "challenge_policy"}},
+              "disable_startup", "installed_qualification", "options",
+              "owners", "reservations", "scheduler", "challenge_policy"}},
         },
     });
 }
@@ -1721,6 +1794,7 @@ json ServiceCatalog::discover_bot(
         {"token_reference_available", false},
         {"configuration_state", "missing"},
         {"startup_state", "disabled"},
+        {"qualification_state", "unavailable"},
         {"options_state", "interactive_helper_required"},
     };
     bool adapter_ready = false;
@@ -1736,9 +1810,13 @@ json ServiceCatalog::discover_bot(
             adapter.receipt.value("component_version", "");
         adapter_root = adapter.active_root;
         try {
-            static_cast<void>(
-                verified_provider_service_contract(receipts_root, adapter));
+            const ProviderServiceContract contract =
+                verified_provider_service_contract(receipts_root, adapter);
             candidate["integration_state"] = "compatible";
+            candidate["qualification_state"] =
+                contract.operations.at("operations").contains("qualification_run")
+                    ? "available"
+                    : "unavailable";
             adapter_ready = true;
         } catch (const std::exception& error) {
             candidate["integration_state"] = "incompatible";
@@ -1898,38 +1976,39 @@ json ServiceCatalog::discover_bot(
         return fs::absolute(current->get<std::string>()).lexically_normal() ==
                fs::absolute(*locator).lexically_normal();
     };
+    const bool timing_ready = configured_path_matches(
+        {"engine", "time_profile"}, timing);
     project_bot_prerequisite(
         readiness,
         issues,
         "timing_profile",
-        configured_path_matches(
-            {"engine", "time_profile"}, timing),
+        timing_ready,
         "bot_timing_profile_unavailable",
-        "Import an exact qualified timing profile for the installed engine and model.");
+        "Import a provider-safety-qualified timing profile whose semantic timing identity "
+        "matches the configured model, provider/runtime, hardware, and search topology.");
+    const bool single_game_ready = configured_path_matches(
+        {"engine", "single_game_profile"}, single_game);
     project_bot_prerequisite(
         readiness,
         issues,
         "single_game_profile",
-        configured_path_matches(
-            {"engine", "single_game_profile"}, single_game),
+        single_game_ready,
         "bot_single_game_profile_unavailable",
         "Import an exact qualified Lichess single-game profile.");
-    project_bot_prerequisite(
-        readiness,
-        issues,
-        "capacity_profile",
-        configured_path_matches(
-            {"capacity", "capacity_profile"}, capacity),
-        "bot_capacity_profile_unavailable",
-        "Import a qualified Lichess capacity profile for this runtime.");
-    project_bot_prerequisite(
-        readiness,
-        issues,
-        "transport_profile",
-        configured_path_matches(
-            {"timing", "transport_profile_path"}, transport),
-        "bot_transport_profile_unavailable",
-        "Import a qualified Lichess transport profile.");
+    const bool capacity_configured = configured_path_matches(
+        {"capacity", "capacity_profile"}, capacity);
+    readiness["capacity_profile"] =
+        capacity_configured ? "configured" : "missing";
+    if (!capacity_configured) {
+        issues.push_back({
+            {"code", "bot_capacity_profile_unavailable"},
+            {"detail", "Import a qualified Lichess capacity profile for this runtime."},
+        });
+    }
+    const bool transport_ready = configured_path_matches(
+        {"timing", "transport_profile_path"}, transport);
+    readiness["transport_profile"] =
+        transport_ready ? "configured" : "bootstrap";
 
     const auto token_reference = saved_locator_reference(
         manager_data_root, "lichess_token_path");
@@ -1955,8 +2034,11 @@ json ServiceCatalog::discover_bot(
     readiness["bot_account_probe"] = "not_verified";
     candidate["readiness"] = readiness;
     candidate["issues"] = issues;
-    candidate["state"] =
-        issues.empty() ? "ready_to_probe" : "blocked";
+    const bool probe_ready =
+        adapter_ready && runtime_ready && configuration_ready && token_ready;
+    candidate["state"] = probe_ready ? "ready_to_probe" : "blocked";
+    candidate["startup_eligibility"] =
+        bot_live_prerequisites_ready(readiness) ? "ready" : "blocked";
     return {
         {"schema", "arena_bot_candidates_v1"},
         {"schema_version", 1},
@@ -2031,6 +2113,217 @@ json ServiceCatalog::probe_bot(
     };
 }
 
+json ServiceCatalog::qualify_bot(
+    const fs::path& manager_data_root,
+    const ProcessSupervisor& process_supervisor) {
+    return qualify_bot(
+        manager_data_root,
+        [&process_supervisor](
+            const fs::path& executable,
+            const fs::path& working_directory,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds timeout) {
+            return process_supervisor.run_json(
+                executable, working_directory, arguments, timeout);
+        });
+}
+
+json ServiceCatalog::discover_bot(
+    const fs::path& manager_data_root,
+    const ProcessSupervisor& process_supervisor) {
+    return discover_bot(
+        manager_data_root,
+        [&process_supervisor](
+            const fs::path& executable,
+            const fs::path& working_directory,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds timeout) {
+            return process_supervisor.run_json(
+                executable, working_directory, arguments, timeout);
+        });
+}
+
+json ServiceCatalog::discover_bot(
+    const fs::path& manager_data_root,
+    const BotCommandRunner& command_runner) {
+    json discovery = discover_bot(manager_data_root);
+    if (!discovery.contains("candidates") ||
+        !discovery.at("candidates").is_array() ||
+        discovery.at("candidates").empty()) {
+        return discovery;
+    }
+    json& candidate = discovery.at("candidates").at(0);
+    json& readiness = candidate.at("readiness");
+    if (readiness.value("capacity_profile", "missing") != "configured") {
+        return discovery;
+    }
+
+    try {
+        const json options = bot_options(manager_data_root, command_runner);
+        const json& evidence =
+            options.at("capacity").at("evidence");
+        if (evidence.at("qualified").get<bool>()) {
+            readiness["capacity_profile"] = "ready";
+        } else {
+            candidate.at("issues").push_back({
+                {"code", "bot_capacity_profile_unqualified"},
+                {"detail",
+                 "The Lichess provider rejected the configured capacity evidence. "
+                 "Requalify the installed engine before enabling startup."},
+            });
+        }
+    } catch (const std::exception&) {
+        candidate.at("issues").push_back({
+            {"code", "bot_capacity_profile_status_unavailable"},
+            {"detail",
+             "The Lichess provider could not verify the configured capacity evidence. "
+             "Refresh provider options or requalify the installed engine."},
+        });
+    }
+    candidate["startup_eligibility"] =
+        bot_live_prerequisites_ready(readiness) ? "ready" : "blocked";
+    return discovery;
+}
+
+json ServiceCatalog::qualify_bot(
+    const fs::path& manager_data_root,
+    const BotCommandRunner& command_runner) {
+    const BotProviderContext provider = bot_provider_context(manager_data_root);
+    const fs::path runtime_directory = bot_runtime_directory(provider.adapter);
+    std::vector<std::string> arguments = provider_operation_arguments(
+        provider.contract, "qualification_run", "forbidden");
+    arguments.insert(
+        arguments.end(),
+        {
+            "--config",
+            provider.configuration_path.string(),
+            "--runtime-dir",
+            runtime_directory.string(),
+        });
+    const json result = command_runner(
+        provider.contract.executable,
+        provider.adapter.active_root,
+        arguments,
+        std::chrono::minutes(20));
+
+    if (result.is_object() && result.size() == 3U &&
+        result.value("schema", "") ==
+            "uci_arena_lichess_qualification_result_v1" &&
+        result.value("status", "") == "failed" &&
+        result.contains("failure") && result.at("failure").is_object()) {
+        const json& failure = result.at("failure");
+        const std::string code = failure.value("code", "");
+        const std::string stage = failure.value("stage", "");
+        const std::string detail = failure.value("detail", "");
+        const std::set<std::string> stages{
+            "startup_safety",
+            "preflight",
+            "complete_game",
+            "single_game_publication",
+            "capacity_probe",
+            "commit",
+        };
+        if (failure.size() != 3U || !valid_contract_identifier(code) ||
+            !stages.contains(stage) ||
+            code != "qualification_" + stage + "_failed" ||
+            !valid_qualification_failure_detail(detail)) {
+            throw std::runtime_error(
+                "the provider returned an invalid qualification failure");
+        }
+        throw BotQualificationFailure(code, stage, detail);
+    }
+    if (!result.is_object() || result.dump().size() > 16U * 1024U ||
+        result.size() > 32U ||
+        result.value("schema", "") !=
+            "uci_arena_lichess_qualification_result_v1" ||
+        result.value("status", "") != "qualified" ||
+        !result.contains("reused") || !result.at("reused").is_boolean() ||
+        !result.contains("maximum_concurrency") ||
+        !result.at("maximum_concurrency").is_number_integer()) {
+        throw std::runtime_error(
+            "the provider returned invalid installed qualification state");
+    }
+    const auto maximum_concurrency =
+        result.at("maximum_concurrency").get<std::int64_t>();
+    const std::string search_core = result.value("search_core", "");
+    const std::string provider_name = result.value("provider", "");
+    const std::string model_id = result.value("model_id", "");
+    const std::string completed_at = result.value("completed_at", "");
+    if (maximum_concurrency < 1 || maximum_concurrency > 64 ||
+        (search_core != "mcgs" && search_core != "v2") ||
+        (provider_name != "directml" && provider_name != "cuda") ||
+        !valid_contract_identifier(model_id) || completed_at.empty() ||
+        completed_at.size() > 64U) {
+        throw std::runtime_error(
+            "the provider returned invalid installed qualification identity");
+    }
+    for (const char* field : {
+             "engine_sha256",
+             "timing_sha256",
+             "timing_identity_sha256",
+             "single_game_profile_sha256",
+             "capacity_profile_sha256",
+         }) {
+        if (!result.contains(field) || !result.at(field).is_string() ||
+            !valid_prefixed_sha256(
+                result.at(field).get_ref<const std::string&>())) {
+            throw std::runtime_error(
+                "the provider returned an invalid qualification digest");
+        }
+    }
+
+    const auto verified_output = [&runtime_directory, &result](
+                                     const char* field,
+                                     const char* digest_field,
+                                     const char* expected_filename) {
+        if (!result.contains(field) || !result.at(field).is_string()) {
+            throw std::runtime_error(
+                "the provider omitted an installed qualification output");
+        }
+        const fs::path declared = result.at(field).get<std::string>();
+        std::error_code error;
+        const fs::path canonical_root =
+            fs::weakly_canonical(runtime_directory, error);
+        if (error) {
+            throw std::runtime_error(
+                "the provider runtime directory cannot be verified");
+        }
+        const fs::path canonical_output = fs::weakly_canonical(declared, error);
+        if (error || !declared.is_absolute() ||
+            declared.filename() != expected_filename ||
+            !fs::is_regular_file(declared) || fs::is_symlink(declared) ||
+            !same_or_within(canonical_root, canonical_output)) {
+            throw std::runtime_error(
+                "the provider qualification output escaped its retained workspace");
+        }
+        const std::string observed = "sha256:" + sha256_file(canonical_output);
+        if (observed != result.at(digest_field).get<std::string>()) {
+            throw std::runtime_error(
+                "the provider qualification output digest does not match");
+        }
+        return canonical_output;
+    };
+    const fs::path single_game = verified_output(
+        "single_game_profile",
+        "single_game_profile_sha256",
+        "uci_arena_single_game_profile_v1.json");
+    const fs::path capacity = verified_output(
+        "capacity_profile",
+        "capacity_profile_sha256",
+        "uci_arena_lichess_capacity_profile_v2.json");
+    return {
+        {"schema", "arena_bot_qualification_internal_v1"},
+        {"single_game_profile", single_game.string()},
+        {"capacity_profile", capacity.string()},
+        {"reused", result.at("reused")},
+        {"maximum_concurrency", maximum_concurrency},
+        {"search_core", search_core},
+        {"model_id", model_id},
+        {"provider", provider_name},
+        {"timing_identity_sha256", result.at("timing_identity_sha256")},
+    };
+}
+
 json ServiceCatalog::control_bot(
     const fs::path& manager_data_root,
     const ProcessSupervisor& process_supervisor,
@@ -2070,10 +2363,12 @@ json ServiceCatalog::control_bot(
         provider_operation,
         action == "enable_startup" ? "external_file_path_only" : "forbidden");
     if (action == "enable_startup") {
-        if (discover_bot(manager_data_root).at("candidates").at(0).at("state") !=
-            "ready_to_probe") {
+        if (discover_bot(manager_data_root, command_runner)
+                .at("candidates")
+                .at(0)
+                .at("startup_eligibility") != "ready") {
             throw std::runtime_error(
-                "every BOT readiness prerequisite is required before startup");
+                "every BOT live-play readiness prerequisite is required before startup");
         }
         const json probe = probe_bot(manager_data_root, command_runner);
         account_name = probe.at("account_name").get<std::string>();

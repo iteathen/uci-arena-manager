@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <string>
@@ -55,8 +56,6 @@ class ControlPlane final {
     [[nodiscard]] nlohmann::json component_inventory() const;
     [[nodiscard]] nlohmann::json bot_profiles() const;
     [[nodiscard]] nlohmann::json bot_candidates() const;
-    [[nodiscard]] nlohmann::json save_bot_token_reference(
-        const std::filesystem::path& path) const;
     [[nodiscard]] ReportArtifact report_artifact(
         const std::string& report_id,
         const std::string& format) const;
@@ -99,6 +98,7 @@ class ControlPlane final {
         const std::string& event_kind);
 
     std::shared_ptr<ports::Store> store_;
+    std::mutex engine_authority_mutex_;
     std::filesystem::path manager_data_root_;
     ProcessSupervisor process_supervisor_;
     TournamentExecutor tournament_executor_;

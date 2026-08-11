@@ -42,14 +42,17 @@ repository_role:
 mandatory_boundaries:
   - "The Manager is one product repository because service, CLI, desktop host, web dashboard, broker, persistence, and projections share one control-plane domain model and evolve atomically."
   - "The Manager consumes installed component manifests and fixed typed provider operations; it never imports provider source, opens provider-private storage, or executes arbitrary provider shell commands."
+  - "Component discovery roles are declared by the producing component manifest; Manager resolves and verifies those declarations without inferring roles from component ids, capabilities, entrypoint keys, filenames, or model names."
   - "Providers remain authoritative for configuration validation, lifecycle constraints, credential access, persistent provider state, and their domain operations."
   - "Manager may project and request allowed provider options but must not duplicate provider validation or policy."
   - "Adding a provider changes its published service contract plus Manager registration/composition and provider-specific projection only; Manager core domain behavior remains unchanged."
   - "All mutating clients use the same Manager command contract and all read clients consume the same projections."
   - "The unprivileged Manager service is the sole control-plane state authority; the privileged broker accepts only typed allowlisted actions."
   - "The Installer is an independent product that installs Manager through Manager's immutable artifact and component manifest; Manager does not own installer transaction behavior."
+  - "Installer-owned saved locators are mutated only through the adjacent typed arena-setup transaction; Manager may validate and project their redacted availability but its service API never writes them."
+  - "A managed UCI engine may publish arena_uci_engine_launch_profile_v1 through its current receipt. Manager validates receipt/profile identity and probes the supplied options but never reconstructs Engine-owned timing, search, model, or knowledge semantics."
   - "Repositories exchange versioned contracts and immutable release artifacts and never import one another's internal source trees."
-  - "Operator secrets are write-only at Manager boundaries; token contents belong to the provider and are never returned, logged, packaged, or persisted by Manager."
+  - "Operator secrets are write-only at Manager boundaries; token contents belong to the operator and provider and are never returned, logged, packaged, or persisted in Manager state. The authenticated native helper may accept one bounded token body solely to atomically materialize an access-restricted operator-owned external file and commit its path through the adjacent Installer locator transaction; the Manager service never receives that body."
 
 required_provider_operations:
   characteristics:

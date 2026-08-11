@@ -3,15 +3,35 @@
 #include "arena/ports/native_process.hpp"
 
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <stdexcept>
 #include <vector>
 
 namespace arena::application {
+
+enum class ProcessCommandFailureKind {
+    launch,
+    timeout,
+    output_limit,
+    invalid_output,
+};
+
+class ProcessCommandFailure final : public std::runtime_error {
+  public:
+    ProcessCommandFailure(
+        ProcessCommandFailureKind kind,
+        const std::string& detail);
+    [[nodiscard]] ProcessCommandFailureKind kind() const noexcept;
+
+  private:
+    ProcessCommandFailureKind kind_;
+};
 
 class ProcessSupervisor final {
   public:
@@ -30,7 +50,8 @@ class ProcessSupervisor final {
         const std::filesystem::path& executable,
         const std::filesystem::path& working_directory,
         const std::vector<std::string>& arguments,
-        std::chrono::milliseconds timeout = std::chrono::seconds(15)) const;
+        std::chrono::milliseconds timeout = std::chrono::seconds(15),
+        std::size_t maximum_output_bytes = 1024 * 1024) const;
 
   private:
     mutable std::mutex mutex_;

@@ -8,6 +8,9 @@ info:
 servers:
   - url: http://127.0.0.1:47831/api/v1
 x-command-actions:
+  engine_lifecycle:
+    - engine.register
+    - engine.refresh
   competition_lifecycle:
     - match.start
     - match.pause
@@ -62,25 +65,59 @@ x-interactive-helper-contract:
   origin: authenticated_desktop_launcher_session
   authority: receipt_verified_provider_adapter
   operations:
+    - bot_credential_plan
+    - bot_credential_materialize
     - bot_probe
     - bot_startup_control
+    - bot_installed_qualification
     - bot_options_get
     - bot_options_update
     - bot_local_account_control
   rules:
     - These loopback helper operations are not Manager service endpoints and
       exist only for the interactive desktop-host lifetime.
+    - Bot credential planning accepts no credential. Materialization accepts
+      one bounded application/octet-stream body, writes it atomically to an
+      access-restricted operator-owned external file, and commits only that
+      path through the adjacent Installer locator transaction. The response is
+      redacted and the operation is unavailable while provider startup is
+      enabled.
+    - Credential contents never enter JSON, a URL, argv, setup results, logs,
+      Manager persistence, provider configuration, or browser storage.
     - Bot option requests carry only the
       uci_arena_lichess_manager_options_v1 allowlisted groups plus explicit
       rated/outbound confirmations.
     - Local account control carries one fixed action and its bounded typed
       scalar parameters. It never accepts paths, executable names, argv arrays,
       shell strings, token material, or raw provider configuration.
+    - Installed qualification accepts only its schema marker. The helper
+      resolves the fixed credential-free provider operation and receipt-owned
+      paths, validates provider-owned outputs, commits their locators through
+      adjacent Installer authority, and returns no path or raw evidence.
+    - Installed qualification may project one validated provider-owned failure
+      code, stage, and single-line bounded detail. It rejects path-bearing,
+      credential-bearing, malformed, or unstructured child diagnostics and
+      substitutes generic Manager-owned remediation without changing locators.
     - The helper resolves provider command prefixes from the exact
       receipt-verified operation catalog. Its response separates startup
       registration from provider activity, readiness, stream connectivity,
       and bounded blockers.
 paths:
+  /auth/server-proof:
+    post:
+      operationId: proveManagerServerIdentity
+      description: >
+        Return a keyed proof for one fresh 32-byte lowercase hexadecimal
+        challenge. The proof is domain-separated and bound to the service's own
+        configured numeric loopback origin, which is returned as the audience;
+        the caller cannot select that audience. This endpoint accepts no bearer
+        credential and exists so a local client can authenticate the exact
+        Manager endpoint before disclosing its bearer key.
+      responses:
+        "200":
+          description: Bounded keyed Manager identity proof
+        "400":
+          $ref: "#/components/responses/Problem"
   /auth/pair-token:
     post:
       operationId: issuePairingToken
@@ -270,35 +307,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BotDiscovery"
-  /bot-token-reference:
-    post:
-      operationId: saveBotTokenReference
-      description: >
-        Save a normalized path reference selected by the interactive user.
-        Manager checks filesystem metadata but never opens or returns the file.
-        Account probing is deliberately excluded because it must run through
-        the authenticated interactive-user helper.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [path]
-              properties:
-                path:
-                  type: string
-                  minLength: 1
-      responses:
-        "200":
-          description: Saved path-reference acknowledgement with no path or token material
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/BotTokenReferenceResult"
-        "422":
-          $ref: "#/components/responses/Problem"
   /resources/{kind}:
     get:
       operationId: listResources
@@ -482,19 +490,6 @@ components:
           type: array
           items:
             type: object
-    BotTokenReferenceResult:
-      type: object
-      additionalProperties: false
-      required: [schema, schema_version, state, validation]
-      properties:
-        schema:
-          const: arena_bot_token_reference_result_v1
-        schema_version:
-          const: 1
-        state:
-          const: saved
-        validation:
-          const: path_reference_only
     SystemStatus:
       type: object
       required:

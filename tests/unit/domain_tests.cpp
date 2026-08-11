@@ -65,6 +65,49 @@ json manager_service_api() {
     };
 }
 
+json manager_bot_options_fixture() {
+    return {
+        {"schema", "uci_arena_lichess_manager_options_v1"},
+        {"capacity",
+         {{"total_slots", 2},
+          {"startup_parallelism", 2},
+          {"human",
+           {{"slots", 1},
+            {"allow_borrowing", false},
+            {"accept_public", true}}},
+          {"bot", {{"slots", 1}, {"target_active", 1}}},
+          {"evidence",
+           {{"status", "qualified"},
+            {"qualified", true},
+            {"maximum_concurrency", 2}}}}},
+        {"inbound_challenges",
+         {{"accept_bots", true},
+          {"min_base", 60},
+          {"max_base", 1800},
+          {"min_increment", 0},
+          {"max_increment", 10},
+          {"speeds", {"rapid"}},
+          {"modes", {"casual"}}}},
+        {"outbound_challenge",
+         {{"rated", false},
+          {"color", "random"},
+          {"clock_limit", 600},
+          {"clock_increment", 2}}},
+        {"scheduler",
+         {{"enabled", true},
+          {"discovery_interval_seconds", 60},
+          {"challenge_interval_seconds", 5},
+          {"reservation_retry_seconds", 30},
+          {"challenge_timeout_seconds", 25}}},
+        {"opponent_selection",
+         {{"max_games_per_opponent_per_day", 1},
+          {"timeout_cooldown_minutes", 30},
+          {"decline_cooldown_minutes", 360},
+          {"rating_target", 2200},
+          {"rating_spread", 600}}},
+    };
+}
+
 void write_installed_component(
     const fs::path& data_root,
     const fs::path& install_root,
@@ -113,7 +156,8 @@ void attach_bot_provider_contract(
     const fs::path& data_root,
     const bool direct_invocation = false,
     const bool alternate_operation_prefixes = false,
-    const std::string& contract_version = "1.0") {
+    const std::string& contract_version = "1.0",
+    const bool installed_qualification = true) {
     const fs::path receipt_path =
         data_root / "receipts" / "lichess.adapter.json";
     json receipt = read_json(receipt_path);
@@ -129,7 +173,7 @@ void attach_bot_provider_contract(
         ? json::array()
         : json::array({"node_runtime.private"});
 
-    const json operations{
+    json operations{
         {"schema", "fixture_provider_manager_api_v1"},
         {"version", contract_version},
         {"transport",
@@ -171,7 +215,13 @@ void attach_bot_provider_contract(
              alternate_operation_prefixes
                  ? json::array({"provider", "observe"})
                  : json::array({"status"})},
-            {"mutates", false}, {"credential", "forbidden"}}},
+             {"mutates", false}, {"credential", "forbidden"}}},
+          {"qualification_run",
+           {{"arguments",
+             alternate_operation_prefixes
+                 ? json::array({"evidence", "refresh"})
+                 : json::array({"qualification", "run"})},
+            {"mutates", true}, {"credential", "forbidden"}}},
           {"reservation_cancel",
            {{"arguments", json::array({"reservation", "cancel"})},
             {"mutates", true}, {"credential", "forbidden"}}},
@@ -201,6 +251,9 @@ void attach_bot_provider_contract(
            {{"arguments", json::array({"startup", "uninstall"})},
             {"mutates", true}, {"credential", "forbidden"}}}}},
     };
+    if (!installed_qualification) {
+        operations["operations"].erase("qualification_run");
+    }
     const json service_contract{
         {"schema", "uci_arena_service_contract_v1"},
         {"service",
@@ -288,7 +341,8 @@ void write_ready_bot_fixture(
     const std::string& node_entrypoint_name = "node",
     const bool direct_invocation = false,
     const bool alternate_operation_prefixes = false,
-    const std::string& contract_version = "1.0") {
+    const std::string& contract_version = "1.0",
+    const bool installed_qualification = true) {
     const fs::path data = root / "data";
     const fs::path install = root / "install";
     write_installed_component(
@@ -333,14 +387,14 @@ void write_ready_bot_fixture(
         {root / "workspaces" / "lichess-adapter"});
     attach_bot_provider_contract(
         data, direct_invocation, alternate_operation_prefixes,
-        contract_version);
+        contract_version, installed_qualification);
 
     const std::array<std::pair<std::string, fs::path>, 5> locators{{
         {"timing_profile", root / "uci_time_profile_v3.json"},
         {"lichess_single_game_profile",
          root / "uci_arena_single_game_profile_v1.json"},
         {"lichess_capacity_profile",
-         root / "uci_arena_lichess_capacity_profile_v1.json"},
+         root / "uci_arena_lichess_capacity_profile_v2.json"},
         {"lichess_transport_profile", root / "transport_profile_v2.json"},
         {"lichess_token_path", root / "operator-token.txt"},
     }};
@@ -836,7 +890,8 @@ TEST_CASE("Lichess bot discovery projects every missing readiness dimension") {
     const json discovered =
         arena::application::ServiceCatalog::discover_bot(data);
     const json& candidate = discovered.at("candidates").at(0);
-    REQUIRE(candidate.at("state") == "blocked");
+    REQUIRE(candidate.at("state") == "ready_to_probe");
+    REQUIRE(candidate.at("startup_eligibility") == "blocked");
     REQUIRE(candidate.at("package_state") == "installed");
     REQUIRE(candidate.at("token_reference_available") == true);
     REQUIRE(candidate.at("options_state") == "interactive_helper_required");
@@ -852,13 +907,54 @@ TEST_CASE("Lichess bot discovery projects every missing readiness dimension") {
     REQUIRE(candidate.at("readiness").at("timing_profile") == "missing");
     REQUIRE(candidate.at("readiness").at("single_game_profile") == "missing");
     REQUIRE(candidate.at("readiness").at("capacity_profile") == "missing");
-    REQUIRE(candidate.at("readiness").at("transport_profile") == "missing");
+    REQUIRE(candidate.at("readiness").at("transport_profile") == "bootstrap");
     REQUIRE(candidate.at("readiness").at("token_reference") == "ready");
     REQUIRE(
         candidate.at("readiness").at("bot_account_probe") ==
         "not_verified");
     REQUIRE(candidate.at("readiness").at("startup") == "disabled");
+    REQUIRE(candidate.at("issues").dump().find(
+                "bot_transport_profile_unavailable") == std::string::npos);
     REQUIRE(discovered.dump().find(sentinel) == std::string::npos);
+    std::size_t probe_calls = 0;
+    const json probe = arena::application::ServiceCatalog::probe_bot(
+        data,
+        [&probe_calls](
+            const fs::path&,
+            const fs::path&,
+            const std::vector<std::string>&,
+            const std::chrono::milliseconds) {
+            ++probe_calls;
+            return json{
+                {"status", "ready"},
+                {"account", "EngineIndependentBot"},
+                {"is_bot", true},
+                {"games", 0U},
+            };
+        });
+    REQUIRE(probe.at("account_name") == "EngineIndependentBot");
+    REQUIRE(probe_calls == 1);
+    std::size_t startup_calls = 0;
+    try {
+        static_cast<void>(
+            arena::application::ServiceCatalog::control_bot(
+                data,
+                [&startup_calls](
+                    const fs::path&,
+                    const fs::path&,
+                    const std::vector<std::string>&,
+                    const std::chrono::milliseconds) {
+                    ++startup_calls;
+                    return json::object();
+                },
+                "enable_startup"));
+        FAIL("startup must remain blocked without live-play readiness");
+    } catch (const std::runtime_error& error) {
+        REQUIRE(
+            std::string(error.what()).find("live-play readiness") !=
+            std::string::npos);
+    }
+    REQUIRE(startup_calls == 0);
     fs::remove_all(root);
 }
 
@@ -909,7 +1005,7 @@ TEST_CASE("Lichess bot discovery becomes probe-ready only with exact visible pre
     const fs::path timing = root / "uci_time_profile_v3.json";
     const fs::path single = root / "uci_arena_single_game_profile_v1.json";
     const fs::path capacity =
-        root / "uci_arena_lichess_capacity_profile_v1.json";
+        root / "uci_arena_lichess_capacity_profile_v2.json";
     const fs::path transport = root / "transport_profile_v2.json";
     const fs::path token = root / "operator-token.txt";
     for (const auto& path : {timing, single, capacity, transport, token}) {
@@ -959,20 +1055,40 @@ TEST_CASE("Lichess bot discovery becomes probe-ready only with exact visible pre
     receipt["configuration_path"] = configuration.string();
     write_json(data / "receipts" / "lichess.adapter.json", receipt);
 
-    const json candidate =
+    const json configured_candidate =
         arena::application::ServiceCatalog::discover_bot(data)
             .at("candidates")
             .at(0);
+    REQUIRE(
+        configured_candidate.at("readiness").at("capacity_profile") ==
+        "configured");
+    REQUIRE(configured_candidate.at("startup_eligibility") == "blocked");
+
+    const json candidate =
+        arena::application::ServiceCatalog::discover_bot(
+            data,
+            [](const fs::path&,
+               const fs::path&,
+               const std::vector<std::string>&,
+               const std::chrono::milliseconds) {
+                return manager_bot_options_fixture();
+            })
+            .at("candidates")
+            .at(0);
     REQUIRE(candidate.at("state") == "ready_to_probe");
+    REQUIRE(candidate.at("startup_eligibility") == "ready");
     REQUIRE(candidate.at("options_state") == "interactive_helper_required");
     REQUIRE_FALSE(candidate.contains("options"));
     for (const auto& dimension :
          {"verified_adapter", "adapter_runtime",
           "verified_uci_arena_engine", "active_model", "opening_book",
           "syzygy", "timing_profile", "single_game_profile",
-          "capacity_profile", "transport_profile", "token_reference"}) {
+          "capacity_profile", "token_reference"}) {
         REQUIRE(candidate.at("readiness").at(dimension) == "ready");
     }
+    REQUIRE(
+        candidate.at("readiness").at("transport_profile") ==
+        "configured");
     REQUIRE(
         candidate.at("readiness").at("bot_account_probe") ==
         "not_verified");
@@ -980,6 +1096,56 @@ TEST_CASE("Lichess bot discovery becomes probe-ready only with exact visible pre
     REQUIRE(
         candidate.at("default_model").at("display_name") ==
         "Qualified Model");
+
+    const json rejected =
+        arena::application::ServiceCatalog::discover_bot(
+            data,
+            [](const fs::path&,
+               const fs::path&,
+               const std::vector<std::string>&,
+               const std::chrono::milliseconds) {
+                json options = manager_bot_options_fixture();
+                options["capacity"]["evidence"] = {
+                    {"status", "rejected"},
+                    {"qualified", false},
+                    {"maximum_concurrency", nullptr},
+                };
+                return options;
+            })
+            .at("candidates")
+            .at(0);
+    REQUIRE(rejected.at("readiness").at("capacity_profile") == "configured");
+    REQUIRE(rejected.at("startup_eligibility") == "blocked");
+    REQUIRE(
+        rejected.at("issues").dump().find(
+            "bot_capacity_profile_unqualified") != std::string::npos);
+
+    std::size_t rejected_startup_calls = 0;
+    try {
+        static_cast<void>(arena::application::ServiceCatalog::control_bot(
+            data,
+            [&rejected_startup_calls](
+                const fs::path&,
+                const fs::path&,
+                const std::vector<std::string>&,
+                const std::chrono::milliseconds) {
+                ++rejected_startup_calls;
+                json options = manager_bot_options_fixture();
+                options["capacity"]["evidence"] = {
+                    {"status", "rejected"},
+                    {"qualified", false},
+                    {"maximum_concurrency", nullptr},
+                };
+                return options;
+            },
+            "enable_startup"));
+        FAIL("rejected provider capacity must block startup");
+    } catch (const std::runtime_error& error) {
+        REQUIRE(
+            std::string(error.what()).find("live-play readiness") !=
+            std::string::npos);
+    }
+    REQUIRE(rejected_startup_calls == 1);
     fs::remove_all(root);
 }
 
@@ -1001,11 +1167,253 @@ TEST_CASE("Lichess bot discovery exposes an incompatible provider contract major
     fs::remove_all(root);
 }
 
+TEST_CASE("Lichess providers without the additive qualification operation remain compatible") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-bot-qualification-optional-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(root, "node", false, false, "1.0", false);
+    const json candidate =
+        arena::application::ServiceCatalog::discover_bot(root / "data")
+            .at("candidates")
+            .at(0);
+    REQUIRE(candidate.at("integration_state") == "compatible");
+    REQUIRE(candidate.at("qualification_state") == "unavailable");
+    REQUIRE_THROWS(
+        arena::application::ServiceCatalog::qualify_bot(
+            root / "data",
+            [](const fs::path&,
+               const fs::path&,
+               const std::vector<std::string>&,
+               const std::chrono::milliseconds) {
+                return json::object();
+            }));
+    fs::remove_all(root);
+}
+
+TEST_CASE("Lichess installed qualification uses only the published provider operation and retained workspace") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-bot-qualification-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(root, "node", false, true);
+    const fs::path runtime = root / "workspaces" / "lichess-adapter";
+    const fs::path outputs = runtime / "qualification" / "fixture";
+    fs::create_directories(outputs);
+    const fs::path single =
+        outputs / "uci_arena_single_game_profile_v1.json";
+    const fs::path capacity =
+        outputs / "uci_arena_lichess_capacity_profile_v2.json";
+    const std::string single_contents{"single-game\n"};
+    const std::string capacity_contents{"capacity\n"};
+    std::ofstream(single, std::ios::binary) << single_contents;
+    std::ofstream(capacity, std::ios::binary) << capacity_contents;
+    std::vector<std::string> observed_arguments;
+    std::chrono::milliseconds observed_timeout{};
+
+    const json result = arena::application::ServiceCatalog::qualify_bot(
+        root / "data",
+        [&](const fs::path&,
+            const fs::path&,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds timeout) {
+            observed_arguments = arguments;
+            observed_timeout = timeout;
+            return json{
+                {"schema", "uci_arena_lichess_qualification_result_v1"},
+                {"status", "qualified"},
+                {"engine_sha256", "sha256:" + std::string(64, 'a')},
+                {"timing_sha256", "sha256:" + std::string(64, 'b')},
+                {"timing_identity_sha256", "sha256:" + std::string(64, 'c')},
+                {"maximum_concurrency", 2},
+                {"single_game_profile", single.string()},
+                {"single_game_profile_sha256",
+                 "sha256:" + sha256_text(single_contents)},
+                {"capacity_profile", capacity.string()},
+                {"capacity_profile_sha256",
+                 "sha256:" + sha256_text(capacity_contents)},
+                {"search_core", "mcgs"},
+                {"model_id", "qualified-model-v1"},
+                {"provider", "directml"},
+                {"completed_at", "2026-08-08T00:00:00.000Z"},
+                {"reused", false},
+                {"additive_provider_field", "MUST_NOT_ESCAPE"},
+            };
+        });
+
+    REQUIRE(result.at("schema") == "arena_bot_qualification_internal_v1");
+    REQUIRE(
+        arena::application::ServiceCatalog::discover_bot(root / "data")
+            .at("candidates")
+            .at(0)
+            .at("qualification_state") == "available");
+    REQUIRE(fs::equivalent(
+        fs::path(result.at("single_game_profile").get<std::string>()), single));
+    REQUIRE(fs::equivalent(
+        fs::path(result.at("capacity_profile").get<std::string>()), capacity));
+    REQUIRE(result.dump().find("MUST_NOT_ESCAPE") == std::string::npos);
+    REQUIRE(observed_timeout == std::chrono::minutes(20));
+    REQUIRE(observed_arguments.size() == 7);
+    REQUIRE(observed_arguments.at(1) == "evidence");
+    REQUIRE(observed_arguments.at(2) == "refresh");
+    REQUIRE(observed_arguments.at(3) == "--config");
+    REQUIRE(observed_arguments.at(5) == "--runtime-dir");
+    REQUIRE(fs::equivalent(fs::path(observed_arguments.at(6)), runtime));
+    REQUIRE(
+        std::find(
+            observed_arguments.begin(), observed_arguments.end(), "--token-file") ==
+        observed_arguments.end());
+    fs::remove_all(root);
+}
+
+TEST_CASE("Lichess installed qualification projects only a closed provider failure") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-bot-qualification-failure-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(root, "node", false, true);
+
+    try {
+        static_cast<void>(arena::application::ServiceCatalog::qualify_bot(
+            root / "data",
+            [](const fs::path&,
+               const fs::path&,
+               const std::vector<std::string>&,
+               const std::chrono::milliseconds) {
+                return json{
+                    {"schema", "uci_arena_lichess_qualification_result_v1"},
+                    {"status", "failed"},
+                    {"failure",
+                     {
+                         {"code", "qualification_complete_game_failed"},
+                         {"stage", "complete_game"},
+                         {"detail",
+                          "Complete-game matrix rejected cache authority"},
+                     }},
+                };
+            }));
+        FAIL("provider qualification failure was accepted as success");
+    } catch (const arena::application::BotQualificationFailure& error) {
+        REQUIRE(error.code() == "qualification_complete_game_failed");
+        REQUIRE(error.stage() == "complete_game");
+        REQUIRE(
+            error.detail() ==
+            "Complete-game matrix rejected cache authority");
+    }
+    fs::remove_all(root);
+}
+
+TEST_CASE("Lichess installed qualification rejects path-bearing provider diagnostics") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-bot-qualification-redaction-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(root, "node", false, true);
+
+    try {
+        static_cast<void>(arena::application::ServiceCatalog::qualify_bot(
+            root / "data",
+            [](const fs::path&,
+               const fs::path&,
+               const std::vector<std::string>&,
+               const std::chrono::milliseconds) {
+                return json{
+                    {"schema", "uci_arena_lichess_qualification_result_v1"},
+                    {"status", "failed"},
+                    {"failure",
+                     {
+                         {"code", "qualification_preflight_failed"},
+                         {"stage", "preflight"},
+                         {"detail", "failed at C:\\private\\engine.exe"},
+                     }},
+                };
+            }));
+        FAIL("path-bearing provider diagnostic escaped validation");
+    } catch (const arena::application::BotQualificationFailure&) {
+        FAIL("invalid provider diagnostic became operator-visible");
+    } catch (const std::runtime_error& error) {
+        REQUIRE(
+            std::string(error.what()) ==
+            "the provider returned an invalid qualification failure");
+    }
+    fs::remove_all(root);
+}
+
+TEST_CASE("Lichess installed qualification rejects output outside the provider workspace") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-bot-qualification-escape-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(root);
+    const fs::path outside_single =
+        root / "uci_arena_single_game_profile_v1.json";
+    const fs::path runtime = root / "workspaces" / "lichess-adapter";
+    const fs::path capacity =
+        runtime / "uci_arena_lichess_capacity_profile_v2.json";
+    const std::string single_contents{"single-game\n"};
+    const std::string capacity_contents{"capacity\n"};
+    std::ofstream(outside_single, std::ios::binary) << single_contents;
+    std::ofstream(capacity, std::ios::binary) << capacity_contents;
+    try {
+        static_cast<void>(arena::application::ServiceCatalog::qualify_bot(
+            root / "data",
+            [&](const fs::path&,
+                const fs::path&,
+                const std::vector<std::string>&,
+                const std::chrono::milliseconds) {
+                return json{
+                    {"schema", "uci_arena_lichess_qualification_result_v1"},
+                    {"status", "qualified"},
+                    {"engine_sha256", "sha256:" + std::string(64, 'a')},
+                    {"timing_sha256", "sha256:" + std::string(64, 'b')},
+                    {"timing_identity_sha256", "sha256:" + std::string(64, 'c')},
+                    {"maximum_concurrency", 1},
+                    {"single_game_profile", outside_single.string()},
+                    {"single_game_profile_sha256",
+                     "sha256:" + sha256_text(single_contents)},
+                    {"capacity_profile", capacity.string()},
+                    {"capacity_profile_sha256",
+                     "sha256:" + sha256_text(capacity_contents)},
+                    {"search_core", "mcgs"},
+                    {"model_id", "qualified-model-v1"},
+                    {"provider", "directml"},
+                    {"completed_at", "2026-08-08T00:00:00.000Z"},
+                    {"reused", false},
+                };
+            }));
+        FAIL("qualification output outside the provider workspace was accepted");
+    } catch (const std::runtime_error& error) {
+        REQUIRE(
+            std::string(error.what()) ==
+            "the provider qualification output escaped its retained workspace");
+    }
+    fs::remove_all(root);
+}
+
 TEST_CASE("Lichess BOT control re-probes identity and returns only sanitized startup state") {
     const fs::path root =
         fs::temp_directory_path() /
         ("arena-bot-control-" + arena::domain::uuid_v7());
     write_ready_bot_fixture(root);
+    fs::remove(
+        root / "data" / "locators" /
+        "lichess_transport_profile.json");
+    fs::remove(root / "transport_profile_v2.json");
+    const fs::path configuration =
+        root / "workspaces" / "lichess-adapter" / "manager-config.json";
+    json provider_configuration = read_json(configuration);
+    provider_configuration["timing"]["transport_profile_path"] = nullptr;
+    write_json(configuration, provider_configuration);
+    const json bootstrap_candidate =
+        arena::application::ServiceCatalog::discover_bot(
+            root / "data",
+            [](const fs::path&,
+               const fs::path&,
+               const std::vector<std::string>&,
+               const std::chrono::milliseconds) {
+                return manager_bot_options_fixture();
+            })
+            .at("candidates")
+            .at(0);
+    REQUIRE(
+        bootstrap_candidate.at("readiness").at("transport_profile") ==
+        "bootstrap");
+    REQUIRE(bootstrap_candidate.at("startup_eligibility") == "ready");
     std::vector<std::vector<std::string>> calls;
     const auto runner =
         [&calls](
@@ -1014,6 +1422,10 @@ TEST_CASE("Lichess BOT control re-probes identity and returns only sanitized sta
             const std::vector<std::string>& arguments,
             const std::chrono::milliseconds) {
             calls.push_back(arguments);
+            if (arguments.size() > 2 && arguments.at(1) == "config" &&
+                arguments.at(2) == "get") {
+                return manager_bot_options_fixture();
+            }
             if (arguments.size() > 1 && arguments.at(1) == "probe") {
                 return json{
                     {"status", "ready"},
@@ -1055,16 +1467,18 @@ TEST_CASE("Lichess BOT control re-probes identity and returns only sanitized sta
     REQUIRE(result.dump().find("MUST_NOT_ESCAPE") == std::string::npos);
     REQUIRE(result.at("provider_state") == "ready");
     REQUIRE(result.at("provider_ready") == true);
-    REQUIRE(calls.size() == 3);
-    REQUIRE(calls.at(0).at(1) == "probe");
-    REQUIRE(calls.at(1).at(1) == "startup");
-    REQUIRE(calls.at(1).at(2) == "install");
-    REQUIRE(calls.at(2).at(1) == "status");
+    REQUIRE(calls.size() == 4);
+    REQUIRE(calls.at(0).at(1) == "config");
+    REQUIRE(calls.at(0).at(2) == "get");
+    REQUIRE(calls.at(1).at(1) == "probe");
+    REQUIRE(calls.at(2).at(1) == "startup");
+    REQUIRE(calls.at(2).at(2) == "install");
+    REQUIRE(calls.at(3).at(1) == "status");
     REQUIRE(
         std::find(
-            calls.at(1).begin(),
-            calls.at(1).end(),
-            "VerifiedArenaBot") != calls.at(1).end());
+            calls.at(2).begin(),
+            calls.at(2).end(),
+            "VerifiedArenaBot") != calls.at(2).end());
     fs::remove_all(root);
 }
 
@@ -1146,63 +1560,27 @@ TEST_CASE("Lichess BOT options use only verified provider entrypoints and bounde
             REQUIRE(fs::is_directory(working_directory));
             REQUIRE(timeout == std::chrono::seconds(30));
             calls.push_back(arguments);
-            return json{
-                {"status", "ready"},
-                {"editable",
-                 {
-                     {"schema", "uci_arena_lichess_manager_options_v1"},
-                     {"capacity",
-                      {
-                          {"total_slots", 2},
-                          {"startup_parallelism", 2},
-                          {"human",
-                           {{"slots", 1},
-                            {"allow_borrowing", false},
-                            {"accept_public", true}}},
-                          {"bot", {{"slots", 1}, {"target_active", 1}}},
-                          {"evidence",
-                           {{"status", "qualified"},
-                            {"qualified", true},
-                            {"maximum_concurrency", 2}}},
-                          {"capacity_profile", "MUST_NOT_ESCAPE"},
-                      }},
-                     {"inbound_challenges",
-                      {{"accept_bots", true},
-                       {"min_base", 60},
-                       {"max_base", 1800},
-                       {"min_increment", 0},
-                       {"max_increment", 10},
-                       {"speeds", {"rapid"}},
-                       {"modes", {"casual"}}}},
-                     {"outbound_challenge",
-                      {{"rated", false},
-                       {"color", "random"},
-                       {"clock_limit", 600},
-                       {"clock_increment", 2}}},
-                     {"scheduler",
-                      {{"enabled", true},
-                       {"discovery_interval_seconds", 60},
-                       {"challenge_interval_seconds", 5},
-                       {"reservation_retry_seconds", 30},
-                       {"challenge_timeout_seconds", 25}}},
-                     {"opponent_selection",
-                      {{"max_games_per_opponent_per_day", 1},
-                       {"timeout_cooldown_minutes", 30},
-                       {"decline_cooldown_minutes", 360},
-                       {"rating_target", 2200},
-                       {"rating_spread", 600}}},
-                     {"token", "MUST_NOT_ESCAPE"},
-                 }},
-            };
+            return manager_bot_options_fixture();
         });
 
     REQUIRE(result.at("schema") == "uci_arena_lichess_manager_options_v1");
     REQUIRE(result.at("capacity").at("evidence").at("qualified") == true);
-    REQUIRE(result.dump().find("MUST_NOT_ESCAPE") == std::string::npos);
     REQUIRE(calls.size() == 1);
     REQUIRE(calls.at(0).at(1) == "config");
     REQUIRE(calls.at(0).at(2) == "get");
     REQUIRE(calls.at(0).at(3) == "--config");
+    REQUIRE_THROWS_AS(
+        arena::application::ServiceCatalog::bot_options(
+            root / "data",
+            [](const fs::path&,
+               const fs::path&,
+               const std::vector<std::string>&,
+               const std::chrono::milliseconds) {
+                json invalid = manager_bot_options_fixture();
+                invalid["token"] = "MUST_NOT_ESCAPE";
+                return invalid;
+            }),
+        std::runtime_error);
     fs::remove_all(root);
 }
 
@@ -1222,38 +1600,7 @@ TEST_CASE("conforming direct provider substitutes its declared operation prefixe
             const std::chrono::milliseconds) {
             observed_executable = executable;
             observed_arguments = arguments;
-            return json{
-                {"status", "ready"},
-                {"editable",
-                 {{"schema", "uci_arena_lichess_manager_options_v1"},
-                  {"capacity",
-                   {{"total_slots", 1},
-                    {"startup_parallelism", 1},
-                    {"human", {{"slots", 1}, {"allow_borrowing", false},
-                               {"accept_public", true}}},
-                    {"bot", {{"slots", 0}, {"target_active", 0}}},
-                    {"evidence", {{"status", "unqualified"},
-                                  {"qualified", false},
-                                  {"maximum_concurrency", nullptr}}}}},
-                  {"inbound_challenges",
-                   {{"accept_bots", true}, {"min_base", 60},
-                    {"max_base", 1800}, {"min_increment", 0},
-                    {"max_increment", 10}, {"speeds", {"rapid"}},
-                    {"modes", {"casual"}}}},
-                  {"outbound_challenge",
-                   {{"rated", false}, {"color", "random"},
-                    {"clock_limit", 600}, {"clock_increment", 2}}},
-                  {"scheduler",
-                   {{"enabled", false}, {"discovery_interval_seconds", 60},
-                    {"challenge_interval_seconds", 5},
-                    {"reservation_retry_seconds", 30},
-                    {"challenge_timeout_seconds", 25}}},
-                  {"opponent_selection",
-                   {{"max_games_per_opponent_per_day", 1},
-                    {"timeout_cooldown_minutes", 30},
-                    {"decline_cooldown_minutes", 360},
-                    {"rating_target", 2200}, {"rating_spread", 600}}}}},
-            };
+            return manager_bot_options_fixture();
         });
     REQUIRE(result.at("schema") == "uci_arena_lichess_manager_options_v1");
     REQUIRE(observed_executable.filename() == "adapter.mjs");
@@ -1276,34 +1623,9 @@ TEST_CASE("Lichess BOT option updates are allowlisted and preserve explicit conf
             const std::vector<std::string>& arguments,
             const std::chrono::milliseconds) {
             calls.push_back(arguments);
-            return json{
-                {"status", "ready"},
-                {"editable",
-                 {
-                     {"schema", "uci_arena_lichess_manager_options_v1"},
-                     {"capacity",
-                      {{"total_slots", 1},
-                       {"startup_parallelism", 1},
-                       {"human", {{"slots", 0}, {"allow_borrowing", false}, {"accept_public", false}}},
-                       {"bot", {{"slots", 1}, {"target_active", 1}}},
-                       {"evidence", {{"status", "qualified"}, {"qualified", true}, {"maximum_concurrency", 1}}}}},
-                     {"inbound_challenges",
-                      {{"accept_bots", true}, {"min_base", 60}, {"max_base", 1800},
-                       {"min_increment", 0}, {"max_increment", 10},
-                       {"speeds", {"rapid"}}, {"modes", {"casual"}}}},
-                     {"outbound_challenge",
-                      {{"rated", true}, {"color", "random"},
-                       {"clock_limit", 600}, {"clock_increment", 2}}},
-                     {"scheduler",
-                      {{"enabled", true}, {"discovery_interval_seconds", 60},
-                       {"challenge_interval_seconds", 5}, {"reservation_retry_seconds", 30},
-                       {"challenge_timeout_seconds", 25}}},
-                     {"opponent_selection",
-                      {{"max_games_per_opponent_per_day", 1}, {"timeout_cooldown_minutes", 30},
-                       {"decline_cooldown_minutes", 360}, {"rating_target", 2200},
-                       {"rating_spread", 600}}},
-                 }},
-            };
+            json options = manager_bot_options_fixture();
+            options["outbound_challenge"]["rated"] = true;
+            return options;
         };
     const json settings{
         {"outbound_challenge", {{"rated", true}}},

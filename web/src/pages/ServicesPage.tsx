@@ -32,6 +32,7 @@ import { api, makeCommand } from '../api/client'
 import type { EngineData, ManagedServiceData, Resource } from '../api/types'
 import { PageHeader } from '../components/PageHeader'
 import { ComponentSetupButton } from '../components/ComponentSetupButton'
+import { LocalSetupImportButton } from '../components/LocalSetupImportButton'
 import { PathPickerInput } from '../components/PathPickerInput'
 import { StatusPill } from '../components/StatusPill'
 import {
@@ -40,8 +41,17 @@ import {
   needsEvidenceTarget,
   selectPreferredService,
   serviceCardStates,
+  serviceLifecycleActions,
   serviceLocatorMode,
 } from './serviceSelection'
+import {
+  activeEngineBookPath,
+  activeEngineTimingIdentity,
+  bookBindingState,
+  candidateRegistration,
+  engineRegistrationParameters,
+  timingBindingState,
+} from './engineRegistration'
 
 export function ServicesPage({ navigate }: { navigate: (page: string) => void }) {
   const queryClient = useQueryClient()
@@ -91,6 +101,11 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
   const [evidenceCliPath, setEvidenceCliPath] = useState('')
   const [evidenceWorkspace, setEvidenceWorkspace] = useState('')
   const [discoveryMessage, setDiscoveryMessage] = useState('')
+  const [activationNotice, setActivationNotice] = useState<{
+    serviceId: string
+    color: 'green' | 'yellow' | 'red'
+    detail: string
+  } | null>(null)
   const bookService = selectPreferredService(
     services.data ?? [],
     'book_forge',
@@ -135,6 +150,73 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
       engine.data.recommended === true &&
       Boolean(engine.data.default_model?.root),
   )
+  const activeManagedEngine = (engines.data ?? []).find(
+    (engine) =>
+      engine.data.component_id === 'uci_arena.engine' &&
+      engine.data.onboarding_source === 'install_receipt' &&
+      engine.data.recommended === true,
+  )
+  const activeBookPath = activeEngineBookPath(activeManagedEngine)
+  const activeTimingIdentity = activeEngineTimingIdentity(activeManagedEngine)
+  const activateImportedOutput = async (serviceId: string, label: string) => {
+    try {
+      const [discovery, currentEngines] = await Promise.all([
+        api.engineCandidates(''),
+        api.resources<EngineData>('engine'),
+      ])
+      const candidate = discovery.candidates.find(
+        (entry) => entry.source === 'install_receipt' &&
+          entry.component_id === 'uci_arena.engine' && entry.recommended === true,
+      )
+      if (!candidate || candidate.state !== 'ready_to_probe') {
+        setActivationNotice({
+          serviceId,
+          color: 'yellow',
+          detail: `${label} was saved, but the verified UCI Arena Engine candidate is unavailable. Repair the Engine package before activation.`,
+        })
+        return
+      }
+      const registration = candidateRegistration(candidate, currentEngines)
+      if (registration.state === 'unregistered' || !registration.engine) {
+        setActivationNotice({
+          serviceId,
+          color: 'yellow',
+          detail: `${label} was saved. Register the recommended Engine to activate its regenerated profile.`,
+        })
+        return
+      }
+      if (registration.state === 'refresh_required') {
+        await api.command(
+          makeCommand(
+            'engine.refresh',
+            'engine',
+            engineRegistrationParameters(candidate),
+            false,
+            registration.engine.id,
+            registration.engine.revision,
+          ),
+        )
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['resources', 'engine'] }),
+        queryClient.invalidateQueries({ queryKey: ['engine-candidates'] }),
+        queryClient.invalidateQueries({ queryKey: ['resources', 'managed_service'] }),
+      ])
+      setActivationNotice({
+        serviceId,
+        color: 'green',
+        detail: registration.state === 'refresh_required'
+          ? `${label} is active in the registered Engine after a complete runtime probe.`
+          : `${label} is already represented by the current registered Engine profile.`,
+      })
+    } catch (error) {
+      setActivationNotice({
+        serviceId,
+        color: 'red',
+        detail: `${label} was saved, but the existing Engine registration was not changed: ${error instanceof Error ? error.message : String(error)}`,
+      })
+    }
+  }
   const save = useMutation({
     mutationFn: ({
       parameters,
@@ -210,7 +292,12 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
         ),
       ),
     onSuccess: async (_result, variables) => {
-      if (variables.action === 'start' || variables.action === 'restart') {
+      if (
+        variables.action === 'start' ||
+        variables.action === 'restart' ||
+        variables.action === 'pause' ||
+        variables.action === 'resume'
+      ) {
         await new Promise((resolve) => window.setTimeout(resolve, 350))
         try {
           await api.command(
@@ -440,6 +527,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
             service.data.observed_state,
           )
           const receiptOwned = Boolean(service.data.installed_component_id)
+          const lifecycleActions = serviceLifecycleActions(service.data)
           return (
             <Paper withBorder className="service-instance" key={service.id}>
             <Grid align="center">
@@ -473,77 +561,23 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                     >
                       Probe
                     </Button>
-                    {service.data.startup_control === 'provider_owned_per_user' ? (
-                      service.data.observed_state === 'paused' ? (
-                        <Button
-                          size="xs"
-                          variant="light"
-                          onClick={() => control.mutate({ id: service.id, action: 'resume' })}
-                        >
-                          Resume
-                        </Button>
-                      ) : (
-                        <Button
-                          size="xs"
-                          variant="light"
-                          onClick={() => control.mutate({ id: service.id, action: 'pause' })}
-                        >
-                          Pause
-                        </Button>
-                      )
-                    ) : service.data.observed_state === 'running' ? (
-                      <>
-                        <Button
-                          size="xs"
-                          variant="light"
-                          onClick={() => control.mutate({ id: service.id, action: 'pause' })}
-                        >
-                          Pause
-                        </Button>
-                        <Button
-                          size="xs"
-                          color="red"
-                          variant="light"
-                          onClick={() => control.mutate({ id: service.id, action: 'stop' })}
-                        >
-                          Stop
-                        </Button>
-                      </>
-                    ) : service.data.observed_state === 'paused' ? (
-                      <>
-                        <Button
-                          size="xs"
-                          variant="light"
-                          onClick={() => control.mutate({ id: service.id, action: 'resume' })}
-                        >
-                          Resume
-                        </Button>
-                        <Button
-                          size="xs"
-                          color="red"
-                          variant="light"
-                          onClick={() => control.mutate({ id: service.id, action: 'stop' })}
-                        >
-                          Stop
-                        </Button>
-                      </>
-                    ) : service.data.observed_state === 'starting' ? (
+                    {lifecycleActions.map((action) => (
                       <Button
+                        key={action}
                         size="xs"
-                        color="red"
+                        color={action === 'stop' ? 'red' : undefined}
                         variant="light"
-                        onClick={() => control.mutate({ id: service.id, action: 'stop' })}
+                        loading={
+                          control.isPending &&
+                          control.variables?.id === service.id &&
+                          control.variables.action === action
+                        }
+                        disabled={control.isPending}
+                        onClick={() => control.mutate({ id: service.id, action })}
                       >
-                        Stop
+                        {action[0].toUpperCase() + action.slice(1)}
                       </Button>
-                    ) : (
-                      <Button
-                        size="xs"
-                        onClick={() => control.mutate({ id: service.id, action: 'start' })}
-                      >
-                        Start
-                      </Button>
-                    )}
+                    ))}
                     {!receiptOwned && (
                       <Button
                         size="xs"
@@ -594,21 +628,116 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                     Provider outputs
                   </Text>
                   {service.data.profile_id === 'book_forge' ? (
-                    <Text size="sm" mt={4}>
-                      {Array.isArray(service.data.output_integration.snapshots)
-                        ? `${service.data.output_integration.snapshots.length} validated opening-book snapshot(s)`
-                        : 'No validated opening-book snapshots'}
-                    </Text>
+                    <Stack gap="xs" mt={4}>
+                      <Text size="sm">
+                        {Array.isArray(service.data.output_integration.snapshots)
+                          ? `${service.data.output_integration.snapshots.length} validated opening-book snapshot(s)`
+                          : 'No validated opening-book snapshots'}
+                      </Text>
+                      <Text size="xs" c="dimmed" ff="monospace" title={activeBookPath}>
+                        Engine active book: {activeBookPath || 'Engine not registered'}
+                      </Text>
+                      {service.data.output_integration.snapshots?.map((snapshot) => {
+                        const binding = bookBindingState(activeManagedEngine, snapshot.path)
+                        return (
+                          <Paper withBorder p="xs" key={snapshot.snapshot_id}>
+                            <Group justify="space-between" align="center" wrap="nowrap">
+                              <Stack gap={3} style={{ minWidth: 0 }}>
+                                <Group gap="xs">
+                                  <Text size="sm" fw={650}>{snapshot.channel}</Text>
+                                  <Badge color={snapshot.current ? 'blue' : 'gray'} variant="light">
+                                    {snapshot.current ? 'Provider current' : 'Provider retained'}
+                                  </Badge>
+                                  <Badge
+                                    color={binding === 'active' ? 'teal' : binding === 'available' ? 'yellow' : 'gray'}
+                                    variant="light"
+                                  >
+                                    {binding === 'active'
+                                      ? 'Engine active'
+                                      : binding === 'available'
+                                        ? 'Available to switch'
+                                        : 'Engine not registered'}
+                                  </Badge>
+                                </Group>
+                                <Text size="xs" c="dimmed">
+                                  {snapshot.record_count.toLocaleString()} records · {snapshot.qualified ? 'strength qualified' : 'validated'}
+                                </Text>
+                                <Text size="xs" c="dimmed" ff="monospace" truncate title={snapshot.path}>
+                                  Provider updates: {snapshot.path}
+                                </Text>
+                              </Stack>
+                              <LocalSetupImportButton
+                                assetKind="opening_book"
+                                path={snapshot.path}
+                                label={binding === 'active' ? 'Reapply to Engine' : 'Use in Engine'}
+                                onCompleted={() => activateImportedOutput(service.id, 'Opening-book snapshot')}
+                              />
+                            </Group>
+                          </Paper>
+                        )
+                      })}
+                    </Stack>
                   ) : (
-                    <Text size="sm" mt={4}>
-                      {Number(service.data.output_integration.dataset_count ?? 0)}{' '}
-                      dataset(s) ·{' '}
-                      {Number(service.data.output_integration.timing_profile_count ?? 0)}{' '}
-                      qualified timing profile(s)
-                    </Text>
+                    <Stack gap="xs" mt={4}>
+                      <Text size="sm">
+                        {Number(service.data.output_integration.dataset_count ?? 0)}{' '}
+                        dataset(s) ·{' '}
+                        {Number(service.data.output_integration.timing_profile_count ?? 0)}{' '}
+                        qualified timing profile(s)
+                      </Text>
+                      <Text size="xs" c="dimmed" ff="monospace" title={activeTimingIdentity}>
+                        Engine active timing identity: {activeTimingIdentity || 'Engine not registered'}
+                      </Text>
+                      {service.data.output_integration.timing_profiles?.map((profile) => {
+                        const binding = timingBindingState(activeManagedEngine, profile.identity_sha256)
+                        const providerCurrent = service.data.output_integration?.selected_timing_profile
+                          ?.identity_sha256 === profile.identity_sha256
+                        return (
+                          <Paper withBorder p="xs" key={`${profile.source}-${profile.identity_sha256}`}>
+                            <Group justify="space-between" align="center" wrap="nowrap">
+                              <Stack gap={3} style={{ minWidth: 0 }}>
+                                <Group gap="xs">
+                                  <Text size="sm" fw={650}>Qualified timing evidence</Text>
+                                  <Badge color={providerCurrent ? 'blue' : 'gray'} variant="light">
+                                    {providerCurrent ? 'Provider current' : 'Provider retained'}
+                                  </Badge>
+                                  <Badge
+                                    color={binding === 'active' ? 'teal' : binding === 'available' ? 'yellow' : 'gray'}
+                                    variant="light"
+                                  >
+                                    {binding === 'active'
+                                      ? 'Engine active'
+                                      : binding === 'available'
+                                        ? 'Available to switch'
+                                        : 'Engine not registered'}
+                                  </Badge>
+                                </Group>
+                                <Text size="xs" c="dimmed">
+                                  {profile.target_identity.model_id ? String(profile.target_identity.model_id) : profile.source}
+                                </Text>
+                                <Text size="xs" c="dimmed" ff="monospace" truncate title={profile.path}>
+                                  Provider file: {profile.path}
+                                </Text>
+                              </Stack>
+                              <LocalSetupImportButton
+                                assetKind="timing_profile"
+                                path={profile.path}
+                                label={binding === 'active' ? 'Reapply to Engine' : 'Use in Engine'}
+                                onCompleted={() => activateImportedOutput(service.id, 'Timing profile')}
+                              />
+                            </Group>
+                          </Paper>
+                        )
+                      })}
+                    </Stack>
                   )}
                 </Paper>
               )}
+            {activationNotice?.serviceId === service.id && (
+              <Alert color={activationNotice.color} mt="sm">
+                {activationNotice.detail}
+              </Alert>
+            )}
             {service.data.profile_id === 'uci_arena_evidence' &&
               service.data.orchestration_projection && (
                 <Paper withBorder mt="md" p="sm">

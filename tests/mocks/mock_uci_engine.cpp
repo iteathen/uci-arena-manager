@@ -1,5 +1,6 @@
 #include <iostream>
 #include <chrono>
+#include <filesystem>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -8,15 +9,19 @@
 
 int main(int argc, char** argv) {
     unsigned delay_ms = 0;
+    unsigned ready_delay_ms = 0;
     bool illegal = false;
     std::size_t illegal_after_ply = static_cast<std::size_t>(-1);
     bool require_chess960 = false;
     unsigned required_moves_to_go = 0;
     std::string required_model_root;
+    bool allow_model_root = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
         if (argument == "--delay-ms" && index + 1 < argc) {
             delay_ms = static_cast<unsigned>(std::stoul(argv[++index]));
+        } else if (argument == "--ready-delay-ms" && index + 1 < argc) {
+            ready_delay_ms = static_cast<unsigned>(std::stoul(argv[++index]));
         } else if (argument == "--illegal") {
             illegal = true;
         } else if (argument == "--illegal-after-ply" && index + 1 < argc) {
@@ -29,11 +34,13 @@ int main(int argc, char** argv) {
                 static_cast<unsigned>(std::stoul(argv[++index]));
         } else if (argument == "--require-model-root" && index + 1 < argc) {
             required_model_root = argv[++index];
+        } else if (argument == "--allow-model-root") {
+            allow_model_root = true;
         }
     }
     std::string position;
     bool chess960_enabled = false;
-    bool model_root_ready = required_model_root.empty();
+    bool model_root_ready = required_model_root.empty() && !allow_model_root;
     const std::vector<std::string> scholar_mate{
         "e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "h5f7"};
     for (std::string line; std::getline(std::cin, line);) {
@@ -41,22 +48,42 @@ int main(int argc, char** argv) {
             std::cout << "id name Arena Mock Engine\n"
                       << "id author UCI Arena Manager\n"
                       << "option name Threads type spin default 1 min 1 max 16\n"
+                      << "option name Ponder type check default false\n"
                       << "option name Style type combo default Normal var Solid var Normal var Risky\n";
-            if (!required_model_root.empty()) {
+            if (!required_model_root.empty() || allow_model_root) {
                 std::cout << "option name ModelRoot type string default missing\n";
             } else {
                 std::cout << "info string model loaded:backend:onnx:path:fixture:fingerprint:8104116015256418347:provider:cpu:provider_numeric_fingerprint:5805769137532863231\n";
             }
             std::cout << "uciok\n" << std::flush;
         } else if (line.starts_with("setoption name ModelRoot value ")) {
-            model_root_ready =
-                line.substr(std::string("setoption name ModelRoot value ").size()) ==
-                required_model_root;
+            const std::filesystem::path supplied_model_root = line.substr(
+                std::string("setoption name ModelRoot value ").size());
+            if (allow_model_root) {
+                model_root_ready = std::filesystem::is_directory(supplied_model_root);
+            } else {
+                std::error_code equivalent_error;
+                model_root_ready = std::filesystem::equivalent(
+                    supplied_model_root,
+                    std::filesystem::path(required_model_root),
+                    equivalent_error);
+            }
         } else if (line == "isready") {
-            if (!required_model_root.empty() && model_root_ready) {
+            if (ready_delay_ms > 0) {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(ready_delay_ms));
+            }
+            if ((!required_model_root.empty() || allow_model_root) &&
+                model_root_ready) {
                 std::cout << "info string model loaded:backend:onnx:path:fixture:fingerprint:8104116015256418347:provider:cpu:provider_numeric_fingerprint:5805769137532863231\n";
             }
             std::cout << "readyok\n" << std::flush;
+        } else if (line == "runtime_status") {
+            std::cout
+                << "info string runtime_status_v1 "
+                << R"({"schema":"uci_runtime_status_v1","timing_contract_version":"persistent_mcgs_relative_clock_temporal_v4","model_loaded":true,"model_id":"example_model_v1","model_fingerprint":"8104116015256418347","adapter_id":"dense_planes_v1","provider_requested":"cpu","provider_effective":"cpu","provider_numeric_fingerprint":"5805769137532863231","hardware_driver_fingerprint":"15113055170282736143","onnx_runtime_version":"1.24.4","search_core_configured":"mcgs"})"
+                << '\n'
+                << std::flush;
         } else if (line == "setoption name UCI_Chess960 value true") {
             chess960_enabled = true;
         } else if (line.starts_with("position ")) {

@@ -1,6 +1,9 @@
 #include "arena/application/tournament_executor.hpp"
 
 #include "arena/adapters/uci_game_runner.hpp"
+#include "arena/adapters/uci_process.hpp"
+#include "arena/application/engine_onboarding.hpp"
+#include "arena/application/engine_option_values.hpp"
 #include "arena/domain/uuid.hpp"
 
 #include <chess.hpp>
@@ -253,17 +256,7 @@ json engine_data(
 }
 
 std::map<std::string, std::string> string_map(const json& value) {
-    std::map<std::string, std::string> result;
-    if (!value.is_object()) {
-        return result;
-    }
-    for (const auto& [key, item] : value.items()) {
-        if (!item.is_string()) {
-            throw std::runtime_error("engine option override values must be strings");
-        }
-        result.emplace(key, item.get<std::string>());
-    }
-    return result;
+    return normalize_engine_option_values(value);
 }
 
 void add_receipt_default_model_option(
@@ -325,6 +318,66 @@ adapters::UciGameEngine game_engine(
         }
     }
     return engine;
+}
+
+void validate_competition_engines(
+    const std::shared_ptr<ports::Store>& store,
+    const json& competition) {
+    std::set<std::string> engine_ids;
+    for (const auto& engine_id : competition.at("engine_ids")) {
+        if (!engine_id.is_string()) {
+            throw std::runtime_error(
+                "competition contains a malformed engine identity");
+        }
+        engine_ids.insert(engine_id.get<std::string>());
+    }
+
+    for (const auto& engine_id : engine_ids) {
+        const json registered = engine_data(store, engine_id);
+        const adapters::UciGameEngine engine =
+            game_engine(store, competition, engine_id);
+        json expected_runtime = nullptr;
+        if (registered.contains("launch_profile") &&
+            registered.at("launch_profile").is_object() &&
+            registered.at("launch_profile").value("state", "") ==
+                "qualified_timing") {
+            const json& launch_profile = registered.at("launch_profile");
+            expected_runtime = launch_profile.contains("expected_runtime")
+                ? launch_profile.at("expected_runtime")
+                : json(nullptr);
+        }
+        const adapters::UciProbeResult probe = adapters::UciProcess::probe(
+            engine.executable,
+            engine.working_directory,
+            engine.arguments,
+            adapters::UciProbeTimeouts{},
+            engine.options,
+            !expected_runtime.is_null());
+        if (!probe.ok) {
+            throw std::runtime_error(
+                "engine preflight failed before game admission for " +
+                engine_id + ": " + probe.error);
+        }
+        if (probe.fingerprint != engine.fingerprint) {
+            throw std::runtime_error(
+                "registered engine identity changed before game admission for " +
+                engine_id);
+        }
+        if (!expected_runtime.is_null()) {
+            if (!probe.runtime_status.has_value()) {
+                throw std::runtime_error(
+                    "qualified engine runtime status is unavailable before game admission for " +
+                    engine_id);
+            }
+            if (const auto mismatch =
+                    EngineOnboarding::runtime_identity_mismatch(
+                        expected_runtime, *probe.runtime_status)) {
+                throw std::runtime_error(
+                    "qualified engine runtime identity changed before game admission for " +
+                    engine_id + ": " + *mismatch);
+            }
+        }
+    }
 }
 
 std::optional<ports::ResourceRecord> existing_game(
@@ -1014,6 +1067,7 @@ void TournamentExecutor::run(
             competition["resolved_opening_positions"] = load_opening_suite(
                 competition.at("opening_suite").get<std::string>());
         }
+        validate_competition_engines(store_, competition);
         const std::size_t concurrency = std::clamp<std::size_t>(
             competition.value("concurrency", 1U), 1, 64);
         std::string failure;

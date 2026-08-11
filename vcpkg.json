@@ -18,11 +18,8 @@
     "libsodium",
     "cli11",
     "nlohmann-json",
-    "tomlplusplus",
     "spdlog",
-    "zstd",
     "libharu",
-    "libarchive",
     "catch2"
   ]
 }

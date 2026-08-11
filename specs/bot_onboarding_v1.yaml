@@ -14,22 +14,42 @@ profile:
 
 token_reference:
   ownership: permanent_operator_external_file
-  selection_owner: interactive_user_native_picker
-  persistence_owner: manager_locator_store
+  selection_owner: authenticated_interactive_user_helper
+  persistence_owner: installer_owned_locator_transaction
+  input_modes:
+    default: write_only_direct_token
+    advanced: existing_external_file_locator
   rules:
     - Installers, packages, repositories, release artifacts, tests, and
       Manager state never contain a Lichess API credential.
     - Each local installation supplies its own external token file and may
       replace the saved path reference without modifying installed payloads.
+    - The default dashboard control is a masked direct API-token field. Its
+      value is sent only as one bounded application/octet-stream body to the
+      authenticated native helper and is never encoded as JSON, a URL, argv,
+      setup output, browser storage, or Manager service state.
+    - The native helper atomically materializes the value in an
+      access-restricted per-user operator-owned file outside Manager data and
+      installed component roots. It then supplies only that path to the same
+      Installer-owned locator transaction used by existing-file selection.
+    - Direct replacement is rejected while provider startup is enabled. A
+      failed locator commit restores the preceding file exactly and leaves no
+      staged or backup credential file.
+    - Existing token-file selection remains available behind an explicit
+      advanced control and retains its metadata-only validation contract.
     - A token path under Manager-owned data or the verified provider component
       root is rejected; neither location may become credential storage.
     - Discovery exposes an external-token-path blocker before probe or startup
       when a legacy locator points into the verified provider component.
-    - The dashboard can select and replace the token-file reference without a terminal.
-    - The authenticated Manager mutation receives and stores only the normalized path.
-    - Manager validation uses filesystem metadata only and never opens, hashes, copies,
-      logs, or returns token contents.
-    - Mutation responses and discovery output do not return the selected path.
+    - The dashboard can materialize, select, and replace the token-file
+      reference without a terminal through the authenticated desktop helper
+      and adjacent Installer-owned arena-setup.
+    - The Manager service has no token-locator mutation endpoint. It reads only the
+      validated saved-locator contract and projects redacted availability.
+    - Installer validation uses filesystem metadata only and never opens, hashes, copies,
+      logs, or returns token contents. Its import transaction regenerates and verifies
+      every affected consumer configuration before committing the locator.
+    - Setup mutation responses and Manager discovery output do not return the selected path.
 
 discovery:
   sources:
@@ -89,8 +109,11 @@ account_control:
   rules:
     - Status and disable resolve only receipt-verified adapter and runtime
       entrypoints and never require or open the token file.
-    - Enable requires every non-probe readiness dimension and performs a fresh
+    - Enable requires every live-play readiness dimension and performs a fresh
       BOT-only account probe before installing provider-owned per-user startup.
+      Missing learned transport evidence is not a live-play blocker because the
+      provider owns a conservative bootstrap reserve until qualified evidence
+      is available.
     - The account identity passed to startup comes only from that fresh probe;
       the dashboard cannot supply or override it.
     - Provider startup output is reduced to the output allowlist. Raw task,
@@ -111,6 +134,49 @@ account_control:
       copied into Manager control flow.
     - A generic bot.register command is forbidden because it could create
       account state without the verified adapter probe.
+
+installed_qualification:
+  owner: verified_lichess_provider
+  transport: authenticated_ephemeral_loopback_helper
+  operation: qualification_run
+  input_schema: arena_ui_bot_qualification_request_v1
+  output_schema: arena_bot_qualification_result_v1
+  rules:
+    - The packaged Lichess provider must publish this additive operation. A
+      compatible replacement provider that omits it remains usable for already
+      qualified configurations, while Manager projects qualification as
+      unavailable instead of rejecting the provider's whole v1 contract.
+    - The dashboard supplies no path, executable, command, UCI option,
+      credential, evidence identity, or concurrency value. Manager resolves the
+      fixed credential-free operation from the receipt-verified provider
+      operation catalog and supplies only the receipt-owned configuration and
+      provider workspace paths.
+    - Qualification is unavailable while provider startup is enabled. The
+      provider reuses the selected timing profile as semantic timing authority
+      and owns fresh complete-game, exact single-game, and concurrent-capacity
+      evidence for the installed Engine generation.
+    - Provider output paths are accepted only when they are absolute regular
+      non-link files beneath the receipt-owned provider workspace and their
+      reported digests match the files. Raw paths and provider output never
+      reach the browser.
+    - The interactive helper commits the two validated profile locators only
+      through the adjacent Installer-owned import operation, using a managed
+      copy for single-game evidence and an in-place reference for provider-owned
+      capacity evidence. A failed or partial locator commit cannot enable
+      provider startup and the same content-addressed qualification remains
+      safely retryable.
+    - The browser receives only bounded qualification state, identity,
+      concurrency, reuse, and import-completion fields. Credentials, paths,
+      commands, configuration, and raw evidence are excluded.
+    - A provider-declared qualification failure is accepted only as the closed
+      uci_arena_lichess_qualification_result_v1 failure variant with one bounded
+      identifier code, one known stage, and one single-line redacted detail.
+      Manager projects that detail for remediation without interpreting provider
+      semantics; invalid, path-bearing, credential-bearing, or unstructured
+      diagnostics collapse to Manager-owned generic failure text.
+    - Provider transport launch, timeout, output-limit, and invalid-JSON failures
+      remain distinct Manager-owned failures and never expose raw child output.
+      No failure variant commits or changes either profile locator.
 
 options:
   schema: uci_arena_lichess_manager_options_v1
@@ -133,6 +199,10 @@ options:
       fields are excluded.
     - A provider rejection leaves the prior configuration authoritative and is
       returned as an actionable error; React state cannot fabricate a save.
+    - A running provider keeps its start-of-process configuration so active
+      games are never interrupted by an options write. Manager labels a
+      successful write as next-start authority and does not claim it changed
+      the currently effective runtime.
 
 readiness:
   required:
@@ -148,13 +218,25 @@ readiness:
     - token_reference
     - bot_account_probe
   projection:
-    prerequisite_states: [ready, missing]
+    prerequisite_states: [ready, configured, bootstrap, missing]
     account_probe_states: [not_verified, verified]
     startup_states: [disabled, enabled]
+    startup_eligibility_states: [ready, blocked]
     rules:
       - Every required dimension is returned independently; a generic blocked
         state cannot replace the per-dimension evidence.
-      - ready_to_probe requires every prerequisite except bot_account_probe.
+      - A selected capacity-profile path is only configured until the verified
+        provider's typed options projection reports qualified capacity
+        evidence. Manager projects ready only from that provider-owned
+        qualified boolean, treats rejected or unavailable evidence as blocked,
+        and never interprets the profile file itself.
+      - ready_to_probe requires only a verified compatible adapter and runtime,
+        a readable provider configuration, and an external token reference.
+        Engine, model, knowledge, and performance qualification do not block
+        the provider-owned BOT account probe.
+      - startup_eligibility is ready only when every live-play prerequisite is
+        ready. The transport_profile states configured and bootstrap are both
+        explicitly eligible; neither is a Manager claim of qualified evidence.
       - The interactive probe result may project bot_account_probe as verified
         for the current launcher session, but it does not enable startup.
       - Provider-reported helper status is the live startup authority for the
@@ -163,7 +245,25 @@ readiness:
       - Credential-free provider status is sampled with startup status and
         independently projects active, ready, stream connectivity, and bounded
         blockers. Startup registration alone never implies an active bot.
+      - The open Bots surface refreshes that same credential-free status every
+        five seconds while the adapter is installed, so startup transitions and
+        stream health do not remain stale until manual interaction.
   rule: Missing readiness never appears as active.
+  evidence_contract:
+    current_capacity_schema: uci_arena_lichess_capacity_profile_v2
+    current_transport_schema: uci_arena_lichess_transport_profile_v2
+    rules:
+      - Manager path hints prefer the current v2 capacity and transport
+        filenames, while permissive discovery may retain older parseable
+        evidence for review.
+      - Manager never promotes, rewrites, or invalidates timing evidence from
+        its filename or age. The verified Lichess provider remains authority
+        for profile schema, qualification, compatibility, and effective use.
+      - When no transport profile is selected, Manager projects bootstrap
+        without a readiness issue. A selected path is only configured; the
+        provider remains responsible for treating missing, incompatible,
+        invalid, or unqualified content as bootstrap. It owns the conservative
+        reserve and learns replacement evidence only from completed games.
 
 lifecycle:
   startup_owner: provider_per_user
@@ -178,22 +278,38 @@ lifecycle:
     - manage_reservation
     - pause_or_resume_scheduler
     - edit_schema_backed_options
+    - requalify_installed_engine
   duplicate_daemon: forbidden
 
 acceptance:
   - A Complete Arena install shows the adapter as installed but disabled.
-  - A token-file reference can be selected without Manager or installer reading it.
+  - A direct token can be entered without reaching the Manager service and is
+    materialized as a private external file before only its path is committed.
+  - An existing token-file reference can be selected without Manager or installer reading it.
+  - Failed direct materialization or locator commit leaves the prior credential
+    and locator authoritative and leaves no staged or backup file.
+  - Saving the reference through Bots and Configuration uses the same typed
+    Installer import transaction; no Manager-only write path can bypass
+    consumer-configuration regeneration or provider refresh.
   - The account probe discovers one BOT account and rejects a normal account.
   - Startup enablement performs a fresh probe and cannot accept an
     account name from the browser.
   - Startup status, enable, and disable remain available without a terminal
     while the authenticated desktop helper is running.
+  - Installed-engine requalification is available without a terminal, accepts
+    no browser-supplied path or command, retains compatible timing authority,
+    and imports exact current single-game and capacity evidence before startup.
+  - Installed-engine qualification failures name the provider stage and bounded
+    safe diagnostic when the provider returns its valid failure contract; fake
+    provider tests prove path-bearing and malformed diagnostics do not escape.
   - A stale installer receipt cannot make active provider startup appear
     disabled after helper status succeeds.
   - Every missing safety prerequisite is visible before startup.
+  - A configured capacity-profile locator whose provider-owned evidence is
+    rejected never appears ready and cannot authorize startup.
   - No happy-path bot setup step requires a terminal command.
   - Automated HTTP integration uses a loopback fake Lichess API with a
     non-secret fixture token and never requires an operator credential.
   - A fake conforming provider with a different executable layout proves that
-    startup, status, options, and account controls resolve the published
+    startup, status, qualification, options, and account controls resolve the published
     operation catalog rather than hardcoded provider verbs or source paths.

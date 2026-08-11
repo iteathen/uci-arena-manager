@@ -44,6 +44,58 @@
         "root": {"type": "string"}
       }
     },
+    "launch_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "state", "timing_profile", "expected_runtime"],
+      "properties": {
+        "schema": {"const": "arena_uci_engine_launch_profile_v1"},
+        "state": {"enum": ["conservative", "qualified_timing"]},
+        "timing_profile": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["available"],
+          "properties": {
+            "available": {"type": "boolean"},
+            "schema": {"type": "string"},
+            "identity_sha256": {"type": "string"}
+          }
+        },
+        "expected_runtime": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": true,
+              "required": [
+                "timing_contract_version",
+                "model_id",
+                "model_fingerprint",
+                "adapter_id",
+                "provider_requested",
+                "provider_effective",
+                "provider_numeric_fingerprint",
+                "hardware_driver_fingerprint",
+                "onnx_runtime_version",
+                "search_core"
+              ],
+              "properties": {
+                "timing_contract_version": {"type": "string"},
+                "model_id": {"type": "string"},
+                "model_fingerprint": {"type": "string"},
+                "adapter_id": {"type": "string"},
+                "provider_requested": {"type": "string"},
+                "provider_effective": {"type": "string"},
+                "provider_numeric_fingerprint": {"type": "string"},
+                "hardware_driver_fingerprint": {"type": "string"},
+                "onnx_runtime_version": {"type": "string"},
+                "search_core": {"type": "string"}
+              }
+            }
+          ]
+        }
+      }
+    },
     "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "issues": {
       "type": "array",

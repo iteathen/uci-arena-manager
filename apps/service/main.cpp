@@ -136,12 +136,46 @@ int run_control_plane(const Options& options) {
         auto auth = std::make_shared<arena::application::LocalAuth>(options.data_directory);
         auth->initialize();
         arena::service::EventsWebSocket::configure(control_plane, auth);
+        const std::string server_proof_audience =
+            "http://127.0.0.1:" + std::to_string(options.port);
 
         auto& app = drogon::app();
         app.addListener("127.0.0.1", options.port)
             .setThreadNum(4)
             .setDocumentRoot(options.web_root.string())
             .setFileTypes({"html", "js", "css", "svg", "png", "ico", "woff2"});
+
+        app.registerHandler(
+            "/api/v1/auth/server-proof",
+            [auth, server_proof_audience](const HttpRequestPtr& request,
+                   std::function<void(const HttpResponsePtr&)>&& callback) {
+                try {
+                    const json body = parse_body(request);
+                    if (body.size() != 1 || !body.contains("challenge") ||
+                        !body.at("challenge").is_string()) {
+                        throw arena::application::CommandFailure(
+                            "invalid_server_proof_challenge",
+                            "server proof requires exactly one challenge",
+                            400);
+                    }
+                    callback(response(
+                        {{"schema", "arena_manager_server_proof_v1"},
+                         {"audience", server_proof_audience},
+                         {"proof", auth->server_proof(
+                             body.at("challenge").get<std::string>(),
+                             server_proof_audience)}}));
+                } catch (const arena::application::CommandFailure& failure) {
+                    callback(response(
+                        arena::application::problem_json(failure),
+                        status_code(failure.http_status())));
+                } catch (const std::exception& error) {
+                    callback(response(
+                        {{"code", "invalid_server_proof_challenge"},
+                         {"detail", error.what()}},
+                        drogon::k400BadRequest));
+                }
+            },
+            {drogon::Post});
 
         app.registerHandler(
             "/api/v1/auth/pair-token",
@@ -284,7 +318,7 @@ int run_control_plane(const Options& options) {
                     const json body = parse_body(request);
                     json parameters = json::object();
                     for (const auto* field :
-                         {"display_name", "executable", "working_directory",
+                         {"candidate_id", "display_name", "executable", "working_directory",
                           "arguments", "uci_options",
                           "environment_references"}) {
                         if (body.contains(field)) {
@@ -390,37 +424,6 @@ int run_control_plane(const Options& options) {
                 callback(response(control_plane->bot_candidates()));
             },
             {drogon::Get});
-
-        app.registerHandler(
-            "/api/v1/bot-token-reference",
-            [control_plane, auth](
-                const HttpRequestPtr& request,
-                std::function<void(const HttpResponsePtr&)>&& callback) {
-                if (!mutation_authorized(request, auth)) {
-                    callback(response(
-                        {{"code", "authentication_required"}},
-                        drogon::k401Unauthorized));
-                    return;
-                }
-                try {
-                    const json body = parse_body(request);
-                    if (!body.is_object() || !body.contains("path") ||
-                        !body.at("path").is_string() ||
-                        body.at("path").get_ref<const std::string&>().empty()) {
-                        throw arena::application::CommandFailure(
-                            "invalid_bot_token_reference",
-                            "path must be a nonempty string",
-                            400);
-                    }
-                    callback(response(control_plane->save_bot_token_reference(
-                        body.at("path").get<std::string>())));
-                } catch (const arena::application::CommandFailure& failure) {
-                    callback(response(
-                        arena::application::problem_json(failure),
-                        status_code(failure.http_status())));
-                }
-            },
-            {drogon::Post});
 
         app.registerHandler(
             "/api/v1/resources/{1}",

@@ -1,20 +1,4 @@
-import {
-  IconActivity,
-  IconAdjustments,
-  IconArchive,
-  IconRobot,
-  IconChartHistogram,
-  IconChess,
-  IconClipboardData,
-  IconCpu,
-  IconFileAnalytics,
-  IconHistory,
-  IconHome,
-  IconMoon,
-  IconReportAnalytics,
-  IconServer,
-  IconSun,
-} from '@tabler/icons-react'
+import { IconChess, IconMoon, IconSun } from '@tabler/icons-react'
 import {
   ActionIcon,
   AppShell,
@@ -47,36 +31,15 @@ import { OverviewPage } from './pages/OverviewPage'
 import { ServicesPage } from './pages/ServicesPage'
 import { AuditPage } from './pages/AuditPage'
 import { ReportsPage } from './pages/ReportsPage'
+import {
+  locationHasPairingToken,
+  navigationItems as nav,
+  pageFromLocation,
+} from './components/pageNavigation'
 
 const StatisticsPage = lazy(() =>
   import('./pages/StatisticsPage').then((module) => ({ default: module.StatisticsPage })),
 )
-
-const nav = [
-  { key: 'overview', label: 'Overview', icon: IconHome },
-  { key: 'services', label: 'Services', icon: IconServer },
-  { key: 'bots', label: 'Bots', icon: IconRobot },
-  { key: 'engines', label: 'Engines', icon: IconCpu },
-  { key: 'planner', label: 'Local match planner', icon: IconChess },
-  { key: 'live', label: 'Live games', icon: IconActivity },
-  { key: 'tournaments', label: 'Tournaments', icon: IconChartHistogram },
-  { key: 'history', label: 'Game history & replay', icon: IconHistory },
-  { key: 'logs', label: 'Logs', icon: IconClipboardData },
-  { key: 'statistics', label: 'Statistics & health', icon: IconFileAnalytics },
-  { key: 'reports', label: 'Reports', icon: IconReportAnalytics },
-  { key: 'configuration', label: 'Configuration', icon: IconAdjustments },
-  { key: 'audit', label: 'Audit', icon: IconArchive },
-] as const
-
-export function pageFromLocation() {
-  const value = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('page')
-  return nav.some((item) => item.key === value) ? value! : 'overview'
-}
-
-export function locationHasPairingToken() {
-  const value = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('pair')
-  return Boolean(value?.match(/^[a-f0-9]{64}$/))
-}
 
 export default function App() {
   const queryClient = useQueryClient()
@@ -151,7 +114,7 @@ export default function App() {
       case 'services':
         return <ServicesPage navigate={navigate} />
       case 'engines':
-        return <EnginesPage />
+        return <EnginesPage navigate={navigate} />
       case 'planner':
         return <MatchPlannerPage navigate={navigate} />
       case 'bots':

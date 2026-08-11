@@ -2,6 +2,7 @@
 
 #include "arena/ports/native_process.hpp"
 
+#include <nlohmann/json.hpp>
 #include <sodium.h>
 
 #include <array>
@@ -180,6 +181,79 @@ void capture_runtime_model_identity(
     result.runtime_provider_fingerprint = provider_fingerprint;
 }
 
+UciRuntimeStatus parse_runtime_status(const std::string& line) {
+    constexpr std::string_view prefix = "info string runtime_status_v1 ";
+    if (!line.starts_with(prefix) || line.size() > 1024U * 1024U) {
+        throw std::runtime_error("engine runtime status response is missing or oversized");
+    }
+    const nlohmann::json value = nlohmann::json::parse(line.substr(prefix.size()));
+    if (!value.is_object() || value.value("schema", "") != "uci_runtime_status_v1" ||
+        value.value("model_loaded", false) != true) {
+        throw std::runtime_error("engine runtime status response is invalid");
+    }
+    const auto token = [&value](const char* name) {
+        if (!value.contains(name) || !value.at(name).is_string()) {
+            throw std::runtime_error(
+                "engine runtime status is missing field: " + std::string(name));
+        }
+        const std::string result = value.at(name).get<std::string>();
+        if (!safe_token(result, 128U)) {
+            throw std::runtime_error(
+                "engine runtime status has an invalid field: " + std::string(name));
+        }
+        return result;
+    };
+    const auto decimal = [&value](const char* name) {
+        if (!value.contains(name) || !value.at(name).is_string()) {
+            throw std::runtime_error(
+                "engine runtime status is missing field: " + std::string(name));
+        }
+        const std::string result = value.at(name).get<std::string>();
+        if (!decimal_fingerprint(result)) {
+            throw std::runtime_error(
+                "engine runtime status has an invalid field: " + std::string(name));
+        }
+        return result;
+    };
+    return UciRuntimeStatus{
+        token("timing_contract_version"),
+        token("model_id"),
+        decimal("model_fingerprint"),
+        token("adapter_id"),
+        token("provider_requested"),
+        token("provider_effective"),
+        decimal("provider_numeric_fingerprint"),
+        decimal("hardware_driver_fingerprint"),
+        token("onnx_runtime_version"),
+        token("search_core_configured"),
+    };
+}
+
+void await_runtime_status(
+    ports::NativeProcess& process,
+    const Clock::time_point deadline,
+    UciProbeResult& result) {
+    constexpr std::string_view prefix = "info string runtime_status_v1 ";
+    while (Clock::now() < deadline) {
+        const auto remaining =
+            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now());
+        const auto line = process.read_line(
+            std::min(remaining, std::chrono::milliseconds(250)));
+        if (!line) {
+            if (!process.running()) {
+                throw std::runtime_error("engine exited before runtime status");
+            }
+            continue;
+        }
+        capture_runtime_model_identity(*line, result);
+        if (line->starts_with(prefix)) {
+            result.runtime_status = parse_runtime_status(*line);
+            return;
+        }
+    }
+    throw std::runtime_error("engine timed out waiting for runtime status");
+}
+
 std::string await_token(
     ports::NativeProcess& process,
     const std::string_view token,
@@ -227,41 +301,96 @@ bool legal_starting_bestmove(const std::string& move) {
 
 }  // namespace
 
+void UciProcess::validate_option_overrides(
+    const std::vector<domain::UciOption>& advertised_options,
+    const std::map<std::string, std::string>& option_overrides) {
+    std::map<std::string, const domain::UciOption*, std::less<>> by_name;
+    for (const auto& option : advertised_options) {
+        if (option.name.empty() || !by_name.emplace(option.name, &option).second) {
+            throw std::runtime_error(
+                "engine advertised an empty or duplicate UCI option name");
+        }
+    }
+    for (const auto& [name, value] : option_overrides) {
+        const auto found = by_name.find(name);
+        if (found == by_name.end()) {
+            throw std::runtime_error(
+                "requested UCI option is not advertised: " + name);
+        }
+        const domain::UciOption& option = *found->second;
+        if (option.type == "button") {
+            throw std::runtime_error(
+                "UCI button options cannot be persisted as values: " + name);
+        }
+        if (option.type == "check" && value != "true" && value != "false") {
+            throw std::runtime_error(
+                "UCI check option requires true or false: " + name);
+        }
+        if (option.type == "spin") {
+            const std::int64_t number = parse_integer(value, "spin");
+            if ((option.minimum && number < *option.minimum) ||
+                (option.maximum && number > *option.maximum)) {
+                throw std::runtime_error(
+                    "UCI spin option is outside its advertised bounds: " + name);
+            }
+        }
+        if (option.type == "combo" && !option.variants.empty() &&
+            std::ranges::find(option.variants, value) == option.variants.end()) {
+            throw std::runtime_error(
+                "UCI combo option is not an advertised variant: " + name);
+        }
+    }
+}
+
 UciProbeResult UciProcess::probe(
     const std::filesystem::path& executable,
     const std::filesystem::path& working_directory,
     const std::vector<std::string>& arguments,
-    std::chrono::milliseconds timeout,
-    const std::map<std::string, std::string, std::less<>>& option_overrides) {
+    const UciProbeTimeouts& timeouts,
+    const std::map<std::string, std::string>& option_overrides,
+    const bool request_runtime_status) {
     UciProbeResult result;
     const auto started = Clock::now();
     ports::NativeProcess process;
     try {
         result.fingerprint = fingerprint(executable);
         process.start(executable, working_directory, arguments);
-        const auto deadline = Clock::now() + timeout;
 
         process.write_line("uci");
-        await_token(process, "uciok", deadline, result, true);
+        await_token(
+            process,
+            "uciok",
+            Clock::now() + timeouts.uci_discovery,
+            result,
+            true);
+        validate_option_overrides(result.options, option_overrides);
         for (const auto& [name, value] : option_overrides) {
-            const bool advertised = std::any_of(
-                result.options.begin(), result.options.end(),
-                [&name](const domain::UciOption& option) {
-                    return option.name == name;
-                });
-            if (!advertised) {
-                throw std::runtime_error(
-                    "requested UCI option is not advertised: " + name);
-            }
             process.write_line("setoption name " + name + " value " + value);
         }
         process.write_line("isready");
-        await_token(process, "readyok", deadline, result, false);
+        await_token(
+            process,
+            "readyok",
+            Clock::now() + timeouts.ready_after_options,
+            result,
+            false);
+        if (request_runtime_status) {
+            process.write_line("runtime_status");
+            await_runtime_status(
+                process,
+                Clock::now() + timeouts.runtime_status,
+                result);
+        }
         process.write_line("ucinewgame");
         process.write_line("position startpos");
         process.write_line("go depth 1");
         const std::string bestmove_line =
-            await_token(process, "bestmove", deadline, result, false);
+            await_token(
+                process,
+                "bestmove",
+                Clock::now() + timeouts.first_bestmove,
+                result,
+                false);
         const auto parts = split(bestmove_line);
         if (parts.size() < 2 || !legal_starting_bestmove(parts[1])) {
             throw std::runtime_error("engine returned an illegal starting-position bestmove");
