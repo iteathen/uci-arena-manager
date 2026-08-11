@@ -74,11 +74,12 @@ producer_contract:
       inputs. Candidate staging must not depend on ambient registry or runtime
       discovery inside the disposable VM.
     - The Windows launcher-provided VCToolsRedistDir is the redistributable
-      runtime root authority. Before configure, the workflow must require that
-      root, select exactly one x64 Microsoft.VC*.CRT directory beneath it,
-      validate the core runtime files, and export the resulting directory
-      through GITHUB_ENV as ARENA_MANAGER_MSVC_RUNTIME_DIRECTORY. Later steps
-      must consume that exact mapped directory rather than rediscovering it.
+      runtime root authority. Before dependency materialization, the workflow
+      must require that root, select exactly one x64 Microsoft.VC*.CRT directory
+      beneath it, validate the core runtime files, and export the resulting
+      directory through GITHUB_ENV as ARENA_MANAGER_MSVC_RUNTIME_DIRECTORY.
+      Later steps must consume that exact mapped directory rather than
+      rediscovering it.
     - The ephemeral runner must also expose a callable GitHub CLI before any
       build work because private candidate validation and upload use the
       job-scoped GitHub token through that explicit release tool.
@@ -88,13 +89,13 @@ producer_contract:
       cache key binds the runner platform, release target, vcpkg manifest,
       configuration, and triplets. A cache miss remains an exact source build;
       removed backends such as x-gha are forbidden.
-    - When candidate source changes a workflow relative to the default branch,
-      an operator-authenticated release coordinator pre-provisions one empty
-      private prerelease at the exact source commit. The signing job must verify
-      its target, prerelease state, and empty asset set before uploading the
-      verified archive, provider result, and Sigstore bundle without clobbering.
-      This keeps workflow-write credentials outside Actions and makes a partial
-      upload visible and non-retriable until explicitly cleaned up.
+    - Before any candidate workflow dispatch, an operator-authenticated release
+      coordinator pre-provisions or verifies one empty private prerelease at the
+      exact source commit. The signing job must verify its target, prerelease
+      state, and empty asset set before uploading the verified archive, provider
+      result, and Sigstore bundle without clobbering. This keeps workflow-write
+      credentials outside Actions and makes a partial upload visible and
+      non-retriable until explicitly cleaned up.
     - Actions artifact storage and package registries are not candidate
       transport; the repository's default free Actions cache limit is not to be
       increased by this workflow.
