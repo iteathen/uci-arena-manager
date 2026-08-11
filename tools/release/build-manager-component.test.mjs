@@ -108,7 +108,7 @@ test("Manager component workflow pins dependencies and bounds each release gate"
   ]) {
     assert.match(workflow, new RegExp(`- name: ${gate}`, "u"));
   }
-  assert.match(workflow, /--clean-first --parallel 4/u);
+  assert.match(workflow, /--clean-first --parallel \$parallel/u);
   assert.match(workflow, /--output-on-failure --timeout 300/u);
   assert.match(
     workflow,
@@ -116,6 +116,9 @@ test("Manager component workflow pins dependencies and bounds each release gate"
   );
   assert.match(workflow, /path: \$\{\{ runner\.temp \}\}\/vcpkg-binary-cache/u);
   assert.match(workflow, /manager-vcpkg-v1-/u);
+  assert.match(workflow, /id: ephemeral-vcpkg-cache-key/u);
+  assert.match(workflow, /git ls-files --stage -- vcpkg\.json vcpkg-configuration\.json cmake\/triplets/u);
+  assert.match(workflow, /steps\.ephemeral-vcpkg-cache-key\.outputs\.hash/u);
   assert.match(workflow, /VCPKG_BINARY_SOURCES: "clear;default,readwrite"/u);
   assert.match(
     workflow,
