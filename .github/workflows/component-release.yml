@@ -104,11 +104,35 @@ jobs:
       - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
         with:
           vcpkgGitCommitId: 9e593bb18ea69cc5095e012465dcd675a822ed0d
-      - name: Restore exact vcpkg binary cache
+      - name: Resolve exact ephemeral vcpkg cache key
+        if: inputs.runner == 'ephemeral-self-hosted-windows'
+        id: ephemeral-vcpkg-cache-key
+        shell: pwsh
+        run: |
+          $inventory = @(git ls-files --stage -- vcpkg.json vcpkg-configuration.json cmake/triplets)
+          if ($LASTEXITCODE -ne 0 -or $inventory.Count -lt 3) {
+            throw 'ephemeral vcpkg cache inventory is incomplete'
+          }
+          $inventoryPath = Join-Path $env:RUNNER_TEMP 'manager-vcpkg-cache-inventory.txt'
+          [System.IO.File]::WriteAllLines(
+            $inventoryPath,
+            $inventory,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $inventoryPath).Hash.ToLowerInvariant()
+          "hash=$hash" >> $env:GITHUB_OUTPUT
+      - name: Restore exact hosted vcpkg binary cache
+        if: inputs.runner != 'ephemeral-self-hosted-windows'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ runner.temp }}/vcpkg-binary-cache
           key: manager-vcpkg-v1-${{ runner.os }}-${{ inputs.target }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/triplets/**') }}
+      - name: Restore exact ephemeral vcpkg binary cache
+        if: inputs.runner == 'ephemeral-self-hosted-windows'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ${{ runner.temp }}/vcpkg-binary-cache
+          key: manager-vcpkg-v1-${{ runner.os }}-${{ inputs.target }}-${{ steps.ephemeral-vcpkg-cache-key.outputs.hash }}
       - name: Verify Manager specifications and web application
         timeout-minutes: 10
         shell: pwsh
