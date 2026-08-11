@@ -99,6 +99,16 @@ engine_identity_experience:
     - When that current receipt replaces an older immutable component root,
       present one Refresh configuration action for the existing managed Engine
       resource instead of creating a second registration.
+    - On Manager startup, automatically refresh an idle receipt-managed Engine
+      that still uses its packaged launch profile when the verified receipt
+      generation changed. Expose whether reconciliation refreshed, was already
+      current, was blocked by active use, or preserved an operator-selected
+      model; never make the operator rediscover the current installation by
+      hand.
+    - An explicit ModelRoot selection always wins over a later package update.
+      Startup reconciliation labels it operator_model_override_preserved and
+      leaves the selected directory and timing-evidence consequences visible
+      until the operator explicitly resets to the packaged default.
     - Show an explicitly confirmed Remove registration action for stopped
       engines. Explain that it removes only Manager registration state, retains
       installed files and valuable data, and report active-use conflicts.

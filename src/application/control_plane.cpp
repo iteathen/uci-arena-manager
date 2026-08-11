@@ -788,6 +788,164 @@ void ControlPlane::reconcile_installed_services(
                     {"detail", error.what()}}})},
         };
     }
+    reconcile_installed_engine();
+}
+
+void ControlPlane::reconcile_installed_engine() {
+    try {
+        std::vector<std::pair<ports::ResourceRecord, json>> managed;
+        for (const auto& resource : store_->list_resources("engine", 10'000, 0)) {
+            try {
+                json data = json::parse(resource.data_json);
+                if (data.value("onboarding_source", "") == "install_receipt" &&
+                    data.value("component_id", "") == "uci_arena.engine") {
+                    managed.emplace_back(resource, std::move(data));
+                }
+            } catch (const json::exception&) {
+            }
+        }
+        if (managed.empty()) {
+            installed_engine_reconciliation_ = {
+                {"schema", "arena_installed_engine_reconciliation_v1"},
+                {"state", "complete"},
+                {"observed_at", domain::utc_now()},
+                {"outcome", "not_registered"},
+            };
+            return;
+        }
+        if (managed.size() != 1) {
+            throw std::runtime_error(
+                "multiple receipt-managed UCI Arena Engine resources require explicit cleanup");
+        }
+        const ports::ResourceRecord& resource = managed.front().first;
+        const json& current = managed.front().second;
+        if (current.value("model_selection_authority", "") == "operator") {
+            installed_engine_reconciliation_ = {
+                {"schema", "arena_installed_engine_reconciliation_v1"},
+                {"state", "complete"},
+                {"observed_at", domain::utc_now()},
+                {"outcome", "operator_model_override_preserved"},
+                {"resource_id", resource.id},
+                {"revision", resource.revision},
+            };
+            return;
+        }
+        if (!current.contains("launch_profile") ||
+            !current.at("launch_profile").is_object()) {
+            installed_engine_reconciliation_ = {
+                {"schema", "arena_installed_engine_reconciliation_v1"},
+                {"state", "complete"},
+                {"observed_at", domain::utc_now()},
+                {"outcome", "legacy_selection_authority_preserved"},
+                {"resource_id", resource.id},
+                {"revision", resource.revision},
+            };
+            return;
+        }
+
+        const json discovery = EngineOnboarding::discover(manager_data_root_);
+        std::vector<json> candidates;
+        for (const auto& candidate : discovery.at("candidates")) {
+            if (candidate.value("source", "") == "install_receipt" &&
+                candidate.value("component_id", "") == "uci_arena.engine") {
+                candidates.push_back(candidate);
+            }
+        }
+        if (candidates.size() != 1) {
+            throw std::runtime_error(
+                "the current verified UCI Arena Engine receipt candidate is unavailable or ambiguous");
+        }
+        const json& candidate = candidates.front();
+        if (candidate.value("state", "") != "ready_to_probe" ||
+            !candidate.contains("launch_profile") ||
+            !candidate.at("launch_profile").is_object()) {
+            throw std::runtime_error(
+                "the current UCI Arena Engine launch profile is not ready to probe");
+        }
+        const json candidate_options = engine_option_values_json(
+            uci_option_overrides(candidate.at("uci_options")));
+        const bool current_generation =
+            current.value("candidate_id", "") ==
+                candidate.value("candidate_id", "") &&
+            current.value("component_version", "") ==
+                candidate.value("component_version", "") &&
+            current.value("installed_artifact_sha256", "") ==
+                candidate.value("installed_artifact_sha256", "") &&
+            current.value("executable", "") ==
+                candidate.value("executable", "") &&
+            current.value("working_directory", "") ==
+                candidate.value("working_directory", "") &&
+            current.value("arguments", json::array()) ==
+                candidate.at("arguments") &&
+            current.value("option_overrides", json::object()) ==
+                candidate_options &&
+            current.at("launch_profile") == candidate.at("launch_profile");
+        if (current_generation) {
+            installed_engine_reconciliation_ = {
+                {"schema", "arena_installed_engine_reconciliation_v1"},
+                {"state", "complete"},
+                {"observed_at", domain::utc_now()},
+                {"outcome", "current"},
+                {"resource_id", resource.id},
+                {"revision", resource.revision},
+            };
+            return;
+        }
+
+        const json response = submit(
+            {
+                {"schema_version", 1},
+                {"request_id", domain::uuid_v7()},
+                {"idempotency_key",
+                 "installer-engine-reconcile:" + domain::uuid_v7()},
+                {"target", {{"kind", "engine"}, {"id", resource.id}}},
+                {"action", "engine.refresh"},
+                {"expected_revision", resource.revision},
+                {"dry_run", false},
+                {"parameters",
+                 {
+                     {"display_name",
+                      current.value("display_name", "UCI Arena Engine")},
+                     {"executable", candidate.at("executable")},
+                     {"working_directory", candidate.at("working_directory")},
+                     {"arguments", candidate.at("arguments")},
+                     {"uci_options", candidate.at("uci_options")},
+                     {"candidate_id", candidate.at("candidate_id")},
+                 }},
+            },
+            "installer-engine-reconcile");
+        installed_engine_reconciliation_ = {
+            {"schema", "arena_installed_engine_reconciliation_v1"},
+            {"state", "complete"},
+            {"observed_at", domain::utc_now()},
+            {"outcome", "refreshed"},
+            {"resource_id", resource.id},
+            {"revision", response.at("resource").at("revision")},
+        };
+    } catch (const CommandFailure& error) {
+        installed_engine_reconciliation_ = {
+            {"schema", "arena_installed_engine_reconciliation_v1"},
+            {"state", "complete_with_errors"},
+            {"observed_at", domain::utc_now()},
+            {"outcome",
+             error.code() == "engine_refresh_in_use" ?
+                 "active_use_preserved" : "refresh_failed"},
+            {"errors",
+             json::array({{{"code", error.code()},
+                           {"detail", error.what()}}})},
+        };
+    } catch (const std::exception& error) {
+        installed_engine_reconciliation_ = {
+            {"schema", "arena_installed_engine_reconciliation_v1"},
+            {"state", "complete_with_errors"},
+            {"observed_at", domain::utc_now()},
+            {"outcome", "refresh_failed"},
+            {"errors",
+             json::array(
+                 {{{"code", "installed_engine_reconciliation_failed"},
+                   {"detail", error.what()}}})},
+        };
+    }
 }
 
 json ControlPlane::status() const {
@@ -801,6 +959,8 @@ json ControlPlane::status() const {
         {"counts", store_->resource_counts()},
         {"installed_service_reconciliation",
          installed_service_reconciliation_},
+        {"installed_engine_reconciliation",
+         installed_engine_reconciliation_},
     };
 }
 
@@ -1141,6 +1301,11 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
                 data[field] = selected_candidate.at(field);
             }
         }
+        if (selected_candidate.contains("installed_artifact_sha256") &&
+            selected_candidate.at("installed_artifact_sha256").is_string()) {
+            data["installed_artifact_sha256"] =
+                selected_candidate.at("installed_artifact_sha256");
+        }
         if (selected_candidate.contains("recommended") &&
             selected_candidate.at("recommended").is_boolean()) {
             data["recommended"] = selected_candidate.at("recommended");
@@ -1158,6 +1323,9 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
             selected_candidate.contains("launch_profile") &&
             selected_candidate.at("launch_profile").is_object()) {
             data["launch_profile"] = selected_candidate.at("launch_profile");
+            data["model_selection_authority"] = "packaged_launch_profile";
+        } else if (model_root_overridden) {
+            data["model_selection_authority"] = "operator";
         }
     }
 
