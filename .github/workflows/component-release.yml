@@ -137,10 +137,8 @@ jobs:
         timeout-minutes: 10
         shell: pwsh
         run: |
-          node tools/spec-check.mjs
-          npm run naming:check
-          npm test --prefix web
-          npm run build --prefix web
+          npm run check
+          if ($LASTEXITCODE -ne 0) { throw 'Manager repository checks failed' }
       - name: Install exact native dependency closure
         timeout-minutes: 90
         shell: pwsh
@@ -160,6 +158,28 @@ jobs:
             "--x-manifest-root=$PWD" `
             "--x-install-root=$installRoot"
           if ($LASTEXITCODE -ne 0) { throw 'Manager native dependency installation failed' }
+      - name: Map exact ephemeral MSVC runtime directory
+        if: inputs.runner == 'ephemeral-self-hosted-windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path -LiteralPath $env:VCToolsRedistDir -PathType Container)) {
+            throw 'ephemeral release runner did not expose VCToolsRedistDir'
+          }
+          $x64RedistRoot = Join-Path $env:VCToolsRedistDir 'x64'
+          $runtimeCandidates = @(
+            Get-ChildItem -LiteralPath $x64RedistRoot -Directory -Filter 'Microsoft.VC*.CRT'
+          )
+          if ($runtimeCandidates.Count -ne 1) {
+            throw "expected exactly one x64 MSVC CRT directory; found $($runtimeCandidates.Count)"
+          }
+          $runtimeDirectory = $runtimeCandidates[0].FullName
+          foreach ($runtimeFile in @('msvcp140.dll', 'vcruntime140.dll')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $runtimeDirectory $runtimeFile) -PathType Leaf)) {
+              throw "ephemeral MSVC runtime is missing $runtimeFile"
+            }
+          }
+          Add-Content -LiteralPath $env:GITHUB_ENV `
+            -Value "ARENA_MANAGER_MSVC_RUNTIME_DIRECTORY=$runtimeDirectory"
       - name: Configure exact Manager source
         timeout-minutes: 5
         shell: pwsh

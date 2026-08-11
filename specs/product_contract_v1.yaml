@@ -147,6 +147,10 @@ engine_contract:
       - No legacy model-branded executable alias is accepted automatically.
       - UI examples use registered engine resources rather than hardcoded model
         families.
+      - Automated test fixtures may use named model metadata to prove that
+        provider-supplied labels are rendered as data. The exemption applies
+        only to test files and never permits a model name to select a production
+        path or implementation.
   preferred_product_engine:
     component_id: uci_arena.engine
     display_name: UCI Arena Engine
