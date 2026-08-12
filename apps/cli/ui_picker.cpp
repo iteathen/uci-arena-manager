@@ -56,6 +56,7 @@ struct SetupRequest {
     std::filesystem::path path;
     std::vector<std::filesystem::path> roots;
     bool managed_copy{};
+    std::string authority_mode;
 };
 
 constexpr std::size_t max_setup_result_bytes = 1024 * 1024;
@@ -221,18 +222,21 @@ SetupRequest parse_setup_request(const drogon::HttpRequestPtr& request) {
         "lichess_transport_profile",
         "lichess_token_path",
     };
-    if (input.size() < 4 || input.size() > 5 ||
+    if (input.size() < 4 || input.size() > 6 ||
         !input.contains("asset_kind") ||
         !input.at("asset_kind").is_string() ||
         !input.contains("path") ||
         !input.at("path").is_string() ||
         (input.contains("managed_copy") &&
-         !input.at("managed_copy").is_boolean())) {
+         !input.at("managed_copy").is_boolean()) ||
+        (input.contains("authority_mode") &&
+         !input.at("authority_mode").is_string())) {
         throw std::invalid_argument(
             "import setup requires one asset kind and one path");
     }
     static const std::set<std::string, std::less<>> allowed_fields{
-        "schema", "operation", "asset_kind", "path", "managed_copy"};
+        "schema", "operation", "asset_kind", "path", "managed_copy",
+        "authority_mode"};
     for (const auto& [field, value] : input.items()) {
         static_cast<void>(value);
         if (!allowed_fields.contains(field)) {
@@ -243,12 +247,19 @@ SetupRequest parse_setup_request(const drogon::HttpRequestPtr& request) {
     result.asset_kind = input.at("asset_kind").get<std::string>();
     const std::string path = input.at("path").get<std::string>();
     result.managed_copy = input.value("managed_copy", false);
+    result.authority_mode = input.value("authority_mode", "");
     if (!allowed.contains(result.asset_kind) ||
         path.empty() ||
         path.size() > 32767 ||
         (result.managed_copy &&
          result.asset_kind != "opening_book" &&
-         result.asset_kind != "lichess_single_game_profile")) {
+         result.asset_kind != "lichess_single_game_profile") ||
+        (!result.authority_mode.empty() &&
+         (result.asset_kind != "opening_book" ||
+          (result.authority_mode != "service_managed_live_channel" &&
+           result.authority_mode != "immutable_pinned_snapshot"))) ||
+        (result.managed_copy &&
+         result.authority_mode == "service_managed_live_channel")) {
         throw std::invalid_argument(
             "import kind, path, or managed-copy mode is invalid");
     }
@@ -435,6 +446,12 @@ json run_setup(
              request.managed_copy
                  ? "bounded_managed_copy"
                  : "in_place_reference"},
+            {"authority_mode",
+             request.asset_kind == "opening_book"
+                 ? json(request.authority_mode.empty()
+                            ? "immutable_pinned_snapshot"
+                            : request.authority_mode)
+                 : json(nullptr)},
             {"disk_impact_bytes",
              request.managed_copy ? json(nullptr) : json(0)},
             {"elevation_required", false},
@@ -505,6 +522,10 @@ json run_setup(
             });
         if (request.managed_copy) {
             arguments.push_back("--managed-copy");
+        }
+        if (!request.authority_mode.empty()) {
+            arguments.push_back("--authority-mode");
+            arguments.push_back(request.authority_mode);
         }
     }
 

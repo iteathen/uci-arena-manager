@@ -9,25 +9,21 @@ import {
   type LocalSetupRequest,
   type LocalSetupResult,
 } from '../api/client'
+import { localSetupImportReviewText } from './localSetupImportModel'
 
 type ImportRequest = Extract<LocalSetupRequest, { operation: 'import' }>
-
-export function localSetupImportReviewText(assetKind: ImportRequest['asset_kind']) {
-  if (assetKind === 'lichess_token_path') {
-    return 'The adjacent Installer validates this external credential reference using filesystem metadata only and updates every affected consumer as one transaction. Token contents are never opened or copied.'
-  }
-  return "The adjacent Installer validates this asset reference and updates every affected consumer as one transaction. The reviewed import policy preserves the asset's declared ownership."
-}
 
 export function LocalSetupImportButton({
   assetKind,
   path,
   label,
+  authorityMode,
   onCompleted,
 }: {
   assetKind: ImportRequest['asset_kind']
   path: string
   label: string
+  authorityMode?: ImportRequest['authority_mode']
   onCompleted?: (result: LocalSetupResult) => void | Promise<void>
 }) {
   const [plan, setPlan] = useState<LocalSetupResult | null>(null)
@@ -35,6 +31,7 @@ export function LocalSetupImportButton({
     operation: 'import',
     asset_kind: assetKind,
     path,
+    ...(authorityMode ? { authority_mode: authorityMode } : {}),
   }
   const prepare = useMutation({
     mutationFn: () => planLocalSetup(request),
@@ -80,6 +77,11 @@ export function LocalSetupImportButton({
         <Stack>
           <Alert color="blue">
             {localSetupImportReviewText(assetKind)}
+            {authorityMode && (
+              <Text size="sm" mt="xs">
+                Authority mode: {authorityMode.replaceAll('_', ' ')}.
+              </Text>
+            )}
           </Alert>
           {actions.map((action, index) => (
             <Paper withBorder p="sm" key={`${String(action.action)}-${index}`}>

@@ -114,6 +114,7 @@ export type LocalSetupRequest =
         | 'lichess_token_path'
       path: string
       managed_copy?: boolean
+      authority_mode?: 'service_managed_live_channel' | 'immutable_pinned_snapshot'
     }
   | {
       operation: 'component'

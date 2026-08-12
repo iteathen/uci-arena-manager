@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { localSetupImportReviewText } from './LocalSetupImportButton'
+import { localSetupImportReviewText } from './localSetupImportModel'
 
 describe('local setup import review copy', () => {
   it('reserves credential language for the token-file reference', () => {

@@ -194,6 +194,11 @@ managed_service_experience:
       previews and commits the Installer-owned import transaction, then repeats
       the managed Engine probe and reports whether the existing registration
       was refreshed or remains safely stale.
+    - A current Book Forge output presents separate Follow live channel and Pin
+      this snapshot actions. Follow uses only the provider-validated
+      live_channel_root and service_managed_live_channel authority; Pin uses
+      the immutable snapshot root and immutable_pinned_snapshot authority.
+      The UI never infers either mode from path shape.
     - Every projected Book Forge snapshot and qualified timing profile shows
       Provider current and Engine active as separate identity states. Engine
       active is derived only from the receipt-managed Engine registration that
