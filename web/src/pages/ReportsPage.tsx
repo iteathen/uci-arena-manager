@@ -24,13 +24,29 @@ import {
 } from '@mantine/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import { api, makeCommand } from '../api/client'
-import type { ManagedServiceData, MatchPlanData, ReportData, Resource } from '../api/types'
+import { api, discoverLocalAssets, localSetupAvailable, makeCommand } from '../api/client'
+import type { EngineData, ManagedServiceData, MatchPlanData, ReportData, Resource } from '../api/types'
+import { LocalSetupImportButton } from '../components/LocalSetupImportButton'
 import { PageHeader } from '../components/PageHeader'
 import { StatusPill } from '../components/StatusPill'
+import {
+  activeEngineBookPath,
+  bookBindingState,
+  candidateRegistration,
+  engineRegistrationParameters,
+} from './engineRegistration'
 
 function shortHash(value: string | undefined) {
   return value ? value.slice(0, 12) : 'unavailable'
+}
+
+function sameLocalPath(left: string | undefined, right: string | undefined) {
+  if (!left || !right) return false
+  if (left === right) return true
+  const windows = /^(?:[a-z]:[\\/]|\\\\)/iu
+  return windows.test(left) && windows.test(right)
+    ? left.replaceAll('/', '\\').toLowerCase() === right.replaceAll('/', '\\').toLowerCase()
+    : false
 }
 
 export function ReportsPage() {
@@ -38,9 +54,23 @@ export function ReportsPage() {
   const [reportName, setReportName] = useState('UCI Arena Manager report')
   const [reportScope, setReportScope] = useState<'current_state' | 'competition'>('current_state')
   const [competitionId, setCompetitionId] = useState<string | null>(null)
+  const [bookSetupNotice, setBookSetupNotice] = useState<{
+    color: 'green' | 'orange'
+    text: string
+  } | null>(null)
   const services = useQuery({
     queryKey: ['resources', 'managed_service'],
     queryFn: () => api.resources<ManagedServiceData>('managed_service'),
+  })
+  const engines = useQuery({
+    queryKey: ['resources', 'engine'],
+    queryFn: () => api.resources<EngineData>('engine'),
+  })
+  const nativeSetup = localSetupAvailable()
+  const locatorInventory = useQuery({
+    queryKey: ['local-setup', 'opening-book-selection'],
+    queryFn: () => discoverLocalAssets([]),
+    enabled: nativeSetup,
   })
   const reports = useQuery({
     queryKey: ['resources', 'report'],
@@ -113,6 +143,62 @@ export function ReportsPage() {
   const datasets = evidence?.data.output_integration?.datasets ?? []
   const profiles = evidence?.data.output_integration?.timing_profiles ?? []
   const selectedProfile = evidence?.data.output_integration?.selected_timing_profile
+  const bookSelection = locatorInventory.data?.discovery?.opening_book?.selection
+  const configuredMode = !bookSelection
+    ? nativeSetup ? 'not_selected' : 'desktop_helper_unavailable'
+    : typeof bookSelection.details?.authority_mode === 'string'
+      ? bookSelection.details.authority_mode
+      : bookSelection.source === 'saved_locator'
+        ? 'immutable_pinned_snapshot'
+        : 'installed_component'
+  const activeEngine = engines.data?.find(
+    (engine) => engine.data.component_id === 'uci_arena.engine',
+  ) ?? engines.data?.[0]
+  const refreshManagedEngine = async () => {
+    try {
+      await queryClient.invalidateQueries({ queryKey: ['local-setup', 'opening-book-selection'] })
+      const [registered, available] = await Promise.all([
+        api.resources<EngineData>('engine'),
+        api.engineCandidates(),
+      ])
+      const candidate = available.candidates.find(
+        (entry) => entry.source === 'install_receipt' && entry.component_id === 'uci_arena.engine',
+      )
+      let refreshed = false
+      if (candidate) {
+        const registration = candidateRegistration(candidate, registered)
+        if (registration.state === 'refresh_required' && registration.engine) {
+          await api.command(
+            makeCommand(
+              'engine.refresh',
+              'engine',
+              engineRegistrationParameters(candidate),
+              false,
+              registration.engine.id,
+              registration.engine.revision,
+            ),
+          )
+          refreshed = true
+        }
+      }
+      setBookSetupNotice({
+        color: 'green',
+        text: refreshed
+          ? 'Opening-book selection committed and the managed Engine registration was re-probed.'
+          : 'Opening-book selection committed. No stale managed Engine registration required refresh.',
+      })
+    } catch (error) {
+      setBookSetupNotice({
+        color: 'orange',
+        text: `Opening-book selection committed, but Engine registration refresh remains required: ${error instanceof Error ? error.message : 'unknown failure'}`,
+      })
+    } finally {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['resources', 'engine'] }),
+        queryClient.invalidateQueries({ queryKey: ['engine-candidates'] }),
+      ])
+    }
+  }
 
   return (
     <>
@@ -133,6 +219,9 @@ export function ReportsPage() {
       />
       {services.error && <Alert color="red" mb="lg">{services.error.message}</Alert>}
       {refresh.error && <Alert color="red" mb="lg">{refresh.error.message}</Alert>}
+      {bookSetupNotice && (
+        <Alert color={bookSetupNotice.color} mb="lg">{bookSetupNotice.text}</Alert>
+      )}
       <SimpleGrid cols={{ base: 1, xl: 2 }}>
         <Paper withBorder className="panel">
           <Group justify="space-between" align="flex-start">
@@ -161,12 +250,32 @@ export function ReportsPage() {
             </Alert>
           ) : (
             <Stack mt="lg">
+              <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                <Paper withBorder p="sm">
+                  <Text size="xs" c="dimmed">Configured authority</Text>
+                  <Text fw={650}>{configuredMode.replaceAll('_', ' ')}</Text>
+                  <Code block mt="xs">{bookSelection?.path ?? 'No explicit selection'}</Code>
+                </Paper>
+                <Paper withBorder p="sm">
+                  <Text size="xs" c="dimmed">Engine active book route</Text>
+                  <Code block mt="xs">{activeEngineBookPath(activeEngine) || 'Engine not registered'}</Code>
+                </Paper>
+              </SimpleGrid>
               {snapshots.map((snapshot) => (
                 <Paper withBorder p="md" key={snapshot.snapshot_id}>
                   <Group justify="space-between">
                     <Text fw={700}>{snapshot.channel} snapshot</Text>
                     <Group gap="xs">
                       {snapshot.current && <Badge color="blue">current</Badge>}
+                      {(sameLocalPath(bookSelection?.path, snapshot.path) ||
+                        sameLocalPath(bookSelection?.path, snapshot.live_channel_root ?? undefined)) && (
+                        <Badge color="violet">configured</Badge>
+                      )}
+                      {(bookBindingState(activeEngine, snapshot.path) === 'active' ||
+                        (snapshot.live_channel_root &&
+                          bookBindingState(activeEngine, snapshot.live_channel_root) === 'active')) && (
+                        <Badge color="teal">Engine active</Badge>
+                      )}
                       <Badge color={snapshot.qualified ? 'teal' : 'orange'}>
                         {snapshot.qualified ? 'strength qualified' : 'integration only'}
                       </Badge>
@@ -187,6 +296,24 @@ export function ReportsPage() {
                     </div>
                   </SimpleGrid>
                   <Text size="xs" c="dimmed" mt="sm">{snapshot.published_at}</Text>
+                  <Group mt="md">
+                    {snapshot.current && snapshot.live_channel_root && (
+                      <LocalSetupImportButton
+                        assetKind="opening_book"
+                        path={snapshot.live_channel_root}
+                        authorityMode="service_managed_live_channel"
+                        label="Follow live channel"
+                        onCompleted={refreshManagedEngine}
+                      />
+                    )}
+                    <LocalSetupImportButton
+                      assetKind="opening_book"
+                      path={snapshot.path}
+                      authorityMode="immutable_pinned_snapshot"
+                      label="Pin this snapshot"
+                      onCompleted={refreshManagedEngine}
+                    />
+                  </Group>
                 </Paper>
               ))}
             </Stack>

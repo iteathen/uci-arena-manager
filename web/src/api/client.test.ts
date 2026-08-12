@@ -463,6 +463,30 @@ describe('native desktop typed setup', () => {
     }
   })
 
+  it('preserves explicit opening-book authority in native setup requests', async () => {
+    sessionStorage.setItem('arena.picker.port', '47832')
+    sessionStorage.setItem('arena.picker.token', 'f'.repeat(64))
+    sessionStorage.setItem('arena.setup.capability', 'enabled')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ schema: 'arena_ui_setup_plan_v1' }), { status: 200 }),
+    )
+    const { planLocalSetup } = await import('./client')
+    await planLocalSetup({
+      operation: 'import',
+      asset_kind: 'opening_book',
+      path: 'C:\\Book Forge\\published\\integration',
+      authority_mode: 'service_managed_live_channel',
+    })
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      schema: 'arena_ui_setup_request_v1',
+      operation: 'import',
+      asset_kind: 'opening_book',
+      path: 'C:\\Book Forge\\published\\integration',
+      authority_mode: 'service_managed_live_channel',
+    })
+    fetchMock.mockRestore()
+  })
+
   it('starts installed qualification without accepting paths or commands from the browser', async () => {
     sessionStorage.setItem('arena.picker.port', '47832')
     sessionStorage.setItem('arena.picker.token', 'f'.repeat(64))

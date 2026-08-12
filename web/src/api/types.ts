@@ -360,6 +360,7 @@ export interface BookSnapshotProjection {
   snapshot_id: string
   channel: string
   path: string
+  live_channel_root: string | null
   manifest_sha256: string
   artifact_files: Array<{ name: string; sha256: string }>
   record_count: number

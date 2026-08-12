@@ -3146,6 +3146,29 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                                         artifact.at("manifest_path")
                                             .get<std::string>())
                                         .lexically_normal();
+                                std::optional<std::filesystem::path>
+                                    live_channel_root;
+                                if (artifact.contains("live_channel_root") &&
+                                    !artifact.at("live_channel_root").is_null()) {
+                                    if (!artifact.at("live_channel_root").is_string() ||
+                                        artifact.at("live_channel_root")
+                                                .get_ref<const std::string&>()
+                                                .empty() ||
+                                        artifact.at("live_channel_root")
+                                                .get_ref<const std::string&>()
+                                                .size() > 32767) {
+                                        throw std::runtime_error(
+                                            "Book Forge live channel path is malformed");
+                                    }
+                                    live_channel_root = std::filesystem::path(
+                                        artifact.at("live_channel_root")
+                                            .get<std::string>())
+                                                            .lexically_normal();
+                                    if (!live_channel_root->is_absolute()) {
+                                        throw std::runtime_error(
+                                            "Book Forge live channel path is not absolute");
+                                    }
+                                }
                                 const std::filesystem::path relative_manifest =
                                     manifest_path.lexically_relative(
                                         artifact_root);
@@ -3163,6 +3186,10 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                                          snapshot_id},
                                         {"channel", channel},
                                         {"path", artifact_root.string()},
+                                        {"live_channel_root",
+                                         live_channel_root.has_value()
+                                             ? json(live_channel_root->string())
+                                             : json(nullptr)},
                                         {"manifest_sha256",
                                          artifact.at(
                                              "manifest_sha256")},
@@ -3529,6 +3556,7 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                                 {{"snapshot_id", snapshot_id},
                                  {"channel", channel_name},
                                  {"path", directory},
+                                 {"live_channel_root", nullptr},
                                  {"manifest_sha256",
                                   validation.at("manifestSha256")},
                                  {"record_count",

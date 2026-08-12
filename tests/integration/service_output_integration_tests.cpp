@@ -498,6 +498,14 @@ TEST_CASE("Book Forge and Evidence outputs cross only validated public contracts
                     .at("path")
                     .get<std::string>())
                 .is_absolute());
+        REQUIRE(
+            fs::path(
+                book_data.at("output_integration")
+                    .at("snapshots")
+                    .at(0)
+                    .at("live_channel_root")
+                    .get<std::string>())
+                .is_absolute());
 
         const json evidence = register_installed_evidence_and_status(
             control_plane, store, root);
