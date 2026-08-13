@@ -546,6 +546,7 @@ export interface BotOptions {
     challenge_interval_seconds: number
     reservation_retry_seconds: number
     challenge_timeout_seconds: number
+    first_move_timeout_seconds: number
   }
   opponent_selection: {
     max_games_per_opponent_per_day: number

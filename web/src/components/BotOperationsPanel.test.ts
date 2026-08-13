@@ -40,6 +40,7 @@ function fixture(): BotOptions {
       challenge_interval_seconds: 5,
       reservation_retry_seconds: 30,
       challenge_timeout_seconds: 25,
+      first_move_timeout_seconds: 60,
     },
     opponent_selection: {
       max_games_per_opponent_per_day: 1,

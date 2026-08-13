@@ -932,12 +932,13 @@ void validate_projected_bot_options(const json& options) {
         scheduler,
         {"enabled", "discovery_interval_seconds",
          "challenge_interval_seconds", "reservation_retry_seconds",
-         "challenge_timeout_seconds"});
+         "challenge_timeout_seconds", "first_move_timeout_seconds"});
     static_cast<void>(required_boolean(scheduler, "enabled"));
     required_integer(scheduler, "discovery_interval_seconds", 15, 3600);
     required_integer(scheduler, "challenge_interval_seconds", 1, 300);
     required_integer(scheduler, "reservation_retry_seconds", 5, 600);
     required_integer(scheduler, "challenge_timeout_seconds", 10, 300);
+    required_integer(scheduler, "first_move_timeout_seconds", 30, 600);
     const json& opponents = required_object(options, "opponent_selection");
     require_exact_fields(
         opponents,
