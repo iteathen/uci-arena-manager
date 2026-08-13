@@ -89,9 +89,14 @@ engine_identity_experience:
       keep the packaged default label separate, and provide a reset-to-default
       action. Test, register, and refresh use the selected path through the
       normal full probe rather than mutating React-only state.
-    - Explain that a custom model selection does not retain packaged qualified
-      timing evidence. A failed selection leaves the prior registered model
-      authoritative and reports the backend diagnostic beside that candidate.
+    - Explain that a custom model selection retains configured operational
+      timing evidence because every non-ModelRoot Engine option remains exact,
+      while the packaged model fingerprint and model-specific useful-search
+      calibration are no longer qualified. Name search-core, semantic timing-
+      contract, and material architecture or input/output changes as the cases
+      that warrant refreshed evidence. A failed selection leaves the prior
+      registered model authoritative and reports the backend diagnostic beside
+      that candidate.
     - Put the receipt-verified uci_arena.engine candidate first and offer one
       explicit Use this engine action; that action performs the complete
       bounded UCI interrogation before creating the registration and does not

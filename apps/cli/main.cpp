@@ -359,7 +359,7 @@ int main(int argc, char** argv) {
 
         auto* engine_set_model = engine->add_subcommand(
             "set-model",
-            "Select ModelRoot for a registered UCI Arena Engine");
+            "Select ModelRoot while preserving non-model timing settings");
         std::string engine_set_model_id;
         std::filesystem::path selected_model_root;
         engine_set_model->add_option("id", engine_set_model_id)->required();
@@ -367,7 +367,7 @@ int main(int argc, char** argv) {
             ->add_option(
                 "--model-root",
                 selected_model_root,
-                "Model package directory selected through the advertised ModelRoot option")
+                "Model package directory selected through ModelRoot; packaged model-specific calibration becomes unqualified")
             ->required();
 
         auto* match = app.add_subcommand("match", "Plan local engine matches");
