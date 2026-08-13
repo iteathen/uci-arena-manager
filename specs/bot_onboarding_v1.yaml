@@ -188,6 +188,9 @@ options:
     - opponent_selection
   rules:
     - UI controls are schema-backed and never expose arbitrary configuration text.
+    - The scheduler projection includes the provider-owned challenge timeout and
+      first-move timeout. Manager validates the latter at 30 through 600
+      seconds and exposes it as the zero-ply Black-game watchdog deadline.
     - Capacity cannot exceed the exact qualified capacity profile.
     - Rated or outbound play requires explicit operator confirmation.
     - Read and update operations run through the receipt-verified provider

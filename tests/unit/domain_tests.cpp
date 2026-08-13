@@ -98,7 +98,8 @@ json manager_bot_options_fixture() {
           {"discovery_interval_seconds", 60},
           {"challenge_interval_seconds", 5},
           {"reservation_retry_seconds", 30},
-          {"challenge_timeout_seconds", 25}}},
+          {"challenge_timeout_seconds", 25},
+          {"first_move_timeout_seconds", 60}}},
         {"opponent_selection",
          {{"max_games_per_opponent_per_day", 1},
           {"timeout_cooldown_minutes", 30},
@@ -1565,6 +1566,7 @@ TEST_CASE("Lichess BOT options use only verified provider entrypoints and bounde
 
     REQUIRE(result.at("schema") == "uci_arena_lichess_manager_options_v1");
     REQUIRE(result.at("capacity").at("evidence").at("qualified") == true);
+    REQUIRE(result.at("scheduler").at("first_move_timeout_seconds") == 60);
     REQUIRE(calls.size() == 1);
     REQUIRE(calls.at(0).at(1) == "config");
     REQUIRE(calls.at(0).at(2) == "get");
@@ -1578,6 +1580,18 @@ TEST_CASE("Lichess BOT options use only verified provider entrypoints and bounde
                const std::chrono::milliseconds) {
                 json invalid = manager_bot_options_fixture();
                 invalid["token"] = "MUST_NOT_ESCAPE";
+                return invalid;
+            }),
+        std::runtime_error);
+    REQUIRE_THROWS_AS(
+        arena::application::ServiceCatalog::bot_options(
+            root / "data",
+            [](const fs::path&,
+               const fs::path&,
+               const std::vector<std::string>&,
+               const std::chrono::milliseconds) {
+                json invalid = manager_bot_options_fixture();
+                invalid["scheduler"]["first_move_timeout_seconds"] = 29;
                 return invalid;
             }),
         std::runtime_error);

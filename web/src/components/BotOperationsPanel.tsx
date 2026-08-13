@@ -423,6 +423,8 @@ export function BotOperationsPanel({
                   onChange={(value) => setForm({ ...form, scheduler: { ...form.scheduler, reservation_retry_seconds: numberValue(value, form.scheduler.reservation_retry_seconds) } })} />
                 <NumberInput label="Challenge timeout (seconds)" min={10} max={300} value={form.scheduler.challenge_timeout_seconds}
                   onChange={(value) => setForm({ ...form, scheduler: { ...form.scheduler, challenge_timeout_seconds: numberValue(value, form.scheduler.challenge_timeout_seconds) } })} />
+                <NumberInput label="First-move timeout (seconds)" description="Abort a zero-ply game when this bot is Black and White never moves." min={30} max={600} value={form.scheduler.first_move_timeout_seconds}
+                  onChange={(value) => setForm({ ...form, scheduler: { ...form.scheduler, first_move_timeout_seconds: numberValue(value, form.scheduler.first_move_timeout_seconds) } })} />
                 <NumberInput label="Games per opponent / day" min={1} max={100} value={form.opponent_selection.max_games_per_opponent_per_day}
                   onChange={(value) => setForm({ ...form, opponent_selection: { ...form.opponent_selection, max_games_per_opponent_per_day: numberValue(value, form.opponent_selection.max_games_per_opponent_per_day) } })} />
                 <NumberInput label="Timeout cooldown (minutes)" min={1} max={1440} value={form.opponent_selection.timeout_cooldown_minutes}
