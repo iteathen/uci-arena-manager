@@ -1,4 +1,29 @@
-import type { ManagedServiceData, Resource } from '../api/types'
+import type { BookSnapshotProjection, ManagedServiceData, Resource } from '../api/types'
+
+export interface BookSnapshotActivationAction {
+  authorityMode: 'service_managed_live_channel' | 'immutable_pinned_snapshot'
+  label: 'Follow live channel' | 'Pin this snapshot'
+  path: string
+}
+
+export function bookSnapshotActivationActions(
+  snapshot: BookSnapshotProjection,
+): BookSnapshotActivationAction[] {
+  const actions: BookSnapshotActivationAction[] = []
+  if (snapshot.current && snapshot.live_channel_root) {
+    actions.push({
+      authorityMode: 'service_managed_live_channel',
+      label: 'Follow live channel',
+      path: snapshot.live_channel_root,
+    })
+  }
+  actions.push({
+    authorityMode: 'immutable_pinned_snapshot',
+    label: 'Pin this snapshot',
+    path: snapshot.path,
+  })
+  return actions
+}
 
 export function selectPreferredService(
   services: Array<Resource<ManagedServiceData>>,
