@@ -359,7 +359,7 @@ int main(int argc, char** argv) {
 
         auto* engine_set_model = engine->add_subcommand(
             "set-model",
-            "Select ModelRoot while preserving non-model timing settings");
+            "Select ModelRoot while retaining reusable timing evidence");
         std::string engine_set_model_id;
         std::filesystem::path selected_model_root;
         engine_set_model->add_option("id", engine_set_model_id)->required();
@@ -367,7 +367,7 @@ int main(int argc, char** argv) {
             ->add_option(
                 "--model-root",
                 selected_model_root,
-                "Model package directory selected through ModelRoot; packaged model-specific calibration becomes unqualified")
+                "Model package directory selected through ModelRoot; only marginal move-quality calibration becomes non-exact")
             ->required();
 
         auto* match = app.add_subcommand("match", "Plan local engine matches");

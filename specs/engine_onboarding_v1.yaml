@@ -127,14 +127,22 @@ probe:
       post-selection runtime identity before the selection can be persisted.
     - A custom ModelRoot retains every other Engine-owned UCI option, including
       timing reserves and forecast settings already derived from selected
-      Evidence. It cannot retain the packaged model fingerprint, exact
-      qualified-timing claim, expected runtime identity, or model-specific
-      useful-search calibration. Search-core or semantic timing-contract
-      changes require new qualification, while a materially different model
-      architecture or input/output contract is called out as a reason to
-      refresh model-dependent evidence. The packaged default-model label
-      remains non-authoritative provenance and is displayed separately from
-      the selected path.
+      Evidence. If the managed launch profile names a timing profile, its
+      identity remains bound to the registration as a reusable operational
+      baseline. The custom model cannot retain the packaged model fingerprint,
+      exact expected runtime identity, or an exact model/search-specific
+      marginal move-quality calibration. SearchCore changes make that marginal
+      calibration non-exact without discarding the operational distribution;
+      a materially different model architecture, inference provider, or
+      input/output contract can also change the distribution and warrants
+      refreshed evidence. The packaged default-model label remains non-
+      authoritative provenance and is displayed separately from the selected
+      path.
+    - Manager persists a custom selection's reusable timing identity in an
+      arena_operational_timing_binding_v1 projection with
+      operational_distribution `retained` and marginal_move_quality
+      `unqualified`. It never rewrites the Engine-owned launch profile or calls
+      that custom runtime qualified_timing without an exact matching probe.
     - A qualified_timing profile requires the declared runtime_status command
       after options and readyok. Its typed identity must match every expected
       model, adapter, provider, provider numeric, hardware/driver, runtime,
@@ -252,9 +260,11 @@ acceptance:
     advertised ModelRoot option, show the packaged default separately, and
     persist the custom path only after a successful post-selection probe.
   - Selecting a custom ModelRoot keeps every other managed option exact,
-    including configured timing reserves and forecast settings, while removing
-    only the packaged model-bound qualified-timing authority until the packaged
-    root is explicitly selected and successfully probed again.
+    including configured timing reserves and forecast settings, and keeps the
+    selected timing-profile identity active as a reusable operational baseline.
+    Only the packaged runtime identity and marginal move-quality calibration
+    lose exact qualification until the packaged root is explicitly selected
+    and successfully probed again.
   - A differently identified conforming engine component can publish the
     managed launch-profile schema and have every rendered option probed,
     registered, reused by tournaments, and forwarded to Evidence target

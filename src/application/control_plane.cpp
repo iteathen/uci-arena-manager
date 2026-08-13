@@ -295,6 +295,41 @@ bool is_model_root_only_override(
     return requested_without_root == candidate_without_root;
 }
 
+std::optional<json> reusable_operational_timing_binding(
+    const json& candidate) {
+    if (!candidate.contains("launch_profile") ||
+        !candidate.at("launch_profile").is_object()) {
+        return std::nullopt;
+    }
+    const json& launch_profile = candidate.at("launch_profile");
+    if (!launch_profile.contains("timing_profile") ||
+        !launch_profile.at("timing_profile").is_object()) {
+        return std::nullopt;
+    }
+    const json& timing_profile = launch_profile.at("timing_profile");
+    if (!timing_profile.value("available", false) ||
+        !timing_profile.contains("identity_sha256") ||
+        !timing_profile.at("identity_sha256").is_string()) {
+        return std::nullopt;
+    }
+    const std::string identity =
+        timing_profile.at("identity_sha256").get<std::string>();
+    const std::string schema = timing_profile.value("schema", "");
+    if (identity.empty() || identity.size() > 128U || schema.size() > 128U) {
+        return std::nullopt;
+    }
+    return json{
+        {"schema", "arena_operational_timing_binding_v1"},
+        {"schema_version", 1},
+        {"timing_profile",
+         {{"available", true},
+          {"schema", schema},
+          {"identity_sha256", identity}}},
+        {"operational_distribution", "retained"},
+        {"marginal_move_quality", "unqualified"},
+    };
+}
+
 json labels_from(const json& parameters) {
     if (!parameters.contains("labels")) {
         return json::object();
@@ -1326,6 +1361,10 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
             data["model_selection_authority"] = "packaged_launch_profile";
         } else if (model_root_overridden) {
             data["model_selection_authority"] = "operator";
+            if (const auto timing_binding =
+                    reusable_operational_timing_binding(selected_candidate)) {
+                data["operational_timing_binding"] = *timing_binding;
+            }
         }
     }
 

@@ -93,6 +93,17 @@ export interface EngineData extends Record<string, unknown> {
     provider_numeric_fingerprint: string
   }
   launch_profile?: EngineCandidate['launch_profile']
+  operational_timing_binding?: {
+    schema: 'arena_operational_timing_binding_v1'
+    schema_version: 1
+    timing_profile: {
+      available: true
+      schema?: string
+      identity_sha256: string
+    }
+    operational_distribution: 'retained'
+    marginal_move_quality: 'unqualified'
+  }
 }
 
 export interface EngineCandidate {

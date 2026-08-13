@@ -171,5 +171,16 @@ describe('managed Engine registration state', () => {
     expect(timingBindingState(engine, 'a'.repeat(64))).toBe('active')
     expect(timingBindingState(engine, 'b'.repeat(64))).toBe('available')
     expect(timingBindingState(undefined, 'a'.repeat(64))).toBe('engine_unregistered')
+
+    delete engine.data.launch_profile
+    engine.data.operational_timing_binding = {
+      schema: 'arena_operational_timing_binding_v1',
+      schema_version: 1,
+      timing_profile: { available: true, identity_sha256: 'a'.repeat(64) },
+      operational_distribution: 'retained',
+      marginal_move_quality: 'unqualified',
+    }
+    expect(activeEngineTimingIdentity(engine)).toBe('a'.repeat(64))
+    expect(timingBindingState(engine, 'a'.repeat(64))).toBe('active')
   })
 })

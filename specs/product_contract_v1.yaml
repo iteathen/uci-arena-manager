@@ -133,15 +133,24 @@ engine_contract:
         Manager startup or create a second Engine authority.
       - An operator-selected ModelRoot keeps every other Engine-owned launch
         argument and UCI option exact, including timing reserves and forecast
-        settings derived from selected Evidence. Those operational settings
-        remain configured, but the selected model does not inherit the
-        packaged model fingerprint, exact qualified-timing claim, or
-        model-specific useful-search calibration. Search-core or semantic
-        timing-contract changes require new qualification; a materially
-        different model architecture or input/output contract should refresh
-        model-dependent evidence. Returning to the packaged ModelRoot restores
-        its exact claims only after the normal full managed-candidate probe
+        settings derived from selected Evidence. When that launch profile
+        names a timing profile, Manager retains its identity as a reusable
+        operational baseline instead of treating the timing distribution as
+        absent or inactive. The selected model does not inherit the packaged
+        model fingerprint or an exact claim for the model/search-specific
+        marginal move-quality response to additional search time. A search-
+        core change therefore makes that marginal calibration non-exact but
+        does not by itself discard the operational distribution. A materially
+        different model architecture, inference provider, or input/output
+        contract can also change the distribution and warrants refreshed
+        evidence. Returning to the packaged ModelRoot restores its exact
+        runtime claims only after the normal full managed-candidate probe
         succeeds.
+      - A reusable operational timing binding is Manager projection metadata,
+        not a fabricated exact runtime match. It records the selected profile
+        identity, operational_distribution `retained`, and
+        marginal_move_quality `unqualified`; qualified_timing remains reserved
+        for the Engine-published runtime identity that passes the exact probe.
   naming_boundary:
     product_engine_executable: uci_arena_engine
     requirements:

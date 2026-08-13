@@ -306,6 +306,16 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                     .at("ModelRoot")
                     .get<std::string>()) == alternate_model_root);
         REQUIRE_FALSE(selected_preview.contains("launch_profile"));
+        REQUIRE(selected_preview.at("operational_timing_binding")
+                    .at("schema") ==
+                "arena_operational_timing_binding_v1");
+        REQUIRE(selected_preview.at("operational_timing_binding")
+                    .at("timing_profile")
+                    .at("identity_sha256") == "sha256:fixture");
+        REQUIRE(selected_preview.at("operational_timing_binding")
+                    .at("operational_distribution") == "retained");
+        REQUIRE(selected_preview.at("operational_timing_binding")
+                    .at("marginal_move_quality") == "unqualified");
         REQUIRE(
             selected_preview.at("runtime_model_identity")
                 .at("model_fingerprint") == "8104116015256418347");
@@ -339,6 +349,10 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
         REQUIRE(selected_refresh_preview.at("id") == registered.at("id"));
         REQUIRE_FALSE(
             selected_refresh_preview.at("data").contains("launch_profile"));
+        REQUIRE(selected_refresh_preview.at("data")
+                    .at("operational_timing_binding")
+                    .at("timing_profile")
+                    .at("identity_sha256") == "sha256:fixture");
         REQUIRE(selected_refresh_preview.at("data")
                     .at("model_selection_authority") == "operator");
 
@@ -610,6 +624,12 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
         REQUIRE(operator_selected.at("data")
                     .at("model_selection_authority") == "operator");
         REQUIRE_FALSE(operator_selected.at("data").contains("launch_profile"));
+        REQUIRE(operator_selected.at("data")
+                    .at("operational_timing_binding")
+                    .at("operational_distribution") == "retained");
+        REQUIRE(operator_selected.at("data")
+                    .at("operational_timing_binding")
+                    .at("marginal_move_quality") == "unqualified");
 
         replacement_receipt["artifact_sha256"] = std::string(64, 'c');
         std::ofstream(data_root / "receipts" / "uci_arena.engine.json",
