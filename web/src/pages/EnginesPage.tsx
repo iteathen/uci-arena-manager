@@ -372,12 +372,12 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
                             mode="directory"
                           />
                           {customModelSelected && (
-                            <Alert color="blue" title="Timing settings preserved">
+                            <Alert color="blue" title="Timing evidence retained">
                               <Group justify="space-between" align="flex-start">
                                 <Text size="sm">
                                   {candidate.launch_profile?.timing_profile.available
-                                    ? 'Operational timing evidence remains configured. Only the packaged model fingerprint and model-specific useful-search calibration are unqualified for this selection. Requalify after changing SearchCore or a materially different model architecture or input/output contract.'
-                                    : 'Engine-owned conservative timing settings remain configured. Requalify after changing SearchCore or a materially different model architecture or input/output contract.'}
+                                    ? 'The selected timing profile remains active as a reusable operational baseline. Only the marginal estimate of how additional search time improves move quality is model- and search-sensitive. SearchCore changes affect that calibration; a materially different model architecture, inference provider, or input/output contract may warrant new timing evidence.'
+                                    : 'Engine-owned conservative timing settings remain configured as a reusable baseline. SearchCore changes affect the marginal value of additional search time; materially different model or inference behavior may warrant new timing evidence.'}
                                 </Text>
                                 <Button
                                   variant="subtle"

@@ -58,7 +58,8 @@ export function activeEngineBookPath(engine?: Resource<EngineData>) {
 }
 
 export function activeEngineTimingIdentity(engine?: Resource<EngineData>) {
-  const value = engine?.data.launch_profile?.timing_profile.identity_sha256
+  const value = engine?.data.launch_profile?.timing_profile.identity_sha256 ??
+    engine?.data.operational_timing_binding?.timing_profile.identity_sha256
   return typeof value === 'string' ? value : ''
 }
 

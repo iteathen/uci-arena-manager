@@ -115,9 +115,9 @@ describe('Engine inventory loading state', () => {
     expect(screen.getByText(/Packaged default: LatticeKnight/)).toBeTruthy()
 
     fireEvent.change(modelRoot, { target: { value: 'C:\\models\\custom' } })
-    expect(screen.getByText('Timing settings preserved')).toBeTruthy()
-    expect(screen.getByText(/Operational timing evidence remains configured/)).toBeTruthy()
-    expect(screen.getByText(/model-specific useful-search calibration are unqualified/)).toBeTruthy()
+    expect(screen.getByText('Timing evidence retained')).toBeTruthy()
+    expect(screen.getByText(/selected timing profile remains active/)).toBeTruthy()
+    expect(screen.getByText(/marginal estimate of how additional search time improves move quality/)).toBeTruthy()
     expect(screen.getByText('Reset to packaged default')).toBeTruthy()
   })
 })
