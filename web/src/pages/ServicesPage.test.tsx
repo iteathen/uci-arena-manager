@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ManagedServiceData, Resource } from '../api/types'
 import {
+  bookSnapshotActivationActions,
   canEnqueueEvidenceCampaign,
   evidenceCampaignBlocker,
   needsEvidenceTarget,
@@ -37,6 +38,55 @@ function service(
 }
 
 describe('managed-service catalog selection', () => {
+  it('keeps live-channel following separate from immutable snapshot pinning', () => {
+    expect(bookSnapshotActivationActions({
+      snapshot_id: 'integration-0123456789abcdefabcd',
+      channel: 'integration',
+      path: 'C:/book-forge/snapshots/integration-0123456789abcdefabcd',
+      live_channel_root: 'C:/book-forge/published/integration',
+      manifest_sha256: 'a'.repeat(64),
+      artifact_files: [],
+      record_count: 2048,
+      qualified: true,
+      includes_fixture: false,
+      current: true,
+      published_at: '2026-01-01T00:00:00.000Z',
+    })).toEqual([
+      {
+        authorityMode: 'service_managed_live_channel',
+        label: 'Follow live channel',
+        path: 'C:/book-forge/published/integration',
+      },
+      {
+        authorityMode: 'immutable_pinned_snapshot',
+        label: 'Pin this snapshot',
+        path: 'C:/book-forge/snapshots/integration-0123456789abcdefabcd',
+      },
+    ])
+  })
+
+  it('does not infer live-channel authority for a retained snapshot', () => {
+    expect(bookSnapshotActivationActions({
+      snapshot_id: 'integration-0123456789abcdefabcd',
+      channel: 'integration',
+      path: 'C:/book-forge/snapshots/integration-0123456789abcdefabcd',
+      live_channel_root: null,
+      manifest_sha256: 'a'.repeat(64),
+      artifact_files: [],
+      record_count: 2048,
+      qualified: true,
+      includes_fixture: false,
+      current: false,
+      published_at: '2026-01-01T00:00:00.000Z',
+    })).toEqual([
+      {
+        authorityMode: 'immutable_pinned_snapshot',
+        label: 'Pin this snapshot',
+        path: 'C:/book-forge/snapshots/integration-0123456789abcdefabcd',
+      },
+    ])
+  })
+
   it('prefers the exact receipt-owned service over a legacy manual duplicate', () => {
     const manual = service('manual', 'book_forge')
     const installed = service(

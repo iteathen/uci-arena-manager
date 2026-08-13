@@ -36,6 +36,7 @@ import { LocalSetupImportButton } from '../components/LocalSetupImportButton'
 import { PathPickerInput } from '../components/PathPickerInput'
 import { StatusPill } from '../components/StatusPill'
 import {
+  bookSnapshotActivationActions,
   canEnqueueEvidenceCampaign,
   evidenceCampaignBlocker,
   needsEvidenceTarget,
@@ -638,7 +639,14 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                         Engine active book: {activeBookPath || 'Engine not registered'}
                       </Text>
                       {service.data.output_integration.snapshots?.map((snapshot) => {
-                        const binding = bookBindingState(activeManagedEngine, snapshot.path)
+                        const activationActions = bookSnapshotActivationActions(snapshot)
+                        const binding = activationActions.some(
+                          (action) => bookBindingState(activeManagedEngine, action.path) === 'active',
+                        )
+                          ? 'active'
+                          : activeManagedEngine
+                            ? 'available'
+                            : 'missing'
                         return (
                           <Paper withBorder p="xs" key={snapshot.snapshot_id}>
                             <Group justify="space-between" align="center" wrap="nowrap">
@@ -662,16 +670,33 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                                 <Text size="xs" c="dimmed">
                                   {snapshot.record_count.toLocaleString()} records · {snapshot.qualified ? 'strength qualified' : 'validated'}
                                 </Text>
+                                {snapshot.current && snapshot.live_channel_root && (
+                                  <Text
+                                    size="xs"
+                                    c="dimmed"
+                                    ff="monospace"
+                                    truncate
+                                    title={snapshot.live_channel_root}
+                                  >
+                                    Provider updates: {snapshot.live_channel_root}
+                                  </Text>
+                                )}
                                 <Text size="xs" c="dimmed" ff="monospace" truncate title={snapshot.path}>
-                                  Provider updates: {snapshot.path}
+                                  Immutable snapshot: {snapshot.path}
                                 </Text>
                               </Stack>
-                              <LocalSetupImportButton
-                                assetKind="opening_book"
-                                path={snapshot.path}
-                                label={binding === 'active' ? 'Reapply to Engine' : 'Use in Engine'}
-                                onCompleted={() => activateImportedOutput(service.id, 'Opening-book snapshot')}
-                              />
+                              <Group gap="xs" justify="flex-end">
+                                {activationActions.map((action) => (
+                                  <LocalSetupImportButton
+                                    key={action.authorityMode}
+                                    assetKind="opening_book"
+                                    path={action.path}
+                                    authorityMode={action.authorityMode}
+                                    label={action.label}
+                                    onCompleted={() => activateImportedOutput(service.id, 'Opening-book selection')}
+                                  />
+                                ))}
+                              </Group>
                             </Group>
                           </Paper>
                         )
