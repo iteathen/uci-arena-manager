@@ -132,10 +132,16 @@ engine_contract:
         safely stale with a bounded reconciliation result. It cannot prevent
         Manager startup or create a second Engine authority.
       - An operator-selected ModelRoot keeps every other Engine-owned launch
-        argument and UCI option exact. It does not inherit the packaged
-        qualified-timing claim or expected runtime identity; returning to the
-        packaged ModelRoot restores those claims only after the normal full
-        managed-candidate probe succeeds.
+        argument and UCI option exact, including timing reserves and forecast
+        settings derived from selected Evidence. Those operational settings
+        remain configured, but the selected model does not inherit the
+        packaged model fingerprint, exact qualified-timing claim, or
+        model-specific useful-search calibration. Search-core or semantic
+        timing-contract changes require new qualification; a materially
+        different model architecture or input/output contract should refresh
+        model-dependent evidence. Returning to the packaged ModelRoot restores
+        its exact claims only after the normal full managed-candidate probe
+        succeeds.
   naming_boundary:
     product_engine_executable: uci_arena_engine
     requirements:

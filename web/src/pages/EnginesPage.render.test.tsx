@@ -90,8 +90,8 @@ describe('Engine inventory loading state', () => {
               },
               launch_profile: {
                 schema: 'arena_uci_engine_launch_profile_v1',
-                state: 'conservative',
-                timing_profile: { available: false },
+                state: 'qualified_timing',
+                timing_profile: { available: true, identity_sha256: 'a'.repeat(64) },
                 expected_runtime: null,
               },
               issues: [],
@@ -115,7 +115,9 @@ describe('Engine inventory loading state', () => {
     expect(screen.getByText(/Packaged default: LatticeKnight/)).toBeTruthy()
 
     fireEvent.change(modelRoot, { target: { value: 'C:\\models\\custom' } })
-    expect(screen.getByText('Custom model selected')).toBeTruthy()
+    expect(screen.getByText('Timing settings preserved')).toBeTruthy()
+    expect(screen.getByText(/Operational timing evidence remains configured/)).toBeTruthy()
+    expect(screen.getByText(/model-specific useful-search calibration are unqualified/)).toBeTruthy()
     expect(screen.getByText('Reset to packaged default')).toBeTruthy()
   })
 })

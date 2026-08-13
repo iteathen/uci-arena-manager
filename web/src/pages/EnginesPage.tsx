@@ -372,10 +372,12 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
                             mode="directory"
                           />
                           {customModelSelected && (
-                            <Alert color="yellow" title="Custom model selected">
+                            <Alert color="blue" title="Timing settings preserved">
                               <Group justify="space-between" align="flex-start">
                                 <Text size="sm">
-                                  Packaged timing qualification will not carry over to this model.
+                                  {candidate.launch_profile?.timing_profile.available
+                                    ? 'Operational timing evidence remains configured. Only the packaged model fingerprint and model-specific useful-search calibration are unqualified for this selection. Requalify after changing SearchCore or a materially different model architecture or input/output contract.'
+                                    : 'Engine-owned conservative timing settings remain configured. Requalify after changing SearchCore or a materially different model architecture or input/output contract.'}
                                 </Text>
                                 <Button
                                   variant="subtle"

@@ -108,7 +108,10 @@ arena tournament create --name "Local round robin" --format round_robin --engine
 
 `engine probe` and `engine add` also accept `--model-root PATH`. Manager sends
 the value only through an advertised `ModelRoot` UCI option and repeats the
-full probe before a selection is registered.
+full probe before a selection is registered. `engine set-model` preserves every
+non-model Engine option, including operational timing settings, while treating
+the packaged model fingerprint and model-specific useful-search calibration as
+unqualified for the selected model.
 
 ## External services
 

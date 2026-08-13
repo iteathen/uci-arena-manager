@@ -24,6 +24,9 @@ function candidate(): EngineCandidate {
     uci_options: {
       ModelRoot: 'C:\\Program Files\\UCI Arena\\models\\default',
       SearchCore: 'mcgs', OpeningBook: 'book.bin', Threads: 3, Ponder: false,
+      TimeProfileProviderReserveUs: 42000,
+      TimeProfileBackupEmitReserveUs: 2500,
+      TimeProfileIterationForecastScalePermille: 1350,
     },
     component_id: 'uci_arena.engine',
     component_version: '2.0.0',
@@ -117,6 +120,10 @@ describe('managed Engine registration state', () => {
       'C:\\models\\operator-selected',
     )
     expect(selected.uci_options.ModelRoot).toBe('C:\\models\\operator-selected')
+    expect(selected.uci_options.TimeProfileProviderReserveUs).toBe(42000)
+    expect(selected.uci_options.TimeProfileBackupEmitReserveUs).toBe(2500)
+    expect(selected.uci_options.TimeProfileIterationForecastScalePermille).toBe(1350)
+    expect(Object.keys(selected.uci_options)).toEqual(Object.keys(candidate().uci_options))
     expect(selected.launch_profile).toBeUndefined()
     expect(candidateRegistration(selected, [registered(selected)]).state).toBe('registered')
     expect(candidateRegistration(candidate(), [registered(selected)]).state).toBe(
