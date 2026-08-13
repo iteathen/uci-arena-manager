@@ -99,6 +99,14 @@ test("Manager component workflow pins dependencies and bounds each release gate"
     new RegExp(`vcpkgGitCommitId: ${manifest["builtin-baseline"]}`, "u"),
   );
   assert.match(workflow, /^\s{4}timeout-minutes: 75$/mu);
+  assert.match(workflow, /- name: Validate ephemeral Windows workspace path budget/u);
+  assert.match(workflow, /\$maximumWorkspaceCharacters = 64/u);
+  assert.match(workflow, /\$workspace\.Length -gt \$maximumWorkspaceCharacters/u);
+  assert.ok(
+    workflow.indexOf("Validate ephemeral Windows workspace path budget")
+      < workflow.indexOf("uses: actions/checkout@"),
+    "workspace path validation must precede checkout",
+  );
   for (const gate of [
     "Verify Manager specifications and web application",
     "Install exact native dependency closure",

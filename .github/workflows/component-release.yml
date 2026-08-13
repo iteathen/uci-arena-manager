@@ -42,6 +42,15 @@ jobs:
       RELEASE_TARGET: ${{ inputs.target }}
       RELEASE_WORKFLOW_IDENTITY: ${{ github.workflow_ref }}#${{ github.run_id }}.${{ github.run_attempt }}
     steps:
+      - name: Validate ephemeral Windows workspace path budget
+        if: inputs.runner == 'ephemeral-self-hosted-windows'
+        shell: pwsh
+        run: |
+          $maximumWorkspaceCharacters = 64
+          $workspace = [System.IO.Path]::GetFullPath($env:GITHUB_WORKSPACE)
+          if ($workspace.Length -gt $maximumWorkspaceCharacters) {
+            throw "ephemeral release workspace exceeds the $maximumWorkspaceCharacters-character MSVC path budget ($($workspace.Length))"
+          }
       - if: runner.os == 'Windows'
         shell: pwsh
         run: git config --global core.longpaths true

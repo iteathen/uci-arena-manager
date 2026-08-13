@@ -65,10 +65,20 @@ producer_contract:
     - GitHub-hosted runners remain the default. An explicit Windows-only
       ephemeral-self-hosted runner selection may use only the exact labels
       self-hosted, Windows, X64, ephemeral, uci-suite, and manager-release.
-      The runner must execute inside a fresh disposable VM, register with
-      --ephemeral and --disableupdate, receive no repository credential beyond
-      its short-lived registration token, and disappear after one job. A
-      physical developer host or persistent runner is forbidden.
+      The runner normally executes inside a fresh disposable VM. When hosted
+      capacity and a disposable VM are unavailable, the repository owner may
+      explicitly authorize the Installer-owned local release coordinator on a
+      controlled Windows development host. That coordinator must validate the
+      exact integrated source, pinned runner archive, toolchain, runner labels,
+      release target, and an MSVC-safe short work root before registration or
+      dispatch. In either mode the runner registers with --ephemeral and
+      --disableupdate, receives no repository credential beyond its short-lived
+      registration token, runs hidden, and disappears after one job. A
+      persistent or manually configured runner remains forbidden.
+    - Before checkout or dependency work, an ephemeral self-hosted Manager job
+      rejects a GITHUB_WORKSPACE longer than 64 characters. This defense in
+      depth preserves the path budget required by nested vcpkg and MSVC
+      projects even when runner registration did not use the local coordinator.
     - An ephemeral Windows release runner exposes mapped compiler, SDK, and
       redistributable runtime locations through explicit, validated configure
       inputs. Candidate staging must not depend on ambient registry or runtime
