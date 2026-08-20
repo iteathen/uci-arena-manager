@@ -1,7 +1,9 @@
 #pragma once
 
+#include "arena/ports/client_key_store.hpp"
+
 #include <chrono>
-#include <filesystem>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -16,10 +18,10 @@ struct BrowserSession {
 
 class LocalAuth final {
   public:
-    explicit LocalAuth(std::filesystem::path state_directory);
+    explicit LocalAuth(std::shared_ptr<ports::ClientKeyStore> client_key_store);
+    ~LocalAuth();
 
     void initialize();
-    [[nodiscard]] const std::filesystem::path& client_key_path() const;
     [[nodiscard]] std::string server_proof(
         const std::string& challenge,
         const std::string& audience) const;
@@ -45,11 +47,12 @@ class LocalAuth final {
     };
 
     [[nodiscard]] static std::string random_token();
+    void adopt_client_key(ports::ClientKeyMaterial material) const;
     void prune_expired();
 
-    std::filesystem::path state_directory_;
-    std::filesystem::path client_key_path_;
+    std::shared_ptr<ports::ClientKeyStore> client_key_store_;
     mutable std::string client_key_;
+    mutable std::string client_key_identity_;
     mutable std::mutex mutex_;
     std::unordered_map<std::string, ExpiringValue> pairing_tokens_;
     std::unordered_map<std::string, ExpiringValue> sessions_;

@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
-#include <fstream>
 #include <ranges>
 #include <stdexcept>
 #include <string_view>
@@ -40,21 +39,22 @@ bool numeric_loopback_audience(const std::string_view value) {
     return number != 0 && number <= 65'535;
 }
 
-std::string read_client_key(const std::filesystem::path& path) {
-    std::ifstream input(path, std::ios::binary);
-    std::string key;
-    std::getline(input, key);
-    if (!lowercase_hex_token(key)) {
-        throw std::runtime_error("client authentication key is invalid");
-    }
-    return key;
-}
-
 }  // namespace
 
-LocalAuth::LocalAuth(std::filesystem::path state_directory)
-    : state_directory_(std::move(state_directory)),
-      client_key_path_(state_directory_ / "client.key") {}
+LocalAuth::LocalAuth(
+    std::shared_ptr<ports::ClientKeyStore> client_key_store)
+    : client_key_store_(std::move(client_key_store)) {
+    if (!client_key_store_) {
+        throw std::invalid_argument("LocalAuth requires a client key store");
+    }
+}
+
+LocalAuth::~LocalAuth() {
+    std::scoped_lock lock(mutex_);
+    if (!client_key_.empty()) {
+        sodium_memzero(client_key_.data(), client_key_.size());
+    }
+}
 
 std::string LocalAuth::random_token() {
     if (sodium_init() < 0) {
@@ -68,33 +68,36 @@ std::string LocalAuth::random_token() {
 }
 
 void LocalAuth::initialize() {
-    std::filesystem::create_directories(state_directory_);
-    if (std::filesystem::is_regular_file(client_key_path_)) {
-        client_key_ = read_client_key(client_key_path_);
+    std::scoped_lock lock(mutex_);
+    try {
+        adopt_client_key(client_key_store_->load_existing());
         return;
+    } catch (const ports::ClientKeyFailure& error) {
+        if (error.kind() != ports::ClientKeyFailureKind::missing) throw;
     }
-
-    client_key_ = random_token();
-    const auto temporary = client_key_path_.string() + ".tmp";
-    {
-        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-        if (!output) {
-            throw std::runtime_error("cannot create client authentication key");
-        }
-        output << client_key_ << '\n';
-        output.flush();
-        if (!output) {
-            throw std::runtime_error("cannot persist client authentication key");
-        }
+    std::string proposed = random_token();
+    try {
+        ports::ClientKeyMaterial material =
+            client_key_store_->load_or_create(proposed);
+        sodium_memzero(proposed.data(), proposed.size());
+        adopt_client_key(std::move(material));
+    } catch (...) {
+        sodium_memzero(proposed.data(), proposed.size());
+        throw;
     }
-    std::filesystem::permissions(
-        temporary,
-        std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
-        std::filesystem::perm_options::replace);
-    std::filesystem::rename(temporary, client_key_path_);
 }
 
-const std::filesystem::path& LocalAuth::client_key_path() const { return client_key_path_; }
+void LocalAuth::adopt_client_key(ports::ClientKeyMaterial material) const {
+    if (!lowercase_hex_token(material.value) ||
+        material.object_identity.empty()) {
+        throw ports::ClientKeyFailure(ports::ClientKeyFailureKind::invalid);
+    }
+    if (!client_key_.empty()) {
+        sodium_memzero(client_key_.data(), client_key_.size());
+    }
+    client_key_ = std::move(material.value);
+    client_key_identity_ = std::move(material.object_identity);
+}
 
 std::string LocalAuth::compute_server_proof(
     const std::string& client_key,
@@ -132,7 +135,7 @@ std::string LocalAuth::server_proof(
     const std::string& challenge,
     const std::string& audience) const {
     std::scoped_lock lock(mutex_);
-    client_key_ = read_client_key(client_key_path_);
+    adopt_client_key(client_key_store_->load_existing());
     return compute_server_proof(client_key_, challenge, audience);
 }
 
@@ -155,13 +158,11 @@ bool LocalAuth::authenticate_bearer(const std::string& authorization) const {
         return true;
     }
 
-    std::string persisted;
     try {
-        persisted = read_client_key(client_key_path_);
+        adopt_client_key(client_key_store_->load_existing());
     } catch (const std::exception&) {
         return false;
     }
-    client_key_ = std::move(persisted);
     return matches(client_key_);
 }
 

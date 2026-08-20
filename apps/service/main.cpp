@@ -5,6 +5,7 @@
 #include "arena/application/engine_onboarding.hpp"
 #include "arena/application/local_auth.hpp"
 #include "arena/domain/uuid.hpp"
+#include "arena/platform/client_key_store.hpp"
 
 #include <drogon/drogon.h>
 #include <nlohmann/json.hpp>
@@ -129,14 +130,14 @@ drogon::HttpStatusCode status_code(const int status) {
 
 int run_control_plane(const Options& options) {
     try {
-        std::filesystem::create_directories(options.data_directory);
+        auto auth = std::make_shared<arena::application::LocalAuth>(
+            arena::platform::make_client_key_store(options.data_directory));
+        auth->initialize();
         auto store = std::make_shared<arena::adapters::SqliteStore>(
             options.data_directory / "arena.db");
         auto control_plane = std::make_shared<arena::application::ControlPlane>(store);
         control_plane->initialize();
         control_plane->begin_installed_reconciliation(options.data_directory);
-        auto auth = std::make_shared<arena::application::LocalAuth>(options.data_directory);
-        auth->initialize();
         arena::service::EventsWebSocket::configure(control_plane, auth);
         const std::string server_proof_audience =
             "http://127.0.0.1:" + std::to_string(options.port);
@@ -587,7 +588,7 @@ int run_control_plane(const Options& options) {
             {drogon::Post});
 
         std::cout << "UCI Arena Manager listening on http://127.0.0.1:" << options.port
-                  << "\nClient key: " << auth->client_key_path().string() << '\n';
+                  << "\nClient authentication key admitted\n";
         std::jthread reconciliation_thread;
         std::once_flag reconciliation_once;
         app.registerBeginningAdvice(

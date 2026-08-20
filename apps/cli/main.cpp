@@ -7,7 +7,6 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <optional>
@@ -21,6 +20,7 @@
 #include "arena/application/local_auth.hpp"
 #include "arena/application/manager_lifecycle.hpp"
 #include "arena/domain/uuid.hpp"
+#include "arena/platform/client_key_store.hpp"
 #include "ui_picker.hpp"
 
 #ifdef _WIN32
@@ -160,9 +160,10 @@ class HttpClient final {
   public:
     HttpClient(
         std::string endpoint,
-        const std::filesystem::path& key_path,
+        std::string client_key,
         const long request_timeout_ms = 30'000)
         : endpoint_(std::move(endpoint)),
+          key_(std::move(client_key)),
           request_timeout_ms_(request_timeout_ms) {
         while (!endpoint_.empty() && endpoint_.back() == '/') {
             endpoint_.pop_back();
@@ -171,11 +172,9 @@ class HttpClient final {
         if (request_timeout_ms_ <= 0) {
             throw std::invalid_argument("HTTP request timeout must be positive");
         }
-        std::ifstream input(key_path, std::ios::binary);
-        std::getline(input, key_);
         if (key_.size() != 64) {
-            throw EndpointUnavailable(
-                "client key is unavailable; start arena-service or set --data-dir");
+            throw EndpointIdentityFailure(
+                "the admitted client authentication key is incompatible");
         }
         const std::string challenge = fresh_challenge();
         json identity;
@@ -219,6 +218,14 @@ class HttpClient final {
             !error.empty()) {
             throw EndpointIdentityFailure(error);
         }
+    }
+
+    HttpClient(const HttpClient&) = delete;
+    HttpClient& operator=(const HttpClient&) = delete;
+    HttpClient(HttpClient&&) = default;
+    HttpClient& operator=(HttpClient&&) = delete;
+    ~HttpClient() {
+        if (!key_.empty()) sodium_memzero(key_.data(), key_.size());
     }
 
     [[nodiscard]] json get(const std::string& path) const {
@@ -294,16 +301,28 @@ class HttpClient final {
 
 HttpClient manager_client(
     const std::string& endpoint,
-    const std::filesystem::path& key_path,
+    const std::filesystem::path& data_directory,
     const std::chrono::milliseconds startup_wait) {
+    const auto key_store =
+        arena::platform::make_client_key_store(data_directory);
+    const auto admitted_key = [&key_store] {
+        try {
+            return key_store->load_existing().value;
+        } catch (const arena::ports::ClientKeyFailure& error) {
+            if (error.kind() == arena::ports::ClientKeyFailureKind::missing) {
+                throw EndpointUnavailable(error.what());
+            }
+            throw EndpointIdentityFailure(error.what());
+        }
+    };
     if (startup_wait <= std::chrono::milliseconds::zero()) {
-        return HttpClient(endpoint, key_path);
+        return HttpClient(endpoint, admitted_key());
     }
     std::optional<HttpClient> client;
     const auto result = arena::application::wait_for_manager_startup(
         [&]() {
             try {
-                client.emplace(endpoint, key_path, 2'000);
+                client.emplace(endpoint, admitted_key(), 2'000);
                 return arena::application::ManagerStartupProbe{
                     .state = arena::application::ManagerStartupProbeState::ready,
                     .detail = "authenticated Manager core readiness verified",
@@ -638,7 +657,7 @@ int main(int argc, char** argv) {
         }
         HttpClient client = manager_client(
             endpoint,
-            data_directory / "client.key",
+            data_directory,
             std::chrono::milliseconds(startup_wait_ms));
         if (*status || *health) {
             print_json(client.get("/api/v1/system/status"), output);
@@ -648,7 +667,7 @@ int main(int argc, char** argv) {
                 {
                     {"ok", true},
                     {"service", state},
-                    {"client_key", (data_directory / "client.key").string()},
+                    {"client_key", "admitted"},
                     {"checks", {{"authentication", "ok"}, {"database", "ok"}, {"loopback", "ok"}}},
                 },
                 output);
