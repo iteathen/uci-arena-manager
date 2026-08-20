@@ -1,6 +1,7 @@
 #include "arena/adapters/report_renderer.hpp"
 #include "arena/application/local_auth.hpp"
 #include "arena/domain/uuid.hpp"
+#include "arena/platform/client_key_store.hpp"
 #include "arena/platform/operator_credential_file.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -24,13 +25,11 @@ TEST_CASE("pairing tokens are one-time and browser sessions require CSRF") {
     const auto directory =
         std::filesystem::temp_directory_path() /
         ("arena-auth-" + arena::domain::uuid_v7());
-    arena::application::LocalAuth auth(directory);
+    const auto key_store = arena::platform::make_client_key_store(directory);
+    arena::application::LocalAuth auth(key_store);
     auth.initialize();
 
-    std::ifstream input(auth.client_key_path());
-    std::string key;
-    std::getline(input, key);
-    input.close();
+    const std::string key = key_store->load_existing().value;
     REQUIRE(auth.authenticate_bearer("Bearer " + key));
     REQUIRE_FALSE(auth.authenticate_bearer("Bearer wrong"));
     const std::string challenge(64, 'a');
@@ -50,7 +49,7 @@ TEST_CASE("pairing tokens are one-time and browser sessions require CSRF") {
         auth.server_proof(challenge, "http://localhost:47831"),
         std::invalid_argument);
     const std::string rotated_key(64, 'a');
-    std::ofstream(auth.client_key_path(), std::ios::binary | std::ios::trunc)
+    std::ofstream(directory / "client.key", std::ios::binary | std::ios::trunc)
         << rotated_key << '\n';
     REQUIRE(
         auth.server_proof(challenge, audience) ==

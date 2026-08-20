@@ -61,6 +61,55 @@ local_security:
         prevent a cross-origin caller from reading the recovered value.
   cli_bearer_key:
     authority: manager_data_root_client_key_file
+    platform_port: ClientKeyStore
+    format:
+      bytes: 65
+      payload: 64_lowercase_hexadecimal_bytes_plus_one_lf
+      extra_bytes: forbidden
+    state_root:
+      requirements:
+        - The absolute normalized state root is admitted through a pinned
+          platform directory handle. A linked, reparse, non-directory,
+          substituted, overlong, or broadly writable root is rejected.
+        - Creation is limited to one missing final directory below an admitted
+          existing parent. Creation never follows a missing-path substitute.
+        - A newly created final directory receives its restricted platform
+          permissions before it becomes visible; inherited broad write
+          authority is never admitted temporarily or repaired afterward.
+        - The key is opened relative to the admitted root where the platform
+          supports handle-relative access; otherwise the root is pinned
+          against rename and the opened file is revalidated against it.
+    admission:
+      requirements:
+        - Existing keys are opened without following the final link and must
+          be a regular file whose owner/scope agrees with the admitted state
+          root.
+        - Reads consume at most 65 required bytes plus one overflow byte from
+          the admitted handle. Pre-read, descriptor, and post-read identity,
+          size, and mutation evidence must agree.
+        - Linux keys allow only owner read/write and an optional owning-group
+          read bit; group/other write and every execute bit are forbidden.
+        - Windows keys require a non-null DACL and reject non-canonical allow
+          entries or write, delete, owner, or ACL authority granted to any
+          principal other than the admitted owner, LocalSystem, LocalService,
+          or Administrators. Creation grants the current service identity,
+          LocalSystem, and Administrators write authority and grants built-in
+          users read authority only.
+        - CLI proof and bearer requests use this same exact admission port;
+          no client reads the pathname through an unbounded stream.
+    publication:
+      requirements:
+        - First creation writes a random private exclusively-created staging
+          file with final permissions in place before the first key byte.
+        - The file is flushed, activated atomically without overwriting an
+          independently published key, and followed by directory durability
+          on platforms that support it.
+        - Concurrent first creators admit the one winning published key.
+          Predictable or stale staging files cannot block publication.
+        - The published path is reopened and fully admitted before its key
+          generation becomes in-memory authentication authority.
+        - Partial write, flush, activation, reopen, or cleanup failure cannot
+          publish or return the proposed key as authority.
     server_authentication: >
       Before transmitting the bearer key, every CLI or desktop pairing client
       must restrict the endpoint to an explicit numeric loopback HTTP origin
@@ -77,9 +126,13 @@ local_security:
       DNS names, user information, paths in the configured origin, and
       non-loopback endpoints are rejected before credential use.
     rotation: >
-      The service reloads a structurally valid on-disk key after an in-memory
-      mismatch so installer-preserved state, repair, and restore cannot strand
-      the installed CLI or browser pairing flow on an obsolete key.
+      The service keeps one exactly admitted key generation in memory and
+      reloads only through ClientKeyStore for server proof or after an
+      in-memory bearer mismatch, so installer-preserved state, repair, and
+      restore cannot strand the installed CLI or browser pairing flow on an
+      obsolete key. Replacement, repair, and reload never use path-only
+      prechecks, and rejected generations do not replace current authority.
+    diagnostics: one_bounded_generic_unavailable_detail_without_key_or_path
   required:
     - origin_validation
     - csrf_protection
