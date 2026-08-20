@@ -4,6 +4,7 @@
 #include <CLI/CLI.hpp>
 #include <array>
 #include <charconv>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -13,10 +14,12 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "arena/application/broker_policy.hpp"
 #include "arena/application/local_auth.hpp"
+#include "arena/application/manager_lifecycle.hpp"
 #include "arena/domain/uuid.hpp"
 #include "ui_picker.hpp"
 
@@ -81,6 +84,32 @@ struct HttpResult {
     bool exceeded{};
 };
 
+class EndpointUnavailable final : public std::runtime_error {
+  public:
+    using std::runtime_error::runtime_error;
+};
+
+class EndpointIdentityFailure final : public std::runtime_error {
+  public:
+    using std::runtime_error::runtime_error;
+};
+
+class DesktopHelperFailure final : public std::runtime_error {
+  public:
+    DesktopHelperFailure(
+        const arena::application::DesktopStartupFailureCategory category,
+        std::string detail)
+        : std::runtime_error(std::move(detail)), category_(category) {}
+
+    [[nodiscard]] arena::application::DesktopStartupFailureCategory category()
+        const noexcept {
+        return category_;
+    }
+
+  private:
+    arena::application::DesktopStartupFailureCategory category_;
+};
+
 std::size_t receive_body(char* data, std::size_t size, std::size_t count, void* target) {
     constexpr std::size_t maximum_response_bytes = 1024 * 1024;
     auto& result = *static_cast<HttpResult*>(target);
@@ -129,24 +158,40 @@ std::string fresh_challenge() {
 
 class HttpClient final {
   public:
-    HttpClient(std::string endpoint, const std::filesystem::path& key_path)
-        : endpoint_(std::move(endpoint)) {
+    HttpClient(
+        std::string endpoint,
+        const std::filesystem::path& key_path,
+        const long request_timeout_ms = 30'000)
+        : endpoint_(std::move(endpoint)),
+          request_timeout_ms_(request_timeout_ms) {
         while (!endpoint_.empty() && endpoint_.back() == '/') {
             endpoint_.pop_back();
         }
         validate_loopback_endpoint(endpoint_);
+        if (request_timeout_ms_ <= 0) {
+            throw std::invalid_argument("HTTP request timeout must be positive");
+        }
         std::ifstream input(key_path, std::ios::binary);
         std::getline(input, key_);
         if (key_.size() != 64) {
-            throw std::runtime_error(
+            throw EndpointUnavailable(
                 "client key is unavailable; start arena-service or set --data-dir");
         }
         const std::string challenge = fresh_challenge();
-        const json identity = request(
-            "POST",
-            "/api/v1/auth/server-proof",
-            json{{"challenge", challenge}}.dump(),
-            false);
+        json identity;
+        try {
+            identity = request(
+                "POST",
+                "/api/v1/auth/server-proof",
+                json{{"challenge", challenge}}.dump(),
+                false);
+        } catch (const EndpointUnavailable&) {
+            throw;
+        } catch (const std::exception& error) {
+            throw EndpointIdentityFailure(
+                std::string("the loopback listener did not implement Manager identity proof: ") +
+                error.what());
+        }
         const std::string observed = identity.value("proof", "");
         const std::string expected =
             arena::application::LocalAuth::compute_server_proof(
@@ -155,8 +200,24 @@ class HttpClient final {
             identity.value("audience", "") != endpoint_ ||
             observed.size() != expected.size() ||
             sodium_memcmp(observed.data(), expected.data(), expected.size()) != 0) {
-            throw std::runtime_error(
+            throw EndpointIdentityFailure(
                 "the loopback endpoint did not prove Manager identity");
+        }
+        json readiness;
+        try {
+            readiness = request(
+                "GET", "/api/v1/system/readiness", std::nullopt);
+        } catch (const EndpointUnavailable&) {
+            throw;
+        } catch (const std::exception& error) {
+            throw EndpointIdentityFailure(
+                std::string("the authenticated endpoint did not provide Manager readiness: ") +
+                error.what());
+        }
+        if (const std::string error = arena::application::manager_readiness_error(
+                readiness, ARENA_VERSION);
+            !error.empty()) {
+            throw EndpointIdentityFailure(error);
         }
     }
 
@@ -194,7 +255,7 @@ class HttpClient final {
         curl_easy_setopt(handle, CURLOPT_WRITEDATA, &result);
         curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http");
         curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 2000L);
-        curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 30000L);
+        curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, request_timeout_ms_);
         curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
         if (method == "POST") {
             curl_easy_setopt(handle, CURLOPT_POST, 1L);
@@ -210,8 +271,8 @@ class HttpClient final {
                 "service response exceeded the one MiB client boundary");
         }
         if (performed != CURLE_OK) {
-            throw std::runtime_error(std::string("service request failed: ") +
-                                     curl_easy_strerror(performed));
+            throw EndpointUnavailable(std::string("service request failed: ") +
+                                      curl_easy_strerror(performed));
         }
         json parsed;
         try {
@@ -228,7 +289,51 @@ class HttpClient final {
 
     std::string endpoint_;
     std::string key_;
+    long request_timeout_ms_;
 };
+
+HttpClient manager_client(
+    const std::string& endpoint,
+    const std::filesystem::path& key_path,
+    const std::chrono::milliseconds startup_wait) {
+    if (startup_wait <= std::chrono::milliseconds::zero()) {
+        return HttpClient(endpoint, key_path);
+    }
+    std::optional<HttpClient> client;
+    const auto result = arena::application::wait_for_manager_startup(
+        [&]() {
+            try {
+                client.emplace(endpoint, key_path, 2'000);
+                return arena::application::ManagerStartupProbe{
+                    .state = arena::application::ManagerStartupProbeState::ready,
+                    .detail = "authenticated Manager core readiness verified",
+                };
+            } catch (const EndpointUnavailable& error) {
+                return arena::application::ManagerStartupProbe{
+                    .state = arena::application::ManagerStartupProbeState::pending,
+                    .detail = error.what(),
+                };
+            } catch (const EndpointIdentityFailure& error) {
+                return arena::application::ManagerStartupProbe{
+                    .state = arena::application::ManagerStartupProbeState::failed,
+                    .detail = error.what(),
+                };
+            }
+        },
+        [] { return std::optional<std::uint32_t>{}; },
+        [] { return std::chrono::steady_clock::now(); },
+        [](const std::chrono::milliseconds duration) {
+            std::this_thread::sleep_for(duration);
+        },
+        startup_wait);
+    if (result.state != arena::application::ManagerStartupWaitState::ready ||
+        !client.has_value()) {
+        throw DesktopHelperFailure(
+            arena::application::DesktopStartupFailureCategory::service_readiness,
+            result.detail);
+    }
+    return std::move(*client);
+}
 
 json command(const std::string& action, const std::string& kind, json parameters,
              const bool dry_run = false,
@@ -285,6 +390,7 @@ void open_browser(const std::string& url) {
 
 int main(int argc, char** argv) {
     curl_global_init(CURL_GLOBAL_DEFAULT);
+    bool desktop_host_mode = false;
     try {
         CLI::App app{"Native CLI for the UCI Arena Manager control plane"};
         app.require_subcommand(1);
@@ -303,6 +409,7 @@ int main(int argc, char** argv) {
         bool no_open = false;
         bool no_picker = false;
         bool desktop_host = false;
+        std::uint32_t startup_wait_ms = 0;
         std::uint16_t picker_port = 47832;
         ui->add_flag("--no-open", no_open, "Print the URL without opening a browser");
         ui->add_flag("--no-picker", no_picker,
@@ -314,6 +421,12 @@ int main(int argc, char** argv) {
             "--desktop-host",
             desktop_host,
             "Enable native-host-only typed setup capabilities");
+        ui->add_option(
+              "--startup-wait-ms",
+              startup_wait_ms,
+              "Wait for authenticated Manager core readiness")
+            ->check(CLI::Range(0U, static_cast<unsigned int>(
+                arena::application::manager_core_readiness_deadline.count())));
 
         auto* daemon = app.add_subcommand("daemon", "Control the installed arena service");
         daemon->require_subcommand(1);
@@ -518,7 +631,15 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-        HttpClient client(endpoint, data_directory / "client.key");
+        desktop_host_mode = *ui && desktop_host;
+        if (startup_wait_ms > 0 && !desktop_host_mode) {
+            throw std::invalid_argument(
+                "--startup-wait-ms is available only to the native desktop host");
+        }
+        HttpClient client = manager_client(
+            endpoint,
+            data_directory / "client.key",
+            std::chrono::milliseconds(startup_wait_ms));
         if (*status || *health) {
             print_json(client.get("/api/v1/system/status"), output);
         } else if (*doctor) {
@@ -783,7 +904,20 @@ int main(int argc, char** argv) {
         curl_global_cleanup();
         return error.get_exit_code();
     } catch (const std::exception& error) {
-        std::cerr << "arena: " << error.what() << '\n';
+        if (desktop_host_mode) {
+            const auto* typed = dynamic_cast<const DesktopHelperFailure*>(&error);
+            const auto category = typed == nullptr
+                ? arena::application::DesktopStartupFailureCategory::pair_helper
+                : typed->category();
+            std::cout << json{
+                {"schema", "arena_desktop_helper_result_v1"},
+                {"state", "failed"},
+                {"category", arena::application::desktop_startup_category(category)},
+                {"detail", arena::application::bounded_startup_detail(error.what())},
+            }.dump() << '\n';
+        } else {
+            std::cerr << "arena: " << error.what() << '\n';
+        }
         curl_global_cleanup();
         return 2;
     }

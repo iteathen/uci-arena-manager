@@ -1,6 +1,7 @@
 #include "arena/adapters/sqlite_store.hpp"
 #include "arena/application/broker_policy.hpp"
 #include "arena/application/control_plane.hpp"
+#include "arena/application/manager_lifecycle.hpp"
 #include "arena/application/service_catalog.hpp"
 #include "arena/domain/uuid.hpp"
 #include <sodium.h>
@@ -769,6 +770,62 @@ TEST_CASE("control-plane status reports the configured build version") {
         arena::application::ControlPlane control_plane(store);
         control_plane.initialize();
         REQUIRE(control_plane.status().at("version") == ARENA_VERSION);
+    }
+    fs::remove_all(root);
+}
+
+TEST_CASE("control-plane core readiness is available while reconciliation is queued") {
+    const fs::path root = fs::temp_directory_path() /
+        ("arena-core-readiness-" + arena::domain::uuid_v7());
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(
+            root / "arena.db");
+        arena::application::ControlPlane control_plane(store);
+        control_plane.initialize();
+        control_plane.begin_installed_reconciliation(root);
+
+        const json readiness = control_plane.readiness();
+        REQUIRE(readiness.at("state") == "core_ready");
+        REQUIRE(
+            readiness.at("installed_service_reconciliation").at("state") ==
+            "pending");
+        REQUIRE(
+            readiness.at("installed_engine_reconciliation").at("state") ==
+            "pending");
+        REQUIRE(arena::application::manager_readiness_error(
+                    readiness, ARENA_VERSION)
+                    .empty());
+    }
+    fs::remove_all(root);
+}
+
+TEST_CASE("startup reconciliation cancellation skips pending external work") {
+    const fs::path root = fs::temp_directory_path() /
+        ("arena-reconciliation-cancel-" + arena::domain::uuid_v7());
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(
+            root / "arena.db");
+        arena::application::ControlPlane control_plane(store);
+        control_plane.initialize();
+        control_plane.begin_installed_reconciliation(root);
+        std::stop_source stop;
+        REQUIRE(stop.request_stop());
+
+        control_plane.reconcile_installed_services(root, stop.get_token());
+
+        const json status = control_plane.status();
+        REQUIRE(
+            status.at("installed_service_reconciliation").at("state") ==
+            "complete_with_errors");
+        REQUIRE(
+            status.at("installed_service_reconciliation").at("phase") ==
+            "cancelled");
+        REQUIRE(
+            status.at("installed_engine_reconciliation").at("state") ==
+            "complete_with_errors");
+        REQUIRE(
+            status.at("installed_engine_reconciliation").at("phase") ==
+            "cancelled");
     }
     fs::remove_all(root);
 }

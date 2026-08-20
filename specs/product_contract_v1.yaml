@@ -4,6 +4,25 @@ meta:
   status: active
   owner: domain
 
+manager_startup:
+  core_readiness:
+    schema: arena_manager_readiness_v1
+    state: core_ready
+    authority: authenticated_manager_service
+  reconciliation:
+    timing: asynchronous_after_core_readiness
+    projections:
+      - installed_service_reconciliation
+      - installed_engine_reconciliation
+    rules:
+      - Slow, failed, absent, or incompatible external providers never prevent
+        the Manager listener, authenticated desktop pairing, or core commands
+        from becoming available.
+      - Reconciliation state and bounded errors remain visible in system
+        status and cannot become a second runtime authority.
+      - Reconciliation uses the same receipt, provider-operation, UCI probe,
+        revision, and persistence contracts as an explicit refresh.
+
 resource_contract:
   required_fields:
     - id

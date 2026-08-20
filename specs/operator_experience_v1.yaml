@@ -42,6 +42,22 @@ requirements:
   - truthful_initial_loading_states
   - actionable_cross_page_references
 
+desktop_startup:
+  requirements:
+    - The first desktop launch waits for authenticated Manager core readiness
+      under the service-owned 120-second cold-start deadline; a bare open port
+      and the historical ten-second observation interval are never authority.
+    - A live service remains inside the launcher's Job Object while startup is
+      pending and is not killed merely because ten seconds elapsed.
+    - Startup failure is reported as exactly one stable category:
+      service_launch, service_process_exit, service_readiness, pair_helper, or
+      webview_initialization.
+    - The dialog includes the category and one sanitized single-line detail of
+      at most 512 characters, without credentials, pairing tokens, or raw
+      provider output.
+    - The existing-window path activates the single desktop session without
+      starting another Manager authority.
+
 interaction_feedback:
   requirements:
     - Initial API loading is presented as checking or loading and never flashes

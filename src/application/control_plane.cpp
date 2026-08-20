@@ -4,6 +4,7 @@
 #include "arena/adapters/uci_process.hpp"
 #include "arena/application/engine_onboarding.hpp"
 #include "arena/application/engine_option_values.hpp"
+#include "arena/application/manager_lifecycle.hpp"
 #include "arena/application/service_catalog.hpp"
 #include "arena/domain/match_planner.hpp"
 #include "arena/domain/uuid.hpp"
@@ -651,10 +652,69 @@ void ControlPlane::initialize() {
     tournament_executor_.recover_interrupted();
 }
 
-void ControlPlane::reconcile_installed_services(
+void ControlPlane::set_installed_service_reconciliation(json value) {
+    std::scoped_lock lock(reconciliation_state_mutex_);
+    installed_service_reconciliation_ = std::move(value);
+}
+
+void ControlPlane::set_installed_engine_reconciliation(json value) {
+    std::scoped_lock lock(reconciliation_state_mutex_);
+    installed_engine_reconciliation_ = std::move(value);
+}
+
+std::pair<json, json> ControlPlane::startup_reconciliation_snapshot() const {
+    std::scoped_lock lock(reconciliation_state_mutex_);
+    return {
+        installed_service_reconciliation_,
+        installed_engine_reconciliation_,
+    };
+}
+
+void ControlPlane::begin_installed_reconciliation(
     const std::filesystem::path& manager_data_root) {
-    manager_data_root_ = std::filesystem::absolute(manager_data_root).lexically_normal();
+    manager_data_root_ =
+        std::filesystem::absolute(manager_data_root).lexically_normal();
+    const std::string observed_at = domain::utc_now();
+    set_installed_service_reconciliation({
+        {"schema", "arena_installed_service_reconciliation_v1"},
+        {"state", "pending"},
+        {"phase", "queued"},
+        {"observed_at", observed_at},
+        {"completed", 0},
+        {"total", 0},
+        {"errors", json::array()},
+    });
+    set_installed_engine_reconciliation({
+        {"schema", "arena_installed_engine_reconciliation_v1"},
+        {"state", "pending"},
+        {"phase", "queued"},
+        {"observed_at", observed_at},
+        {"errors", json::array()},
+    });
+}
+
+void ControlPlane::reconcile_installed_services(
+    const std::filesystem::path& manager_data_root,
+    const std::stop_token stop_token) {
+    std::scoped_lock run_lock(reconciliation_run_mutex_);
     try {
+        const auto normalized_root =
+            std::filesystem::absolute(manager_data_root).lexically_normal();
+        if (manager_data_root_.empty()) {
+            begin_installed_reconciliation(normalized_root);
+        } else if (manager_data_root_ != normalized_root) {
+            throw std::invalid_argument(
+                "installed reconciliation root differs from Manager startup authority");
+        }
+        set_installed_service_reconciliation({
+            {"schema", "arena_installed_service_reconciliation_v1"},
+            {"state", "running"},
+            {"phase", "discovering_receipts"},
+            {"observed_at", domain::utc_now()},
+            {"completed", 0},
+            {"total", 0},
+            {"errors", json::array()},
+        });
         const json discovered =
             ServiceCatalog::installed_registrations(manager_data_root);
         json changes = json::array();
@@ -777,7 +837,19 @@ void ControlPlane::reconcile_installed_services(
                  {"state", existing.has_value() ? "updated" : "created"},
                  {"resource_id", resource.id}});
         }
+        set_installed_service_reconciliation({
+            {"schema", "arena_installed_service_reconciliation_v1"},
+            {"state", "running"},
+            {"phase", "refreshing_provider_status"},
+            {"observed_at", domain::utc_now()},
+            {"completed", 0},
+            {"total", refresh_ids.size()},
+            {"changes", changes},
+            {"errors", errors},
+        });
+        std::size_t completed = 0;
         for (const auto& resource_id : refresh_ids) {
+            if (stop_token.stop_requested()) break;
             try {
                 const std::string command_id = domain::uuid_v7();
                 static_cast<void>(submit(
@@ -802,31 +874,75 @@ void ControlPlane::reconcile_installed_services(
                     {{"resource_id", resource_id},
                      {"error", error.what()}});
             }
+            ++completed;
+            set_installed_service_reconciliation({
+                {"schema", "arena_installed_service_reconciliation_v1"},
+                {"state", "running"},
+                {"phase", "refreshing_provider_status"},
+                {"observed_at", domain::utc_now()},
+                {"completed", completed},
+                {"total", refresh_ids.size()},
+                {"changes", changes},
+                {"errors", errors},
+            });
         }
-        installed_service_reconciliation_ = {
+        if (stop_token.stop_requested()) {
+            errors.push_back(
+                {{"code", "startup_reconciliation_cancelled"},
+                 {"detail", "Manager shutdown cancelled pending provider refreshes"}});
+        }
+        set_installed_service_reconciliation({
             {"schema", "arena_installed_service_reconciliation_v1"},
             {"state",
-             errors.empty() ? "complete" : "complete_with_errors"},
+             stop_token.stop_requested() || !errors.empty()
+                 ? "complete_with_errors"
+                 : "complete"},
+            {"phase", stop_token.stop_requested() ? "cancelled" : "complete"},
             {"observed_at", domain::utc_now()},
+            {"completed", completed},
+            {"total", refresh_ids.size()},
             {"changes", std::move(changes)},
             {"errors", std::move(errors)},
-        };
+        });
     } catch (const std::exception& error) {
-        installed_service_reconciliation_ = {
+        set_installed_service_reconciliation({
             {"schema", "arena_installed_service_reconciliation_v1"},
             {"state", "failed"},
+            {"phase", "failed"},
             {"observed_at", domain::utc_now()},
+            {"completed", 0},
+            {"total", 0},
             {"changes", json::array()},
             {"errors",
              json::array(
                  {{{"code", "installed_service_reconciliation_failed"},
                     {"detail", error.what()}}})},
-        };
+        });
+    }
+    if (stop_token.stop_requested()) {
+        set_installed_engine_reconciliation({
+            {"schema", "arena_installed_engine_reconciliation_v1"},
+            {"state", "complete_with_errors"},
+            {"phase", "cancelled"},
+            {"observed_at", domain::utc_now()},
+            {"errors",
+             json::array(
+                 {{{"code", "startup_reconciliation_cancelled"},
+                   {"detail", "Manager shutdown cancelled pending Engine reconciliation"}}})},
+        });
+        return;
     }
     reconcile_installed_engine();
 }
 
 void ControlPlane::reconcile_installed_engine() {
+    set_installed_engine_reconciliation({
+        {"schema", "arena_installed_engine_reconciliation_v1"},
+        {"state", "running"},
+        {"phase", "discovering_receipt"},
+        {"observed_at", domain::utc_now()},
+        {"errors", json::array()},
+    });
     try {
         std::vector<std::pair<ports::ResourceRecord, json>> managed;
         for (const auto& resource : store_->list_resources("engine", 10'000, 0)) {
@@ -840,12 +956,12 @@ void ControlPlane::reconcile_installed_engine() {
             }
         }
         if (managed.empty()) {
-            installed_engine_reconciliation_ = {
+            set_installed_engine_reconciliation({
                 {"schema", "arena_installed_engine_reconciliation_v1"},
                 {"state", "complete"},
                 {"observed_at", domain::utc_now()},
                 {"outcome", "not_registered"},
-            };
+            });
             return;
         }
         if (managed.size() != 1) {
@@ -855,26 +971,26 @@ void ControlPlane::reconcile_installed_engine() {
         const ports::ResourceRecord& resource = managed.front().first;
         const json& current = managed.front().second;
         if (current.value("model_selection_authority", "") == "operator") {
-            installed_engine_reconciliation_ = {
+            set_installed_engine_reconciliation({
                 {"schema", "arena_installed_engine_reconciliation_v1"},
                 {"state", "complete"},
                 {"observed_at", domain::utc_now()},
                 {"outcome", "operator_model_override_preserved"},
                 {"resource_id", resource.id},
                 {"revision", resource.revision},
-            };
+            });
             return;
         }
         if (!current.contains("launch_profile") ||
             !current.at("launch_profile").is_object()) {
-            installed_engine_reconciliation_ = {
+            set_installed_engine_reconciliation({
                 {"schema", "arena_installed_engine_reconciliation_v1"},
                 {"state", "complete"},
                 {"observed_at", domain::utc_now()},
                 {"outcome", "legacy_selection_authority_preserved"},
                 {"resource_id", resource.id},
                 {"revision", resource.revision},
-            };
+            });
             return;
         }
 
@@ -916,14 +1032,14 @@ void ControlPlane::reconcile_installed_engine() {
                 candidate_options &&
             current.at("launch_profile") == candidate.at("launch_profile");
         if (current_generation) {
-            installed_engine_reconciliation_ = {
+            set_installed_engine_reconciliation({
                 {"schema", "arena_installed_engine_reconciliation_v1"},
                 {"state", "complete"},
                 {"observed_at", domain::utc_now()},
                 {"outcome", "current"},
                 {"resource_id", resource.id},
                 {"revision", resource.revision},
-            };
+            });
             return;
         }
 
@@ -949,16 +1065,16 @@ void ControlPlane::reconcile_installed_engine() {
                  }},
             },
             "installer-engine-reconcile");
-        installed_engine_reconciliation_ = {
+        set_installed_engine_reconciliation({
             {"schema", "arena_installed_engine_reconciliation_v1"},
             {"state", "complete"},
             {"observed_at", domain::utc_now()},
             {"outcome", "refreshed"},
             {"resource_id", resource.id},
             {"revision", response.at("resource").at("revision")},
-        };
+        });
     } catch (const CommandFailure& error) {
-        installed_engine_reconciliation_ = {
+        set_installed_engine_reconciliation({
             {"schema", "arena_installed_engine_reconciliation_v1"},
             {"state", "complete_with_errors"},
             {"observed_at", domain::utc_now()},
@@ -968,9 +1084,9 @@ void ControlPlane::reconcile_installed_engine() {
             {"errors",
              json::array({{{"code", error.code()},
                            {"detail", error.what()}}})},
-        };
+        });
     } catch (const std::exception& error) {
-        installed_engine_reconciliation_ = {
+        set_installed_engine_reconciliation({
             {"schema", "arena_installed_engine_reconciliation_v1"},
             {"state", "complete_with_errors"},
             {"observed_at", domain::utc_now()},
@@ -979,11 +1095,13 @@ void ControlPlane::reconcile_installed_engine() {
              json::array(
                  {{{"code", "installed_engine_reconciliation_failed"},
                    {"detail", error.what()}}})},
-        };
+        });
     }
 }
 
 json ControlPlane::status() const {
+    const auto [service_reconciliation, engine_reconciliation] =
+        startup_reconciliation_snapshot();
     return {
         {"schema_version", 1},
         {"service", "uci-arena-manager"},
@@ -993,9 +1111,23 @@ json ControlPlane::status() const {
         {"database", "ready"},
         {"counts", store_->resource_counts()},
         {"installed_service_reconciliation",
-         installed_service_reconciliation_},
+         service_reconciliation},
         {"installed_engine_reconciliation",
-         installed_engine_reconciliation_},
+         engine_reconciliation},
+    };
+}
+
+json ControlPlane::readiness() const {
+    const auto [service_reconciliation, engine_reconciliation] =
+        startup_reconciliation_snapshot();
+    return {
+        {"schema", manager_readiness_schema},
+        {"service", "uci-arena-manager"},
+        {"version", ARENA_VERSION},
+        {"state", "core_ready"},
+        {"started_at", started_at_},
+        {"installed_service_reconciliation", service_reconciliation},
+        {"installed_engine_reconciliation", engine_reconciliation},
     };
 }
 

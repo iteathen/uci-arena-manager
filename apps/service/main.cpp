@@ -14,7 +14,9 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -132,7 +134,7 @@ int run_control_plane(const Options& options) {
             options.data_directory / "arena.db");
         auto control_plane = std::make_shared<arena::application::ControlPlane>(store);
         control_plane->initialize();
-        control_plane->reconcile_installed_services(options.data_directory);
+        control_plane->begin_installed_reconciliation(options.data_directory);
         auto auth = std::make_shared<arena::application::LocalAuth>(options.data_directory);
         auth->initialize();
         arena::service::EventsWebSocket::configure(control_plane, auth);
@@ -234,6 +236,21 @@ int run_control_plane(const Options& options) {
                     return;
                 }
                 callback(response({{"csrf_token", session->csrf_token}}));
+            },
+            {drogon::Get});
+
+        app.registerHandler(
+            "/api/v1/system/readiness",
+            [control_plane, auth](
+                const HttpRequestPtr& request,
+                std::function<void(const HttpResponsePtr&)>&& callback) {
+                if (!authorized(request, auth)) {
+                    callback(response(
+                        {{"code", "authentication_required"}},
+                        drogon::k401Unauthorized));
+                    return;
+                }
+                callback(response(control_plane->readiness()));
             },
             {drogon::Get});
 
@@ -571,18 +588,37 @@ int run_control_plane(const Options& options) {
 
         std::cout << "UCI Arena Manager listening on http://127.0.0.1:" << options.port
                   << "\nClient key: " << auth->client_key_path().string() << '\n';
+        std::jthread reconciliation_thread;
+        std::once_flag reconciliation_once;
+        app.registerBeginningAdvice(
+            [control_plane,
+             data_directory = options.data_directory,
+             windows_service = options.windows_service,
+             &reconciliation_thread,
+             &reconciliation_once] {
 #ifdef _WIN32
-        if (options.windows_service) {
-            app.registerBeginningAdvice([] {
-                if (service_stop_requested.load()) {
-                    drogon::app().quit();
-                    return;
+                if (windows_service) {
+                    if (service_stop_requested.load()) {
+                        drogon::app().quit();
+                        return;
+                    }
+                    report_windows_service_running();
                 }
-                report_windows_service_running();
-            });
-        }
 #endif
+                std::call_once(reconciliation_once, [&] {
+                    reconciliation_thread = std::jthread(
+                        [control_plane, data_directory](
+                            const std::stop_token stop_token) {
+                            control_plane->reconcile_installed_services(
+                                data_directory, stop_token);
+                        });
+                });
+            });
         app.run();
+        if (reconciliation_thread.joinable()) {
+            reconciliation_thread.request_stop();
+            reconciliation_thread.join();
+        }
 #ifdef _WIN32
         if (options.windows_service && service_status_failed.load()) {
             return 1;
