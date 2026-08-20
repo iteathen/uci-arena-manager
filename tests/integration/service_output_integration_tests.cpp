@@ -341,6 +341,67 @@ TEST_CASE("provider lifecycle controls await fresh provider truth") {
     fs::remove_all(root);
 }
 
+TEST_CASE("provider-owned recovery invokes only the declared service API operation") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-service-recovery-" + arena::domain::uuid_v7());
+    fs::create_directories(root);
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(
+            root / "arena.db");
+        arena::application::ControlPlane control_plane(store);
+        control_plane.initialize();
+        const fs::path cli = root / "book-recovery.mjs";
+        const fs::path workspace = root / "book-workspace";
+        fs::create_directories(workspace);
+        std::ofstream(cli) << "mock";
+        const json manager_api{
+            {"schema", "uci_arena_manager_service_api_v1"},
+            {"version", "1.0"},
+            {"transport", "cli_json"},
+            {"entrypoint", "cli"},
+            {"arguments", {"api"}},
+            {"operations",
+             {"describe", "status", "outputs_list", "outputs_inspect",
+              "config_validate", "startup_recover"}},
+            {"output_schema", "uci_arena_service_output_v1"},
+        };
+        const json data =
+            arena::application::ServiceCatalog::normalize_registration({
+                {"profile_id", "book_forge"},
+                {"node_executable", ARENA_MOCK_SERVICE_PATH},
+                {"cli_entrypoint", cli.string()},
+                {"workspace", workspace.string()},
+                {"startup_installed", true},
+                {"installed_component_id", "book_forge.service"},
+                {"installed_component_version", "0.4.0"},
+                {"manager_integration_api", manager_api},
+                {"manager_integration_api_source",
+                 "signed_component_manifest"},
+            });
+        const std::string id = arena::domain::uuid_v7();
+        seed_managed_service(
+            store, id, data, {{"managed_by", "arena-setup"}});
+
+        const json recovered = control_plane.submit(
+            command(
+                "service.recover",
+                {{"kind", "managed_service"}, {"id", id}}),
+            "test");
+        const json& recovered_data = recovered.at("resource").at("data");
+        REQUIRE(recovered_data.at("desired_state") == "running");
+        REQUIRE(recovered_data.at("observed_state") == "starting");
+        REQUIRE(
+            recovered_data.at("last_control_result") ==
+            json{
+                {"operation", "startup_recover"},
+                {"recovery_requested", true},
+                {"registration_mutated", false},
+            });
+    }
+    fs::remove_all(root);
+}
+
 TEST_CASE("service start never reports running before provider status") {
     const fs::path root =
         fs::temp_directory_path() /
@@ -541,7 +602,7 @@ TEST_CASE("Book Forge and Evidence outputs cross only validated public contracts
             "uci_arena_manager_service_api_v1");
         REQUIRE(
             evidence_data.at("manager_api_projection")
-                .at("operations").size() == 9);
+                .at("operations").size() == 10);
         REQUIRE(
             evidence_data.at("orchestration_projection")
                 .at("targets").size() == 1);

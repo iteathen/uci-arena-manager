@@ -60,7 +60,8 @@ json manager_service_api() {
            "outputs_list",
            "outputs_inspect",
            "config_validate",
-           "acquisition_retry_auth"}},
+           "acquisition_retry_auth",
+           "startup_recover"}},
         {"output_schema", "uci_arena_service_output_v1"},
     };
 }
@@ -248,6 +249,9 @@ void attach_bot_provider_contract(
           {"startup_status",
            {{"arguments", json::array({"startup", "status"})},
             {"mutates", false}, {"credential", "forbidden"}}},
+          {"startup_recover",
+           {{"arguments", json::array({"startup", "recover"})},
+            {"mutates", true}, {"credential", "forbidden"}}},
           {"startup_uninstall",
            {{"arguments", json::array({"startup", "uninstall"})},
             {"mutates", true}, {"credential", "forbidden"}}}}},
@@ -542,7 +546,13 @@ TEST_CASE("Evidence Service registration validates the built CLI process contrac
     REQUIRE(normalized.at("health").at("state") == "unknown");
     REQUIRE(
         normalized.at("capabilities") ==
-        arena::application::ServiceCatalog::profiles().at(1).at("capabilities"));
+        json::array({
+            "status", "start", "stop", "restart", "pause", "resume",
+            "init", "target_add", "target_list", "target_remove",
+            "job_enqueue", "job_list", "job_cancel", "job_retry",
+            "dataset_list", "dataset_show", "dataset_export",
+            "profile_list", "prune", "startup_install", "startup_status",
+            "startup_uninstall"}));
     std::filesystem::remove(node);
     std::filesystem::remove(cli);
     std::filesystem::remove(directory);
@@ -599,6 +609,12 @@ TEST_CASE("installed service receipts reconcile exact private runtime entrypoint
         discovered.at("services").at(0).at("desired_state") == "running");
     REQUIRE(
         discovered.at("services").at(0).at("startup_installed") == true);
+    REQUIRE(
+        std::find(
+            discovered.at("services").at(0).at("capabilities").begin(),
+            discovered.at("services").at(0).at("capabilities").end(),
+            "startup_recover") !=
+        discovered.at("services").at(0).at("capabilities").end());
     REQUIRE(
         discovered.at("services")
             .at(0)
@@ -1541,6 +1557,59 @@ TEST_CASE("Lichess BOT status and disable never require credential arguments") {
         arena::application::ServiceCatalog::control_bot(
             root / "data", runner, "register"),
         std::invalid_argument);
+    fs::remove_all(root);
+}
+
+TEST_CASE("Lichess BOT recovery preserves the provider reconciliation blocker") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-bot-recovery-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(root, "executable");
+    std::vector<std::vector<std::string>> calls;
+    const auto runner =
+        [&calls](
+            const fs::path&,
+            const fs::path&,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds) {
+            calls.push_back(arguments);
+            if (arguments.size() > 2 && arguments.at(1) == "startup" &&
+                arguments.at(2) == "recover") {
+                return json{
+                    {"status", "ready"},
+                    {"startup",
+                     {{"installed", true},
+                      {"recoveryRequested", true},
+                      {"registrationMutated", false}}},
+                };
+            }
+            return json{
+                {"schema", "uci_arena_lichess_status_v3"},
+                {"active", true},
+                {"ready", false},
+                {"stream_connected", false},
+                {"blockers",
+                 json::array({"startup_reconciliation_pending"})},
+            };
+        };
+
+    const json result = arena::application::ServiceCatalog::control_bot(
+        root / "data", runner, "recover_startup");
+    REQUIRE(result.at("installed") == true);
+    REQUIRE(result.at("active") == true);
+    REQUIRE(result.at("provider_ready") == false);
+    REQUIRE(result.at("recovery_requested") == true);
+    REQUIRE(
+        result.at("blockers") ==
+        json::array({"startup_reconciliation_pending"}));
+    REQUIRE(calls.size() == 2);
+    REQUIRE(calls.at(0).at(1) == "startup");
+    REQUIRE(calls.at(0).at(2) == "recover");
+    for (const auto& arguments : calls) {
+        REQUIRE(
+            std::find(arguments.begin(), arguments.end(), "--token-file") ==
+            arguments.end());
+    }
     fs::remove_all(root);
 }
 

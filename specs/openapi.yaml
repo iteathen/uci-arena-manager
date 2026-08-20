@@ -25,6 +25,8 @@ x-command-actions:
     - service.evidence_campaign_enqueue
     - service.evidence_job_cancel
     - service.evidence_job_retry
+  provider_startup_recovery:
+    - service.recover
   reporting:
     - report.generate
   contract: >
@@ -102,6 +104,9 @@ x-interactive-helper-contract:
       receipt-verified operation catalog. Its response separates startup
       registration from provider activity, readiness, stream connectivity,
       and bounded blockers.
+    - Bot startup recovery is one credential-free fixed action from that
+      catalog. It starts only an existing enabled provider registration and
+      never accepts or returns a command, path, argv array, or credential.
 paths:
   /auth/server-proof:
     post:

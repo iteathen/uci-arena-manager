@@ -43,6 +43,12 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
   })
   const observedStartup = startup.data
   const startupInstalled = observedStartup?.installed === true
+  const startupRecoveryAvailable = startupInstalled && Boolean(
+    observedStartup && (
+      !observedStartup.provider_active ||
+      observedStartup.blockers.includes('startup_reconciliation_pending')
+    ),
+  )
   const readiness: BotCandidate['readiness'] = {
     ...(candidate?.readiness ?? {}),
     ...(probe.data ? { bot_account_probe: 'verified' as const } : {}),
@@ -298,6 +304,16 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
               </Button>
             </Group>
             <Group justify="flex-end">
+              {startupRecoveryAvailable && (
+                <Button
+                  variant="light"
+                  loading={startupControl.isPending}
+                  disabled={startupControl.isPending}
+                  onClick={() => startupControl.mutate('recover_startup')}
+                >
+                  Recover startup
+                </Button>
+              )}
               <Button
                 variant="default"
                 loading={startupControl.isPending}

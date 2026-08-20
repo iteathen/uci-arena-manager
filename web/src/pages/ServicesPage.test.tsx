@@ -186,6 +186,8 @@ describe('managed-service catalog selection', () => {
     provider.data.startup_control = 'provider_owned_per_user'
     provider.data.observed_state = 'stopped'
     expect(serviceLifecycleActions(provider.data)).toEqual([])
+    provider.data.capabilities = ['startup_recover']
+    expect(serviceLifecycleActions(provider.data)).toEqual(['recover'])
     provider.data.observed_state = 'running'
     expect(serviceLifecycleActions(provider.data)).toEqual(['pause'])
     provider.data.observed_state = 'degraded'

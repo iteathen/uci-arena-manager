@@ -130,17 +130,43 @@ describe('interactive-user BOT account control', () => {
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         ),
       )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            schema: 'arena_bot_control_result_v1',
+            schema_version: 1,
+            state: 'active',
+            installed: true,
+            active: true,
+            recovery_requested: true,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
 
     await expect(probeLocalBot()).resolves.toMatchObject({ account_name: 'ArenaBot' })
     await expect(controlLocalBot('enable_startup')).resolves.toMatchObject({
       state: 'active',
       installed: true,
     })
+    await expect(controlLocalBot('recover_startup')).resolves.toMatchObject({
+      recovery_requested: true,
+    })
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
       'http://127.0.0.1:47832/v1/bot-probe',
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: `Bearer ${'d'.repeat(64)}` }),
+      }),
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      'http://127.0.0.1:47832/v1/bot-control',
+      expect.objectContaining({
+        body: JSON.stringify({
+          schema: 'arena_ui_bot_control_request_v1',
+          action: 'recover_startup',
+        }),
       }),
     )
     expect(fetchMock).toHaveBeenNthCalledWith(

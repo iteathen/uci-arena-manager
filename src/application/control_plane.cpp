@@ -2315,6 +2315,12 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
     const bool startup_owned =
         data.value("startup_installed", false) ||
         data.value("startup_control", "") == "provider_owned_per_user";
+    if (action == "service.recover" && !startup_owned) {
+        throw CommandFailure(
+            "startup_recovery_unavailable",
+            "provider-owned startup recovery requires an installed startup registration",
+            409);
+    }
     if (startup_owned &&
         (action == "service.start" || action == "service.stop" ||
          action == "service.restart")) {
@@ -2625,6 +2631,67 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                     1024 * 1024,
                     "Evidence orchestration projection");
         }
+    } else if (action == "service.recover") {
+        const json declaration = manager_service_api_declaration(data);
+        if (!string_set(declaration, "operations", 32).contains(
+                "startup_recover")) {
+            throw CommandFailure(
+                "startup_recovery_unavailable",
+                "the installed provider does not declare startup recovery",
+                409);
+        }
+        if (!request.at("dry_run").get<bool>()) {
+            auto arguments = base;
+            for (const auto& prefix : declaration.at("arguments")) {
+                arguments.push_back(prefix.get<std::string>());
+            }
+            arguments.insert(
+                arguments.end(), {"startup", "recover"});
+            add_locator_options(arguments);
+            const std::string expected_component_id =
+                evidence_service
+                    ? "uci_arena_evidence.service"
+                    : "book_forge.service";
+            const std::string expected_component_version =
+                data.value("installed_component_version", "");
+            if (expected_component_version.empty()) {
+                throw CommandFailure(
+                    "startup_recovery_unavailable",
+                    "provider-owned recovery requires a receipt-bound component version",
+                    409);
+            }
+            const json recovered = manager_service_api_payload(
+                process_supervisor_.run_json(
+                    node,
+                    cli.parent_path(),
+                    arguments,
+                    std::chrono::seconds(30)),
+                "startup_recover",
+                expected_component_id,
+                expected_component_version);
+            if (recovered.value("recovery_requested", false) != true ||
+                recovered.value("registration_mutated", true) != false) {
+                throw CommandFailure(
+                    "service_api_incompatible",
+                    "provider startup recovery response is malformed",
+                    409);
+            }
+            data["last_control_result"] = {
+                {"operation", "startup_recover"},
+                {"recovery_requested", true},
+                {"registration_mutated", false},
+            };
+            data["observed_state"] = "starting";
+        }
+        data["desired_state"] = "running";
+        data["health"] = {
+            {"state", "unknown"},
+            {"reason",
+             request.at("dry_run").get<bool>()
+                 ? "provider startup recovery plan validated"
+                 : "provider startup recovery accepted; awaiting a fresh status sample"},
+            {"observed_at", domain::utc_now()},
+        };
     } else if (action == "service.start") {
         auto arguments = base;
         arguments.push_back("daemon");

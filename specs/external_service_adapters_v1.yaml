@@ -128,11 +128,14 @@ common_contract:
       process supervisor did not launch that per-user startup instance. A
       remembered phase, pid, heartbeat, startup registration, or desired state
       is not live runtime authority.
+    - Provider-owned status must distinguish stale or replaced process-instance
+      ownership from an exact live owner. Manager preserves that bounded typed
+      blocker and never upgrades pid-only evidence to running authority.
     - Per-user provider startup registrations remain provider-owned. Manager
       never starts a duplicate daemon when startup_installed is true; status,
       pause, and resume remain available, while process start/stop/restart are
-      omitted until an authenticated per-user startup-control transport is
-      present.
+      omitted. Recovery is exposed only when the receipt-verified component API
+      declares its credential-free startup_recover operation.
   operator_projection:
     dimensions:
       package: [installed, missing, broken]
@@ -152,6 +155,11 @@ common_contract:
         process-alive, and stale booleans fails closed to stopped with unknown
         health. Validated output projections remain available, but they never
         substitute for live process authority.
+      - When an installed provider reports startup recovery in progress,
+        Manager keeps startup enabled, preserves exact process activity while
+        holding readiness false, preserves the typed recovery blocker, and
+        offers only a component-declared provider-owned recovery operation; it
+        never launches a duplicate process directly.
       - Compatible saved, environment, PATH, and receipt hints are merged into
         complete candidates before partial candidates are returned.
       - Describe, status, and configuration probes use the normal bounded
@@ -427,6 +435,8 @@ validation:
   - Arbitrary executable paths cannot cross the privileged broker.
   - A startup-owned provider never exposes process start, stop, or restart and
     a direct request for one of those actions fails before process launch.
+  - Provider recovery projections preserve exact-ownership and reconciliation
+    blockers and invoke only the provider's declared recovery operation.
   - Installed service discovery rejects a Manager API declaration that differs
     between the standalone service contract and arena-component.json.
   - Service status rejects a substituted component id, installed component
