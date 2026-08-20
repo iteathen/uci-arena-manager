@@ -9,7 +9,9 @@
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace arena::application {
@@ -37,9 +39,13 @@ class ControlPlane final {
     explicit ControlPlane(std::shared_ptr<ports::Store> store);
 
     void initialize();
-    void reconcile_installed_services(
+    void begin_installed_reconciliation(
         const std::filesystem::path& manager_data_root);
+    void reconcile_installed_services(
+        const std::filesystem::path& manager_data_root,
+        std::stop_token stop_token = {});
     [[nodiscard]] nlohmann::json status() const;
+    [[nodiscard]] nlohmann::json readiness() const;
     [[nodiscard]] nlohmann::json submit(
         const nlohmann::json& request,
         const std::string& actor);
@@ -97,9 +103,15 @@ class ControlPlane final {
         ports::ResourceRecord resource,
         std::uint64_t expected_revision,
         const std::string& event_kind);
+    void set_installed_service_reconciliation(nlohmann::json value);
+    void set_installed_engine_reconciliation(nlohmann::json value);
+    [[nodiscard]] std::pair<nlohmann::json, nlohmann::json>
+    startup_reconciliation_snapshot() const;
 
     std::shared_ptr<ports::Store> store_;
     std::mutex engine_authority_mutex_;
+    std::mutex reconciliation_run_mutex_;
+    mutable std::mutex reconciliation_state_mutex_;
     std::filesystem::path manager_data_root_;
     ProcessSupervisor process_supervisor_;
     TournamentExecutor tournament_executor_;

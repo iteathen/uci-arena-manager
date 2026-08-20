@@ -53,6 +53,16 @@ find_package(spdlog CONFIG REQUIRED)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
 find_package(unofficial-sodium CONFIG REQUIRED)
 
+add_library(arena_lifecycle
+  src/application/manager_lifecycle.cpp
+)
+target_include_directories(arena_lifecycle
+  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(arena_lifecycle
+  PUBLIC nlohmann_json::nlohmann_json
+)
+
 add_library(arena_core
   src/domain/uuid.cpp
   src/domain/match_planner.cpp
@@ -82,6 +92,7 @@ target_compile_definitions(
 
 target_link_libraries(arena_core
   PUBLIC
+    arena_lifecycle
     nlohmann_json::nlohmann_json
   PRIVATE
     unofficial::sqlite3::sqlite3
@@ -147,6 +158,7 @@ if(WIN32)
     uci-arena-manager
     PRIVATE
       webview::core
+      arena_lifecycle
       "${MSWebView2_INCLUDE_DIR}/../x64/WebView2LoaderStatic.lib"
       ole32
       shell32
@@ -164,16 +176,18 @@ if(WIN32)
   )
 else()
   add_executable(uci-arena-manager apps/launcher/main.cpp)
-  target_link_libraries(uci-arena-manager PRIVATE webview::core)
+  target_link_libraries(uci-arena-manager PRIVATE webview::core arena_lifecycle)
 endif()
 
 if(MSVC)
+  target_compile_options(arena_lifecycle PRIVATE /W4 /permissive- /EHsc)
   target_compile_options(arena_core PRIVATE /W4 /permissive- /EHsc)
   target_compile_options(arena-service PRIVATE /W4 /permissive- /EHsc)
   target_compile_options(arena PRIVATE /W4 /permissive- /EHsc)
   target_compile_options(arena-broker PRIVATE /W4 /permissive- /EHsc)
   target_compile_options(uci-arena-manager PRIVATE /W4 /permissive- /EHsc)
 else()
+  target_compile_options(arena_lifecycle PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(arena_core PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(arena-service PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(arena PRIVATE -Wall -Wextra -Wpedantic)
@@ -262,6 +276,7 @@ if(ARENA_BUILD_TESTS)
   add_executable(arena_mock_uci tests/mocks/mock_uci_engine.cpp)
   add_executable(arena_mock_service tests/mocks/mock_service_cli.cpp)
   add_executable(arena_tests
+    tests/unit/manager_lifecycle_tests.cpp
     tests/unit/domain_tests.cpp
     tests/unit/engine_onboarding_tests.cpp
     tests/unit/match_planner_tests.cpp

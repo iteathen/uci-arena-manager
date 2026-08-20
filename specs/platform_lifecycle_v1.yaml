@@ -6,6 +6,23 @@ meta:
 
 main_service:
   privilege: unprivileged
+  readiness_contract:
+    schema: arena_manager_readiness_v1
+    endpoint: /api/v1/system/readiness
+    authentication: bearer_after_keyed_server_identity_proof
+    ready_state: core_ready
+    core_startup_deadline_ms: 120000
+    requirements:
+      - Core readiness means durable storage recovery, LocalAuth publication,
+        handler registration, listener binding, and entry into the event loop
+        are complete.
+      - A successful TCP connect is not readiness and a listener that cannot
+        prove Manager identity can never satisfy the launcher.
+      - Provider status refresh and installed Engine reconciliation begin only
+        after core readiness and never delay desktop pairing.
+      - System status exposes pending, running, complete, complete_with_errors,
+        or failed reconciliation state with bounded phase, progress, and error
+        detail while core control remains available.
   windows_modes:
     per_user:
       account: interactive_user
@@ -25,6 +42,10 @@ main_service:
       service in STOP_PENDING.
     - Typed service-control callers wait for the requested terminal SCM state
       with a bounded deadline and report the observed state on failure.
+  startup_reconciliation:
+    execution: background_after_event_loop_entry
+    ownership: manager_service
+    shutdown: bounded_join_of_current_external_operation
 
 broker:
   privilege: root_or_local_system
@@ -122,6 +143,19 @@ desktop_application:
     runtime_authority: manager_service_only
     manager_endpoint: authenticated_loopback_http
     authentication: one_use_pairing_token
+    startup:
+      readiness_deadline_ms: 120000
+      requirements:
+        - The per-user launcher retains the service process in its kill-on-close
+          Job Object for the complete desktop lifetime.
+        - Crossing an obsolete GUI-local observation interval never closes the
+          Job Object or terminates a live service that remains within the
+          service-owned readiness deadline.
+        - Process exit, authenticated-readiness failure, desktop-helper failure,
+          and WebView initialization failure remain distinct diagnostic
+          categories with one bounded non-secret detail.
+        - A second launcher activates the existing desktop authority and never
+          creates another Manager service or window authority.
     interactive_authority:
       - path_picker
       - typed_component_setup

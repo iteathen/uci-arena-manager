@@ -146,6 +146,23 @@ paths:
           description: Existing browser session CSRF token
         "401":
           $ref: "#/components/responses/Problem"
+  /system/readiness:
+    get:
+      operationId: getSystemReadiness
+      description: >
+        Return the authenticated service-owned core readiness contract. The
+        endpoint is reachable only after listener binding and event-loop entry;
+        provider and installed Engine reconciliation remain separately visible
+        and never gate core_ready.
+      responses:
+        "200":
+          description: Authenticated Manager core readiness
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemReadiness"
+        "401":
+          $ref: "#/components/responses/Problem"
   /system/status:
     get:
       operationId: getSystemStatus
@@ -505,6 +522,8 @@ components:
         - started_at
         - database
         - counts
+        - installed_service_reconciliation
+        - installed_engine_reconciliation
       properties:
         schema_version:
           const: 1
@@ -524,6 +543,65 @@ components:
           additionalProperties:
             type: integer
             minimum: 0
+        installed_service_reconciliation:
+          $ref: "#/components/schemas/StartupReconciliation"
+        installed_engine_reconciliation:
+          $ref: "#/components/schemas/StartupReconciliation"
+    SystemReadiness:
+      type: object
+      additionalProperties: false
+      required:
+        - schema
+        - service
+        - version
+        - state
+        - started_at
+        - installed_service_reconciliation
+        - installed_engine_reconciliation
+      properties:
+        schema:
+          const: arena_manager_readiness_v1
+        service:
+          const: uci-arena-manager
+        version:
+          type: string
+        state:
+          const: core_ready
+        started_at:
+          type: string
+          format: date-time
+        installed_service_reconciliation:
+          $ref: "#/components/schemas/StartupReconciliation"
+        installed_engine_reconciliation:
+          $ref: "#/components/schemas/StartupReconciliation"
+    StartupReconciliation:
+      type: object
+      required: [schema, state]
+      properties:
+        schema:
+          type: string
+          enum:
+            - arena_installed_service_reconciliation_v1
+            - arena_installed_engine_reconciliation_v1
+        state:
+          enum: [not_run, pending, running, complete, complete_with_errors, failed]
+        phase:
+          type: string
+          maxLength: 64
+        completed:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+        observed_at:
+          type: string
+          format: date-time
+        errors:
+          type: array
+          maxItems: 64
+          items:
+            type: object
     Resource:
       type: object
       required:
