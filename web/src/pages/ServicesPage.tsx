@@ -296,6 +296,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
       if (
         variables.action === 'start' ||
         variables.action === 'restart' ||
+        variables.action === 'recover' ||
         variables.action === 'pause' ||
         variables.action === 'resume'
       ) {

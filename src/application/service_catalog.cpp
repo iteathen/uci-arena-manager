@@ -1149,6 +1149,7 @@ json book_forge_profile() {
              "maintain",
              "startup_install",
              "startup_status",
+             "startup_recover",
              "startup_uninstall",
          }},
         {"required_configuration", {"node_executable", "cli_entrypoint", "workspace"}},
@@ -1198,6 +1199,7 @@ json evidence_service_profile() {
              "prune",
              "startup_install",
              "startup_status",
+             "startup_recover",
              "startup_uninstall",
          }},
         {"required_configuration", {"node_executable", "cli_entrypoint", "workspace"}},
@@ -1516,6 +1518,27 @@ json ServiceCatalog::normalize_registration(const json& parameters) {
         data["manager_integration_api_source"] =
             "manual_profile_expectation";
     }
+    const bool startup_recovery_declared =
+        data.contains("manager_integration_api") &&
+        data.at("manager_integration_api").is_object() &&
+        data.at("manager_integration_api").contains("operations") &&
+        data.at("manager_integration_api").at("operations").is_array() &&
+        std::ranges::any_of(
+            data.at("manager_integration_api").at("operations"),
+            [](const json& operation) {
+                return operation.is_string() &&
+                       operation.get_ref<const std::string&>() ==
+                           "startup_recover";
+            });
+    const auto remove_capability = [&data](const char* capability) {
+        const auto iterator = std::find(
+            data["capabilities"].begin(),
+            data["capabilities"].end(),
+            capability);
+        if (iterator != data["capabilities"].end()) {
+            data["capabilities"].erase(iterator);
+        }
+    };
     if (profile_id == "book_forge") {
         const auto node = required_path(parameters, "node_executable");
         const auto entrypoint = required_path(parameters, "cli_entrypoint");
@@ -1542,13 +1565,12 @@ json ServiceCatalog::normalize_registration(const json& parameters) {
         if (parameters.value("startup_installed", false)) {
             data["startup_control"] = "provider_owned_per_user";
             for (const auto* capability : {"start", "stop", "restart"}) {
-                const auto iterator =
-                    std::find(data["capabilities"].begin(),
-                              data["capabilities"].end(), capability);
-                if (iterator != data["capabilities"].end()) {
-                    data["capabilities"].erase(iterator);
-                }
+                remove_capability(capability);
             }
+        }
+        if (!parameters.value("startup_installed", false) ||
+            !startup_recovery_declared) {
+            remove_capability("startup_recover");
         }
         data["health"] = {
             {"state", "unknown"},
@@ -1584,13 +1606,12 @@ json ServiceCatalog::normalize_registration(const json& parameters) {
         if (parameters.value("startup_installed", false)) {
             data["startup_control"] = "provider_owned_per_user";
             for (const auto* capability : {"start", "stop", "restart"}) {
-                const auto iterator =
-                    std::find(data["capabilities"].begin(),
-                              data["capabilities"].end(), capability);
-                if (iterator != data["capabilities"].end()) {
-                    data["capabilities"].erase(iterator);
-                }
+                remove_capability(capability);
             }
+        }
+        if (!parameters.value("startup_installed", false) ||
+            !startup_recovery_declared) {
+            remove_capability("startup_recover");
         }
         data["health"] = {
             {"state", "unknown"},
@@ -2347,7 +2368,7 @@ json ServiceCatalog::control_bot(
     const BotCommandRunner& command_runner,
     const std::string& action) {
     if (action != "status" && action != "enable_startup" &&
-        action != "disable_startup") {
+        action != "recover_startup" && action != "disable_startup") {
         throw std::invalid_argument("unsupported BOT account-control action");
     }
     const BotProviderContext provider =
@@ -2357,6 +2378,7 @@ json ServiceCatalog::control_bot(
     std::optional<std::string> account_name;
     const std::string provider_operation =
         action == "enable_startup" ? "startup_install"
+        : action == "recover_startup" ? "startup_recover"
         : action == "disable_startup" ? "startup_uninstall"
                                       : "startup_status";
     std::vector<std::string> arguments = provider_operation_arguments(
@@ -2394,7 +2416,7 @@ json ServiceCatalog::control_bot(
                 "--runtime-dir",
                 runtime_directory.string(),
             });
-    } else if (action == "disable_startup") {
+    } else if (action == "recover_startup" || action == "disable_startup") {
         arguments.insert(
             arguments.end(),
             {"--runtime-dir", runtime_directory.string()});
@@ -2424,6 +2446,12 @@ json ServiceCatalog::control_bot(
     if (action == "disable_startup" && installed) {
         throw std::runtime_error(
             "the provider did not remove BOT startup");
+    }
+    if (action == "recover_startup" &&
+        (!installed || startup.value("recoveryRequested", false) != true ||
+         startup.value("registrationMutated", true) != false)) {
+        throw std::runtime_error(
+            "the provider returned invalid BOT startup recovery state");
     }
     std::vector<std::string> status_arguments = provider_operation_arguments(
         provider.contract, "provider_status", "forbidden");
@@ -2457,6 +2485,9 @@ json ServiceCatalog::control_bot(
     response.update(provider_status);
     if (account_name.has_value()) {
         response["account_name"] = *account_name;
+    }
+    if (action == "recover_startup") {
+        response["recovery_requested"] = true;
     }
     return response;
 }

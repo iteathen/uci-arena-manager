@@ -173,7 +173,8 @@ managed_service_experience:
     - Never request external-service secrets that are not manager-owned.
     - Explain unavailable actions without presenting them as failures.
     - For provider-owned per-user startup registrations, show Probe plus
-      Pause/Resume controls and a startup-owned status hint; do not show
+      Pause/Resume controls, a component-declared Recover startup control, and
+      a startup-owned status hint; do not show
       process Start, Stop, or Restart controls that would create a duplicate
       daemon.
     - Render Pause only for an observed active or degraded provider and Resume
@@ -360,6 +361,10 @@ bot_experience:
     - Offer typed Refresh status, Enable startup, and Disable startup controls
       without a terminal. Enablement performs a fresh BOT probe and never lets
       the browser provide the account identity.
+    - When startup is enabled but provider status is inactive or reports
+      startup_reconciliation_pending, offer Recover startup. It invokes only
+      the receipt-verified provider recovery operation and never launches a
+      Manager-owned duplicate process.
     - Offer Requalify installed engine whenever the verified adapter is
       installed and provider startup is disabled. The control invokes one fixed
       provider-owned workflow, displays a long-running state, and refreshes

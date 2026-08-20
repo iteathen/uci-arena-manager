@@ -500,7 +500,11 @@ export interface BotQualificationResult {
   timing_identity_sha256: string
 }
 
-export type BotControlAction = 'status' | 'enable_startup' | 'disable_startup'
+export type BotControlAction =
+  | 'status'
+  | 'enable_startup'
+  | 'recover_startup'
+  | 'disable_startup'
 
 export interface BotControlResult {
   schema: 'arena_bot_control_result_v1'
@@ -514,6 +518,7 @@ export interface BotControlResult {
   stream_connected: boolean
   blockers: string[]
   account_name?: string
+  recovery_requested?: boolean
 }
 
 export interface BotOptions {

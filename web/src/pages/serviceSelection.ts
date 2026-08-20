@@ -93,7 +93,7 @@ export function serviceLocatorMode(service?: Resource<ManagedServiceData>) {
   return service.data.installed_component_id ? 'view_installed' as const : 'edit_manual' as const
 }
 
-export type ServiceLifecycleAction = 'start' | 'stop' | 'pause' | 'resume'
+export type ServiceLifecycleAction = 'start' | 'stop' | 'recover' | 'pause' | 'resume'
 
 export function serviceLifecycleActions(
   service: ManagedServiceData,
@@ -105,7 +105,7 @@ export function serviceLifecycleActions(
   if (startupOwned) {
     if (observed === 'paused') return ['resume']
     if (observed === 'running' || observed === 'degraded') return ['pause']
-    return []
+    return service.capabilities.includes('startup_recover') ? ['recover'] : []
   }
   if (observed === 'running' || observed === 'degraded') return ['pause', 'stop']
   if (observed === 'paused') return ['resume', 'stop']

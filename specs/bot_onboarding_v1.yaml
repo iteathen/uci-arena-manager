@@ -83,7 +83,7 @@ probe:
 account_control:
   owner: verified_provider_adapter_under_interactive_user_helper
   transport: authenticated_ephemeral_loopback_helper
-  startup_actions: [status, enable_startup, disable_startup]
+  startup_actions: [status, enable_startup, recover_startup, disable_startup]
   local_account_actions:
     - owner_list
     - owner_add
@@ -109,6 +109,9 @@ account_control:
   rules:
     - Status and disable resolve only receipt-verified adapter and runtime
       entrypoints and never require or open the token file.
+    - Recovery resolves only the receipt-verified startup_recover operation,
+      supplies no credential, and starts only the existing provider-owned
+      registration. Manager never launches a replacement provider process.
     - Enable requires every live-play readiness dimension and performs a fresh
       BOT-only account probe before installing provider-owned per-user startup.
       Missing learned transport evidence is not a live-play blocker because the
@@ -270,11 +273,12 @@ readiness:
 
 lifecycle:
   startup_owner: provider_per_user
-  manager_actions: [status, enable_startup, disable_startup]
+  manager_actions: [status, enable_startup, recover_startup, disable_startup]
   explicit_user_actions:
     - select_or_replace_token_reference
     - verify_account
     - refresh_startup_status
+    - recover_startup
     - enable_startup
     - disable_startup
     - manage_owners
