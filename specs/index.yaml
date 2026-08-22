@@ -86,3 +86,16 @@ specs:
       - src/application/bot_catalog.cpp
       - src/application/control_plane.cpp
       - web/src/pages/BotsPage.tsx
+  - spec_id: manager_move_time_projection_boundary_v1
+    path: specs/move_time_projection_boundary_v1.yaml
+    owner: manager_provider_projection
+    applies_to:
+      - specs/bot_onboarding_v1.yaml
+      - specs/external_service_adapters_v1.yaml
+      - include/arena/application/bot_catalog.hpp
+      - src/application/bot_catalog.cpp
+      - include/arena/application/service_catalog.hpp
+      - src/application/service_catalog.cpp
+      - src/application/control_plane.cpp
+      - web/src/pages/BotsPage.tsx
+      - web/src/pages/ServicesPage.tsx
