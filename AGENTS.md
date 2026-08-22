@@ -12,7 +12,8 @@ node tools/spec-preflight.mjs --task "<description>" --changed-files <likely pat
 ```
 
 3. Read every active spec returned by preflight and rerun when touched paths change materially.
-4. For repository-boundary, provider-registration, broker, packaging, or cross-project contract work, also read `specs/suite_lego_boundaries_v1.yaml` and the canonical suite architecture in `iteathen/uci-arena-installer`.
+4. For timing-policy, timing-profile, transport-profile, bot readiness, service output, or move-time UI/projection work, treat `specs/move_time_projection_boundary_v1.yaml` as mandatory ownership authority.
+5. For repository-boundary, provider-registration, broker, packaging, or cross-project contract work, also read `specs/suite_lego_boundaries_v1.yaml` and the canonical suite architecture in `iteathen/uci-arena-installer`.
 
 Do not broadly preload historical provider integrations, extracted implementation paths, old plans, or unrelated specs.
 
@@ -20,7 +21,7 @@ Do not broadly preload historical provider integrations, extracted implementatio
 
 Current Manager specs/contracts own Manager behavior. The suite architecture owns cross-repository responsibility. Historical source layouts and provider implementation details are not authority.
 
-Before creating a new service path, provider adapter, broker action, state store, UI-side authority, process controller, or contract, search the current Manager owners/specs first. Reuse or extend the existing owner and keep one control truth.
+Before creating a new service path, provider adapter, broker action, state store, UI-side authority, process controller, timing projection, or contract, search the current Manager owners/specs first. Reuse or extend the existing owner and keep one control truth.
 
 ## Architecture invariants
 
@@ -38,13 +39,27 @@ Before creating a new service path, provider adapter, broker action, state store
 
 Use LEGO boundaries: universal typed contracts outside, direct purpose-built implementation inside. Framework/provider/private storage types stay behind adapters.
 
+## Move-time projection hard rule
+
+Manager projects move-time state; it does not calculate or qualify move time.
+
+- Engine/conforming runtime owns current-game chess-time application and move-time applicability.
+- Evidence Service owns production/qualification of timing-policy artifacts, including evidence-backed minimum useful blocks and allocation-strategy authority.
+- Lichess Bot owns transport/API timing and transport reserve.
+- Manager must keep these as distinct typed status/readiness dimensions and must not merge them into one generic timing authority.
+- Never compute per-move milliseconds from clocks, increment, useful blocks, policy parameters, or transport reserves.
+- Never inspect timing population evidence or strategy coefficients to recreate the owner's qualification verdict.
+- Do not expose raw strategy parameters as arbitrary editable controls merely because they are JSON.
+- Policy selection, qualification, activation, or rollback actions invoke the owning typed provider/Installer operation when such an operation exists; Manager does not implement the semantic action itself.
+- Unknown timing-policy contract versions fail/project through the declared compatibility boundary rather than being guessed from filenames or field similarity.
+
 ## Reasoning, debugging, and validation
 
 Use high reasoning for runtime, protocol, concurrency, security, persistence, installation/service control, match execution, broker behavior, and public contract changes. Localized low-blast-radius UI work may use medium reasoning; factual inspection/formatting may use low.
 
 For ambiguous failures, preserve the original failure signature and trace raw expected-vs-actual evidence through the owning boundary before editing. Do not accept UI appearance or a passing projection test as proof that service truth is correct.
 
-Run the smallest complete preflight-selected owner/contract validation locally before broad CI. Security, persistence, broker, public compatibility, and recovery-sensitive changes retain their stronger safeguards regardless of diff size.
+Run the smallest complete preflight-selected owner/contract validation locally before broad CI. Security, persistence, broker, public compatibility, move-time authority projection, and recovery-sensitive changes retain their stronger safeguards regardless of diff size.
 
 ## Execution and integration
 
@@ -54,4 +69,4 @@ Before integration, inspect the complete diff, test the simplest credible failur
 
 ## Completion
 
-Complete when the requested Manager outcome is evidenced, Manager remains the sole local control truth, provider behavior stays external, security/privilege boundaries remain intact, and no material invalid partial state remains.
+Complete when the requested Manager outcome is evidenced, Manager remains the sole local control truth, timing semantics remain with their owning Engine/Evidence/provider components, provider behavior stays external, security/privilege boundaries remain intact, and no material invalid partial state remains.
