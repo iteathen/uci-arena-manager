@@ -1,0 +1,64 @@
+meta:
+  spec_id: manager_move_time_projection_boundary_v1
+  version: 1
+  status: active
+  owner: manager_provider_projection
+  purpose: >
+    Keep Manager a control-plane/projector for move-time artifacts and provider
+    status without acquiring chess-clock allocation, timing-policy, search, or
+    transport-timing semantics.
+
+ownership:
+  manager:
+    owns:
+      - receipt_verified_component_discovery
+      - typed_provider_operation_invocation
+      - bounded_readiness_and_status_projection
+      - operator_authorization_and_control_surface
+      - installed_artifact_binding_projection
+    does_not_own:
+      - current_game_clock_authority
+      - minimum_useful_timing_block_semantics
+      - allocation_strategy
+      - move_time_applicability
+      - search_attention_or_move_selection
+      - provider_transport_reserve_semantics
+      - timing_policy_qualification
+  engine_or_conforming_move_time_consumer:
+    owns:
+      - runtime_chess_time_application
+      - current_game_clock_composition
+      - timing_policy_applicability
+  evidence_provider:
+    owns:
+      - timing_policy_production_and_qualification
+  lichess_provider:
+    owns:
+      - lichess_transport_and_api_timing
+
+projection_rules:
+  - "Manager may display that a timing policy/profile is configured, qualified, rejected, missing, or incompatible only from the owning component's typed projection."
+  - "Manager does not parse policy coefficients, useful-block thresholds, allocation-strategy parameters, search-progress evidence, or raw timing datasets to derive its own verdict."
+  - "Manager does not combine remaining clock, increment, transport reserve, or timing-policy data into a move-time allocation. Live game clocks do not transit Manager to control a move."
+  - "Manager must not merge Engine chess-time policy and Lichess transport-profile state into one generic timing authority; they remain separate readiness/status dimensions."
+  - "A future timing-policy artifact may be projected as a bounded versioned output identity/capability when its owner publishes that contract, but Manager does not acquire its internal semantics."
+  - "Unknown policy or profile major versions remain explicit compatibility blockers only where the consuming provider declares them required; Manager never guesses compatibility from filenames or fields."
+
+operator_surface:
+  rules:
+    - "Do not expose raw timing-policy strategy/coefficients as arbitrary editable Manager controls merely because they are serialized data."
+    - "An operator action to select, requalify, activate, or roll back a policy must invoke the owning typed provider/installer operation and preserve that owner's evidence gates."
+    - "Manager may explain ownership in UI: Engine/conforming runtime applies chess time, Evidence produces qualified policy artifacts, and Lichess Bot owns transport/API reserve."
+
+readiness:
+  rules:
+    - "A configured path is not qualified timing authority."
+    - "Evidence/provider-owned qualification booleans and compatibility state remain authoritative for readiness."
+    - "Transport bootstrap/qualification status cannot substitute for Engine timing-policy qualification, and Engine timing-policy qualification cannot substitute for transport readiness."
+    - "A future policy artifact that contains minimum useful blocks and an allocation strategy is still one owner-produced artifact; Manager does not validate the strategy by replaying evidence."
+
+validation:
+  - "A fake provider can change timing-policy schema/details while preserving the same public status contract without requiring Manager algorithm changes."
+  - "Manager never calculates per-move milliseconds from clocks or timing artifacts."
+  - "Manager status keeps Engine timing-policy and provider transport timing as distinguishable dimensions."
+  - "Unknown/unsupported policy compatibility is projected from owner responses rather than inferred locally."
