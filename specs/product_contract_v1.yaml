@@ -463,3 +463,96 @@ report_contract:
     - Every report resource is immutable and records filters, generation parameters, schema version, data cutoff, source-content hashes, provenance, and fixed-format artifact metadata.
     - A successful command renders every requested format before committing the report resource and durable event. Dry-run renders in memory and performs no filesystem or database write.
     - Artifact downloads resolve only the report UUID and one allowlisted format, verify the persisted digest, and require the same authenticated local session as other read APIs.
+
+planned_lichess_incident_and_game_projection_2026_08_23:
+  status: approved_plan_not_runtime_authoritative
+  suite_record: https://github.com/iteathen/uci-arena-installer/issues/166
+  owning_issues:
+    incidents: https://github.com/iteathen/uci-arena-manager/issues/125
+    games: https://github.com/iteathen/uci-arena-manager/issues/126
+  activation:
+    - This section records the approved product target but adds no current API
+      route, OpenAPI authority, provider requirement, database record, or UI
+      behavior.
+    - Exact request and response schemas become authoritative only in the
+      issue-owned runtime implementation PRs after the provider declares the
+      compatible typed operations.
+  read_only_routes:
+    - GET /api/v1/providers/{profileId}/status
+    - GET /api/v1/providers/{profileId}/incidents
+    - GET /api/v1/providers/{profileId}/games
+    - GET /api/v1/providers/{profileId}/games/{gameId}
+  boundaries:
+    - Manager resolves only operations declared by the exact receipt-verified
+      provider service contract and component manifest.
+    - Manager validates closed bounded project-owned schemas and never opens
+      provider SQLite, runtime files, credential files, or NDJSON logs.
+    - Provider status, incident, cooldown, game, replay, provenance, retention,
+      and reconciliation facts remain provider authority.
+    - Manager owns route authorization, compatibility reduction, pagination
+      input bounds, read projection, and operator navigation.
+    - Current status v3 providers remain compatible and project incidents and
+      archive operations as unavailable instead of making the bot incompatible.
+  incident_projection:
+    cursor: stable_provider_owned_keyset
+    rules:
+      - Active critical and error incidents retain provider code, count,
+        severity, active/resolved state, occurrence range, operation, and
+        optional retry or game context after provider recovery.
+      - Manager deduplicates by provider-issued identity and cursor. It never
+        tails raw logs or interprets provider-private error text.
+      - Rate-limit deadlines remain provider authority and no Manager action
+        clears, shortens, or bypasses them.
+  game_projection:
+    provider_operations: [games_list, game_get]
+    list_scopes: [live, history]
+    maximum_page_size: 100
+    maximum_replay_plies: 2048
+    rules:
+      - Manager-owned local games and provider-owned Lichess games share Live
+        Games and Game History surfaces but retain distinct source authority.
+      - Replay is enabled only for provider records declared archive-complete
+        and uses provider-authored before/after FEN snapshots.
+      - A summary_only record remains listable with incompleteness, exact
+        available provenance, and an external Lichess link; Manager never
+        fabricates positions, moves, clocks, or historical component versions.
+      - Provider pagination uses stable keyset cursors and the generic bounded
+        collection mechanism owned by Manager issue 106.
+  non_goals:
+    - manager_side_provider_persistence
+    - provider_store_or_log_access
+    - training_export_or_ccr
+    - game_pruning
+
+planned_component_verification_registry_2026_08_23:
+  status: approved_plan_not_runtime_authoritative
+  owning_issue: https://github.com/iteathen/uci-arena-manager/issues/127
+  purpose: >
+    Preserve exact cryptographic component admission while removing repeated
+    payload hashing from Overview and component HTTP request paths.
+  lifecycle:
+    startup: one_full_asynchronous_verification_per_manager_process
+    process_local_states: [checking, verified, failed, stale]
+    cache_authority: memory_only_for_current_process
+    invalidation:
+      exact_component_change: invalidate_affected_component
+      filesystem_watcher_overflow: invalidate_all_components
+  rules:
+    - The /components request returns the current projection immediately and
+      never hashes component payloads on the HTTP request thread.
+    - Overview consumes the same registry projection and cannot initiate a
+      second verification scan.
+    - Invocation is blocked while a component is checking, stale, or failed.
+      It resumes only after exact verification succeeds for the current bytes.
+    - Manager restart discards all cached trust and begins a new asynchronous
+      verification; persisted trust caches are forbidden.
+    - Filesystem notifications are invalidation signals, not verification
+      evidence. Overflow fails closed by invalidating all components.
+    - Failure projection is bounded and excludes payload contents, paths,
+      command lines, provider output, and credentials.
+  acceptance:
+    - Overview renders while delayed verification of more than 100 MB reports
+      checking, and repeated component requests perform no hashing.
+    - Exact mutation or watcher overflow blocks invocation until revalidation.
+    - The existing generic Overview operational summary remains owned by
+      Manager issue 110; this registry supplies only component-attestation state.

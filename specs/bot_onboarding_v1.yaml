@@ -271,6 +271,48 @@ readiness:
         invalid, or unqualified content as bootstrap. It owns the conservative
         reserve and learns replacement evidence only from completed games.
 
+planned_operational_projections_2026_08_23:
+  status: approved_plan_not_runtime_authoritative
+  suite_record: https://github.com/iteathen/uci-arena-installer/issues/166
+  owning_issues:
+    incidents: https://github.com/iteathen/uci-arena-manager/issues/125
+    games: https://github.com/iteathen/uci-arena-manager/issues/126
+  activation:
+    - Current startup, status, options, qualification, and account-control
+      behavior is unchanged. New projections become available only after the
+      receipt-verified provider declares their typed additive operations.
+  incident_projection:
+    provider_operation: incidents_list
+    manager_access: credential_free_read_only
+    rules:
+      - Bots projects bounded active and recently recovered provider incidents,
+        retry context, and supervision state without reading the token or
+        contacting Lichess directly.
+      - Status v3 remains accepted. When incidents_list or status v4 is absent,
+        the incident feature is unavailable rather than empty or incompatible.
+      - Provider-owned cooldown deadlines and recovery state are displayed but
+        never mutated or shortened by Manager.
+      - Cursor updates deduplicate provider-issued incident identity and never
+        tail provider logs.
+  game_projection:
+    provider_operations: [games_list, game_get]
+    manager_access: credential_free_read_only
+    list_scopes: [live, history]
+    rules:
+      - The Bots surface links activity and incident game ids to the shared
+        Live Games or Game History surface instead of creating a bot-private
+        game archive.
+      - Provider history and replay remain read projections. Manager never
+        opens, copies, migrates, or persists the provider store.
+      - Summary-only records remain visibly incomplete and cannot be replayed.
+        Missing historical provenance is never replaced with current component
+        identity.
+  security:
+    - Incident and game operations never require the credential, return its
+      path, or expose headers, raw output, commands, provider storage, or logs.
+    - Browser input cannot select an operation, executable, command prefix,
+      path, argv array, store, runtime directory, or raw provider filter.
+
 lifecycle:
   startup_owner: provider_per_user
   manager_actions: [status, enable_startup, recover_startup, disable_startup]
@@ -320,3 +362,6 @@ acceptance:
   - A fake conforming provider with a different executable layout proves that
     startup, status, qualification, options, and account controls resolve the published
     operation catalog rather than hardcoded provider verbs or source paths.
+  - Planned incident and game projections remain unavailable for current
+    providers until their additive operations are declared; no empty or
+    fabricated data substitutes for an absent capability.

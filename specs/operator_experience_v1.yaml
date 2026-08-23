@@ -582,3 +582,61 @@ reports:
     - data_cutoff
     - content_hashes
     - provenance
+
+planned_lichess_incident_history_and_loading_experience_2026_08_23:
+  status: approved_plan_not_runtime_authoritative
+  suite_record: https://github.com/iteathen/uci-arena-installer/issues/166
+  owning_issues:
+    incidents: https://github.com/iteathen/uci-arena-manager/issues/125
+    history: https://github.com/iteathen/uci-arena-manager/issues/126
+    component_loading: https://github.com/iteathen/uci-arena-manager/issues/127
+  activation:
+    - These requirements describe the approved target and do not claim that
+      current provider operations, Manager routes, or dashboard controls exist.
+    - Runtime UI work follows the provider contract releases and issue-owned
+      Manager OpenAPI/schema changes.
+  incident_experience:
+    - Active provider critical/error incidents appear as persistent Overview
+      and Bots alerts rather than transient toasts or log-only entries.
+    - Alerts show one sanitized provider-owned code, severity, occurrence
+      count/range, operation, active or recovered state, and optional retry or
+      game context. They never show raw output, paths, commands, headers, or
+      credentials.
+    - A navigation badge reflects the deduplicated active incident set. Cursor
+      updates replace raw-log tailing and cannot duplicate an incident.
+    - Recovery state and provider-owned cooldown deadline remain visible after
+      the provider restarts. Manager never offers an action that shortens the
+      cooldown.
+    - Providers without the additive incident operation show Incidents
+      unavailable while retaining their existing Bots status and controls.
+  game_history_experience:
+    - Live Games and Game History merge Manager-owned local records with
+      provider-owned Lichess records using a source filter and source badge.
+    - Stable cursor pagination makes every provider game reachable; page size
+      never exceeds 100 and generic pagination behavior remains owned by
+      Manager issue 106.
+    - Archive-complete provider games offer Replay built only from
+      provider-authored FEN snapshots and at most 2,048 plies.
+    - A summary_only provider record remains visible with its incomplete
+      provenance and a Lichess link, but Replay is unavailable and no position,
+      move, clock, or historical version is fabricated.
+    - Missing component versions are labelled unavailable historical evidence,
+      not replaced by the currently installed version.
+  component_loading_experience:
+    - Overview and Components show Checking immediately while startup
+      verification proceeds asynchronously. Checking is neither Missing nor
+      Failed and cannot flash either state before verification completes.
+    - Repeated page loads consume the current process-local projection and do
+      not restart hashing or block rendering on installed payload size.
+    - Verified, Failed, and stale/rechecking transitions remain explicit. A
+      stale or unverified component cannot be invoked even while its prior
+      metadata remains visible.
+    - Filesystem watcher overflow invalidates all component trust and shows a
+      bounded rechecking state until exact verification completes.
+  validation:
+    - With 646 or more Lichess games, every record is reachable and every
+      complete replay reconstructs without browser chess-rule authority.
+    - Overview renders during deliberately delayed verification of more than
+      100 MB, and repeated component/Overview requests perform no hashing.
+    - Incident and game fixtures never expose credential contents or
+      provider-private storage and logs.
