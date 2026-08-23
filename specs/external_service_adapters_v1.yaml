@@ -420,6 +420,61 @@ profiles:
       - Qualified timing profiles appear in the bounded output integration projection.
       - Waiting for a target or idle resources remains healthy service state.
 
+planned_lichess_operational_projection_2026_08_23:
+  status: approved_plan_not_runtime_authoritative
+  suite_record: https://github.com/iteathen/uci-arena-installer/issues/166
+  owning_issues:
+    incidents: https://github.com/iteathen/uci-arena-manager/issues/125
+    games: https://github.com/iteathen/uci-arena-manager/issues/126
+  activation:
+    - "No operation is required or invokable from this section alone. Exact
+      schemas, catalog entries, routes, and timeouts land with the provider and
+      Manager implementation PRs."
+  provider_operations:
+    status: provider_status
+    incidents: incidents_list
+    games: games_list
+    game: game_get
+  manager_routes:
+    - GET /api/v1/providers/{profileId}/status
+    - GET /api/v1/providers/{profileId}/incidents
+    - GET /api/v1/providers/{profileId}/games
+    - GET /api/v1/providers/{profileId}/games/{gameId}
+  compatibility:
+    - "Manager accepts the current service contract/status v3 during rollout;
+      absent additive incident/game operations are feature-unavailable, not
+      provider incompatibility."
+    - "Status v4 supervision and active-incident summaries are consumed only
+      after the exact receipt-verified provider contract declares them."
+  bounds:
+    incident_pages: stable_provider_keyset_cursor
+    game_pages: stable_provider_keyset_cursor_maximum_100_records
+    replay: maximum_2048_plies
+    schemas: closed_project_owned_and_byte_bounded_before_parsing
+  rules:
+    - "The generic verifier resolves the exact declared command prefix and
+      component identity; the Lichess projection validates only bounded
+      provider request/response semantics."
+    - "Browser input supplies only a profile id plus schema-bounded filters,
+      cursor, page size, or game id. It never supplies an executable, path,
+      command, operation-catalog selector, argument array, or credential."
+    - "Manager never opens provider SQLite, runtime files, credential files,
+      or NDJSON logs and never infers incidents or games from those sources."
+    - "Incident polling resumes from the provider cursor and deduplicates by
+      provider identity. It is not raw-log tailing."
+    - "Provider cooldown, recovery, archive completeness, terminal
+      immutability, provenance, retention, and historical backfill remain
+      provider authority."
+    - "Manager rejects replay for summary_only or oversized records and never
+      fabricates FENs, moves, clocks, or historical component versions."
+  substitution_validation:
+    - "A fake provider with different executable layout and operation prefixes
+      exercises status, incident, game-list, and game-detail routes without
+      Manager product-name or source-layout branches."
+    - "Malformed, oversized, secret-looking, path-bearing, unknown-major, and
+      cursor-inconsistent outputs fail closed without discarding unrelated
+      compatible provider features."
+
 validation:
   - The manager remains ready and local match planning works with neither optional profile configured.
   - Discovery returns an empty candidates array when no hints exist; this is not an error.
