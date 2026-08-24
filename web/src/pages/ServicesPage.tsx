@@ -57,7 +57,12 @@ import {
 export function ServicesPage({ navigate }: { navigate: (page: string) => void }) {
   const queryClient = useQueryClient()
   const profiles = useQuery({ queryKey: ['service-profiles'], queryFn: api.serviceProfiles })
-  const components = useQuery({ queryKey: ['components'], queryFn: api.components })
+  const components = useQuery({
+    queryKey: ['components'],
+    queryFn: api.components,
+    refetchInterval: (query) =>
+      query.state.data?.verification_state === 'checking' ? 500 : 10_000,
+  })
   const services = useQuery({
     queryKey: ['resources', 'managed_service'],
     queryFn: () => api.resources<ManagedServiceData>('managed_service'),
@@ -68,10 +73,20 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
   })
   const automaticallyProbed = useRef(new Set<string>())
   useEffect(() => {
+    const verificationByComponent = new Map(
+      components.data?.components.map((component) => [
+        component.component_id,
+        component.verification_state,
+      ]),
+    )
     const pending = (services.data ?? []).filter(
       (service) =>
         !automaticallyProbed.current.has(service.id) &&
-        service.data.observed_state === 'unknown',
+        service.data.observed_state === 'unknown' &&
+        (!service.data.installed_component_id ||
+          verificationByComponent.get(service.data.installed_component_id) === 'verified') &&
+        (!service.data.runtime_component_id ||
+          verificationByComponent.get(service.data.runtime_component_id) === 'verified'),
     )
     if (!pending.length) return
     pending.forEach((service) => automaticallyProbed.current.add(service.id))
@@ -92,7 +107,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
         queryKey: ['resources', 'managed_service'],
       }),
     )
-  }, [queryClient, services.data])
+  }, [components.data, queryClient, services.data])
   const [bookOpened, bookModal] = useDisclosure(false)
   const [evidenceOpened, evidenceModal] = useDisclosure(false)
   const [nodePath, setNodePath] = useState('')

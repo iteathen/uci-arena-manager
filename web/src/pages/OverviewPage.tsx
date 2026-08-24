@@ -25,7 +25,12 @@ import { PageHeader } from '../components/PageHeader'
 
 export function OverviewPage({ navigate }: { navigate: (page: string) => void }) {
   const status = useQuery({ queryKey: ['status'], queryFn: api.status, refetchInterval: 10_000 })
-  const components = useQuery({ queryKey: ['components'], queryFn: api.components })
+  const components = useQuery({
+    queryKey: ['components'],
+    queryFn: api.components,
+    refetchInterval: (query) =>
+      query.state.data?.verification_state === 'checking' ? 500 : 10_000,
+  })
   const services = useQuery({
     queryKey: ['resources', 'managed_service'],
     queryFn: () => api.resources<ManagedServiceData>('managed_service'),
@@ -36,7 +41,10 @@ export function OverviewPage({ navigate }: { navigate: (page: string) => void })
     (counts.bot ?? 0) +
     (counts.managed_service ?? 0)
   const componentIssues = (components.data?.components ?? []).filter(
-    (component) => component.package_state !== 'installed' && !component.optional,
+    (component) =>
+      component.package_state !== 'installed' &&
+      component.package_state !== 'checking' &&
+      !component.optional,
   )
   const serviceIssues = (services.data ?? []).filter(
     (service) =>
@@ -47,7 +55,13 @@ export function OverviewPage({ navigate }: { navigate: (page: string) => void })
   const evidence = (services.data ?? []).find(
     (service) => service.data.profile_id === 'uci_arena_evidence',
   )
-  const initialLoading = status.isLoading || components.isLoading || services.isLoading
+  const componentVerificationChecking =
+    components.data?.verification_state === 'checking'
+  const initialLoading =
+    status.isLoading ||
+    components.isLoading ||
+    services.isLoading ||
+    componentVerificationChecking
 
   return (
     <>

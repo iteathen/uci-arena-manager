@@ -328,6 +328,7 @@ export interface ManagedServiceData extends Record<string, unknown> {
   startup_installed?: boolean
   startup_control?: string
   installed_component_id?: string
+  runtime_component_id?: string
   output_integration?: ServiceOutputIntegration
   last_successful_status_at?: string
   output_projection_stale?: boolean
@@ -419,16 +420,18 @@ export interface ServiceOutputIntegration {
 export interface ComponentInventory {
   schema: 'arena_component_inventory_v1'
   schema_version: 1
+  verification_state: 'checking' | 'verified' | 'failed'
   retained_catalog_available: boolean
   components: Array<{
     component_id: string
     display_name: string
     optional: boolean
-    package_state: 'installed' | 'missing' | 'broken'
+    package_state: 'checking' | 'installed' | 'missing' | 'broken'
+    verification_state: 'checking' | 'verified' | 'failed'
     downloadable: boolean
     component_version?: string
     startup_installed?: boolean
-    issue?: string
+    verification_issue?: { code: string; detail: string }
     default_model?: {
       model_id: string
       display_name: string
@@ -450,7 +453,7 @@ export interface BotCandidate {
   profile_id: 'lichess_bot'
   display_name: string
   adapter_component_id: 'lichess.adapter'
-  package_state: 'installed' | 'missing' | 'broken'
+  package_state: 'checking' | 'installed' | 'missing' | 'broken'
   integration_state: 'not_configured' | 'compatible' | 'incompatible'
   configuration_state: 'configured' | 'missing'
   token_reference_available: boolean

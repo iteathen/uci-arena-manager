@@ -186,11 +186,7 @@ std::string sha256_file(const fs::path& path) {
     return encoded.data();
 }
 
-struct InstalledComponent {
-    json receipt;
-    json manifest;
-    fs::path active_root;
-};
+using InstalledComponent = VerifiedComponent;
 
 void verify_component_files(
     const fs::path& active_root,
@@ -244,7 +240,12 @@ void verify_component_files(
 InstalledComponent installed_component(
     const fs::path& receipts_root,
     const std::string& component_id,
-    const bool allow_disabled = false) {
+    const bool allow_disabled = false,
+    const ComponentVerificationRegistry* component_registry = nullptr) {
+    if (component_registry != nullptr) {
+        return component_registry->require_verified(
+            component_id, allow_disabled);
+    }
     const json receipt =
         read_json_file(receipts_root / (component_id + ".json"));
     const std::string state = receipt.value("state", "");
@@ -304,11 +305,10 @@ fs::path verified_entrypoint(
     const fs::path path = component.active_root / relative;
     for (const auto& file : component.manifest.at("files")) {
         if (file.value("path", "") == relative.generic_string()) {
-            if (!fs::is_regular_file(path) ||
-                fs::file_size(path) != file.value("size_bytes", 0ULL) ||
-                sha256_file(path) != file.value("sha256", "")) {
+            if (!fs::is_regular_file(path) || fs::is_symlink(path) ||
+                fs::file_size(path) != file.value("size_bytes", 0ULL)) {
                 throw std::runtime_error(
-                    "installed component entrypoint digest mismatch");
+                    "installed component entrypoint changed after verification");
             }
             return path;
         }
@@ -335,7 +335,7 @@ fs::path verified_component_file(
         const fs::path path = component.active_root / normalized;
         if (!fs::is_regular_file(path) || fs::is_symlink(path) ||
             file.value("sha256", "") != expected_sha256 ||
-            sha256_file(path) != expected_sha256) {
+            fs::file_size(path) != file.value("size_bytes", 0ULL)) {
             throw std::runtime_error(
                 component_id + " public contract digest does not match its receipt");
         }
@@ -353,7 +353,8 @@ struct ProviderServiceContract {
 
 ProviderServiceContract verified_provider_service_contract(
     const fs::path& receipts_root,
-    const InstalledComponent& component) {
+    const InstalledComponent& component,
+    const ComponentVerificationRegistry* component_registry = nullptr) {
     if (!component.receipt.contains("service_contract") ||
         !component.receipt.at("service_contract").is_object()) {
         throw std::runtime_error(
@@ -571,7 +572,8 @@ ProviderServiceContract verified_provider_service_contract(
             "installed provider runtime is not a declared dependency");
     }
     const InstalledComponent runtime =
-        installed_component(receipts_root, runtime_component);
+        installed_component(
+            receipts_root, runtime_component, false, component_registry);
     return {
         verified_entrypoint(runtime, runtime_entrypoint),
         {component_entrypoint.string()},
@@ -607,12 +609,15 @@ struct BotProviderContext {
 };
 
 BotProviderContext bot_provider_context(
-    const fs::path& manager_data_root) {
+    const fs::path& manager_data_root,
+    const ComponentVerificationRegistry* component_registry = nullptr) {
     const fs::path receipts_root = manager_data_root / "receipts";
     InstalledComponent adapter =
-        installed_component(receipts_root, "lichess.adapter", true);
+        installed_component(
+            receipts_root, "lichess.adapter", true, component_registry);
     ProviderServiceContract contract =
-        verified_provider_service_contract(receipts_root, adapter);
+        verified_provider_service_contract(
+            receipts_root, adapter, component_registry);
     const fs::path configuration_path = fs::absolute(
         adapter.receipt.value("configuration_path", std::string{}))
                                                 .lexically_normal();
@@ -1623,8 +1628,9 @@ json ServiceCatalog::normalize_registration(const json& parameters) {
     throw std::runtime_error("unknown managed service profile: " + profile_id);
 }
 
-json ServiceCatalog::installed_registrations(
-    const std::filesystem::path& manager_data_root) {
+static json installed_registrations_impl(
+    const fs::path& manager_data_root,
+    const ComponentVerificationRegistry* component_registry) {
     const fs::path receipts_root = manager_data_root / "receipts";
     json services = json::array();
     json errors = json::array();
@@ -1639,7 +1645,11 @@ json ServiceCatalog::installed_registrations(
     std::optional<InstalledComponent> node_runtime;
     try {
         node_runtime =
-            installed_component(receipts_root, "node_runtime.private");
+            installed_component(
+                receipts_root,
+                "node_runtime.private",
+                false,
+                component_registry);
     } catch (const std::exception& error) {
         errors.push_back(
             {{"component_id", "node_runtime.private"},
@@ -1662,7 +1672,11 @@ json ServiceCatalog::installed_registrations(
                     "private Node runtime is unavailable");
             }
             const InstalledComponent service =
-                installed_component(receipts_root, component_id);
+                installed_component(
+                    receipts_root,
+                    component_id,
+                    false,
+                    component_registry);
             const auto manager_service_api =
                 verified_manager_service_api(service);
             if (!service.receipt.contains("data_paths") ||
@@ -1716,7 +1730,8 @@ json ServiceCatalog::installed_registrations(
                 registration["config_path"] =
                     fs::absolute(configuration).string();
             }
-            services.push_back(normalize_registration(registration));
+            services.push_back(
+                ServiceCatalog::normalize_registration(registration));
         } catch (const std::exception& error) {
             errors.push_back(
                 {{"component_id", component_id}, {"error", error.what()}});
@@ -1727,6 +1742,18 @@ json ServiceCatalog::installed_registrations(
         {"services", std::move(services)},
         {"errors", std::move(errors)},
     };
+}
+
+json ServiceCatalog::installed_registrations(
+    const fs::path& manager_data_root) {
+    return installed_registrations_impl(manager_data_root, nullptr);
+}
+
+json ServiceCatalog::installed_registrations(
+    const fs::path& manager_data_root,
+    const ComponentVerificationRegistry& component_registry) {
+    return installed_registrations_impl(
+        manager_data_root, &component_registry);
 }
 
 json ServiceCatalog::component_inventory(
@@ -1801,8 +1828,9 @@ json ServiceCatalog::bot_profiles() {
     });
 }
 
-json ServiceCatalog::discover_bot(
-    const fs::path& manager_data_root) {
+static json discover_bot_impl(
+    const fs::path& manager_data_root,
+    const ComponentVerificationRegistry* component_registry) {
     const fs::path receipts_root = manager_data_root / "receipts";
     json issues = json::array();
     json readiness = json::object();
@@ -1826,14 +1854,19 @@ json ServiceCatalog::discover_bot(
     json configuration = json::object();
     try {
         const InstalledComponent adapter =
-            installed_component(receipts_root, "lichess.adapter", true);
+            installed_component(
+                receipts_root,
+                "lichess.adapter",
+                true,
+                component_registry);
         candidate["package_state"] = "installed";
         candidate["component_version"] =
             adapter.receipt.value("component_version", "");
         adapter_root = adapter.active_root;
         try {
             const ProviderServiceContract contract =
-                verified_provider_service_contract(receipts_root, adapter);
+                verified_provider_service_contract(
+                    receipts_root, adapter, component_registry);
             candidate["integration_state"] = "compatible";
             candidate["qualification_state"] =
                 contract.operations.at("operations").contains("qualification_run")
@@ -1873,6 +1906,25 @@ json ServiceCatalog::discover_bot(
                 .value("installed", false);
         candidate["startup_state"] =
             startup_installed ? "installed" : "disabled";
+    } catch (const ComponentVerificationUnavailable& error) {
+        if (error.code() == "component_verification_checking" ||
+            error.code() == "component_verification_stale" ||
+            error.code() == "component_watcher_overflow") {
+            candidate["package_state"] = "checking";
+            candidate["integration_state"] = "not_configured";
+            issues.push_back({
+                {"code", error.code()},
+                {"detail", error.what()},
+            });
+        } else if (fs::is_regular_file(
+                       receipts_root / "lichess.adapter.json")) {
+            candidate["package_state"] = "broken";
+            candidate["integration_state"] = "incompatible";
+            issues.push_back({
+                {"code", "bot_adapter_broken"},
+                {"detail", error.what()},
+            });
+        }
     } catch (const std::exception& error) {
         if (fs::is_regular_file(receipts_root / "lichess.adapter.json")) {
             candidate["package_state"] = "broken";
@@ -1905,7 +1957,11 @@ json ServiceCatalog::discover_bot(
     bool model_ready = false;
     try {
         const InstalledComponent engine =
-            installed_component(receipts_root, "uci_arena.engine");
+            installed_component(
+                receipts_root,
+                "uci_arena.engine",
+                false,
+                component_registry);
         static_cast<void>(verified_entrypoint(engine, "uci"));
         engine_ready = true;
         if (engine.manifest.contains("default_model") &&
@@ -1938,7 +1994,11 @@ json ServiceCatalog::discover_bot(
     bool opening_book_ready = false;
     try {
         static_cast<void>(
-            installed_component(receipts_root, "opening_book.standard"));
+            installed_component(
+                receipts_root,
+                "opening_book.standard",
+                false,
+                component_registry));
         opening_book_ready = true;
     } catch (const std::exception&) {
     }
@@ -1953,7 +2013,11 @@ json ServiceCatalog::discover_bot(
     bool syzygy_ready = false;
     try {
         static_cast<void>(
-            installed_component(receipts_root, "syzygy.wdl.3-4-5"));
+            installed_component(
+                receipts_root,
+                "syzygy.wdl.3-4-5",
+                false,
+                component_registry));
         syzygy_ready = true;
     } catch (const std::exception&) {
         syzygy_ready =
@@ -2068,6 +2132,66 @@ json ServiceCatalog::discover_bot(
     };
 }
 
+json ServiceCatalog::discover_bot(
+    const fs::path& manager_data_root) {
+    return discover_bot_impl(manager_data_root, nullptr);
+}
+
+json ServiceCatalog::discover_bot(
+    const fs::path& manager_data_root,
+    const ComponentVerificationRegistry& component_registry) {
+    return discover_bot_impl(manager_data_root, &component_registry);
+}
+
+static json bot_options_impl(
+    const fs::path& manager_data_root,
+    const ServiceCatalog::BotCommandRunner& command_runner,
+    const ComponentVerificationRegistry* component_registry);
+
+static json discover_bot_with_runner_impl(
+    const fs::path& manager_data_root,
+    const ServiceCatalog::BotCommandRunner& command_runner,
+    const ComponentVerificationRegistry* component_registry) {
+    json discovery = discover_bot_impl(
+        manager_data_root, component_registry);
+    if (!discovery.contains("candidates") ||
+        !discovery.at("candidates").is_array() ||
+        discovery.at("candidates").empty()) {
+        return discovery;
+    }
+    json& candidate = discovery.at("candidates").at(0);
+    json& readiness = candidate.at("readiness");
+    if (readiness.value("capacity_profile", "missing") != "configured") {
+        return discovery;
+    }
+
+    try {
+        const json options = bot_options_impl(
+            manager_data_root, command_runner, component_registry);
+        const json& evidence = options.at("capacity").at("evidence");
+        if (evidence.at("qualified").get<bool>()) {
+            readiness["capacity_profile"] = "ready";
+        } else {
+            candidate.at("issues").push_back({
+                {"code", "bot_capacity_profile_unqualified"},
+                {"detail",
+                 "The Lichess provider rejected the configured capacity evidence. "
+                 "Requalify the installed engine before enabling startup."},
+            });
+        }
+    } catch (const std::exception&) {
+        candidate.at("issues").push_back({
+            {"code", "bot_capacity_profile_status_unavailable"},
+            {"detail",
+             "The Lichess provider could not verify the configured capacity evidence. "
+             "Refresh provider options or requalify the installed engine."},
+        });
+    }
+    candidate["startup_eligibility"] =
+        bot_live_prerequisites_ready(readiness) ? "ready" : "blocked";
+    return discovery;
+}
+
 json ServiceCatalog::probe_bot(
     const fs::path& manager_data_root,
     const ProcessSupervisor& process_supervisor) {
@@ -2153,7 +2277,7 @@ json ServiceCatalog::qualify_bot(
 json ServiceCatalog::discover_bot(
     const fs::path& manager_data_root,
     const ProcessSupervisor& process_supervisor) {
-    return discover_bot(
+    return discover_bot_with_runner_impl(
         manager_data_root,
         [&process_supervisor](
             const fs::path& executable,
@@ -2162,49 +2286,32 @@ json ServiceCatalog::discover_bot(
             const std::chrono::milliseconds timeout) {
             return process_supervisor.run_json(
                 executable, working_directory, arguments, timeout);
-        });
+        },
+        nullptr);
+}
+
+json ServiceCatalog::discover_bot(
+    const fs::path& manager_data_root,
+    const ProcessSupervisor& process_supervisor,
+    const ComponentVerificationRegistry& component_registry) {
+    return discover_bot_with_runner_impl(
+        manager_data_root,
+        [&process_supervisor](
+            const fs::path& executable,
+            const fs::path& working_directory,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds timeout) {
+            return process_supervisor.run_json(
+                executable, working_directory, arguments, timeout);
+        },
+        &component_registry);
 }
 
 json ServiceCatalog::discover_bot(
     const fs::path& manager_data_root,
     const BotCommandRunner& command_runner) {
-    json discovery = discover_bot(manager_data_root);
-    if (!discovery.contains("candidates") ||
-        !discovery.at("candidates").is_array() ||
-        discovery.at("candidates").empty()) {
-        return discovery;
-    }
-    json& candidate = discovery.at("candidates").at(0);
-    json& readiness = candidate.at("readiness");
-    if (readiness.value("capacity_profile", "missing") != "configured") {
-        return discovery;
-    }
-
-    try {
-        const json options = bot_options(manager_data_root, command_runner);
-        const json& evidence =
-            options.at("capacity").at("evidence");
-        if (evidence.at("qualified").get<bool>()) {
-            readiness["capacity_profile"] = "ready";
-        } else {
-            candidate.at("issues").push_back({
-                {"code", "bot_capacity_profile_unqualified"},
-                {"detail",
-                 "The Lichess provider rejected the configured capacity evidence. "
-                 "Requalify the installed engine before enabling startup."},
-            });
-        }
-    } catch (const std::exception&) {
-        candidate.at("issues").push_back({
-            {"code", "bot_capacity_profile_status_unavailable"},
-            {"detail",
-             "The Lichess provider could not verify the configured capacity evidence. "
-             "Refresh provider options or requalify the installed engine."},
-        });
-    }
-    candidate["startup_eligibility"] =
-        bot_live_prerequisites_ready(readiness) ? "ready" : "blocked";
-    return discovery;
+    return discover_bot_with_runner_impl(
+        manager_data_root, command_runner, nullptr);
 }
 
 json ServiceCatalog::qualify_bot(
@@ -2510,8 +2617,15 @@ json ServiceCatalog::bot_options(
 json ServiceCatalog::bot_options(
     const fs::path& manager_data_root,
     const BotCommandRunner& command_runner) {
+    return bot_options_impl(manager_data_root, command_runner, nullptr);
+}
+
+static json bot_options_impl(
+    const fs::path& manager_data_root,
+    const ServiceCatalog::BotCommandRunner& command_runner,
+    const ComponentVerificationRegistry* component_registry) {
     const BotProviderContext provider =
-        bot_provider_context(manager_data_root);
+        bot_provider_context(manager_data_root, component_registry);
     std::vector<std::string> arguments = provider_operation_arguments(
         provider.contract, "config_get", "forbidden");
     arguments.insert(

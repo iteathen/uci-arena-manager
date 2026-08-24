@@ -67,6 +67,7 @@ add_library(arena_core
   src/domain/uuid.cpp
   src/domain/match_planner.cpp
   src/application/control_plane.cpp
+  src/application/component_verification_registry.cpp
   src/application/engine_onboarding.cpp
   src/application/engine_option_values.cpp
   src/application/local_auth.cpp
@@ -103,6 +104,7 @@ target_link_libraries(arena_core
 
 if(WIN32)
   target_sources(arena_core PRIVATE
+    src/platform/windows/component_change_monitor.cpp
     src/platform/windows/client_key_store.cpp
     src/platform/windows/operator_credential_file.cpp
     src/platform/windows/path_inspection.cpp
@@ -113,6 +115,7 @@ if(WIN32)
   target_link_libraries(arena_core PRIVATE advapi32 bcrypt shell32 userenv)
 else()
   target_sources(arena_core PRIVATE
+    src/platform/linux/component_change_monitor.cpp
     src/platform/linux/client_key_store.cpp
     src/platform/linux/operator_credential_file.cpp
     src/platform/linux/path_inspection.cpp
@@ -279,6 +282,7 @@ if(ARENA_BUILD_TESTS)
   add_executable(arena_mock_service tests/mocks/mock_service_cli.cpp)
   add_executable(arena_tests
     tests/unit/client_key_store_tests.cpp
+    tests/unit/component_verification_registry_tests.cpp
     tests/unit/manager_lifecycle_tests.cpp
     tests/unit/domain_tests.cpp
     tests/unit/engine_onboarding_tests.cpp

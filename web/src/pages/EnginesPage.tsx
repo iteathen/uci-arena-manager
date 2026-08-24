@@ -39,11 +39,22 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
     queryKey: ['resources', 'engine'],
     queryFn: () => api.resources<EngineData>('engine'),
   })
-  const candidates = useQuery({
-    queryKey: ['engine-candidates', scanRoot],
-    queryFn: () => api.engineCandidates(scanRoot),
+  const components = useQuery({
+    queryKey: ['components'],
+    queryFn: api.components,
+    refetchInterval: (query) =>
+      query.state.data?.verification_state === 'checking' ? 500 : 10_000,
   })
-  const components = useQuery({ queryKey: ['components'], queryFn: api.components })
+  const candidates = useQuery({
+    queryKey: [
+      'engine-candidates',
+      scanRoot,
+      components.data?.verification_state ?? 'checking',
+    ],
+    queryFn: () => api.engineCandidates(scanRoot),
+    refetchInterval:
+      components.data?.verification_state === 'checking' ? 500 : false,
+  })
   const arenaComponent = components.data?.components.find(
     (component) => component.component_id === 'uci_arena.engine',
   )
@@ -238,6 +249,8 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
             <Badge variant="light">
               {candidates.isLoading
                 ? 'Checking'
+                : components.data?.verification_state === 'checking'
+                  ? 'Checking components'
                 : candidates.error
                   ? 'Unavailable'
                   : `${candidates.data?.candidates.length ?? 0} candidates`}

@@ -524,8 +524,8 @@ planned_lichess_incident_and_game_projection_2026_08_23:
     - training_export_or_ccr
     - game_pruning
 
-planned_component_verification_registry_2026_08_23:
-  status: approved_plan_not_runtime_authoritative
+component_verification_registry_2026_08_23:
+  status: runtime_authoritative
   owning_issue: https://github.com/iteathen/uci-arena-manager/issues/127
   purpose: >
     Preserve exact cryptographic component admission while removing repeated
@@ -550,6 +550,18 @@ planned_component_verification_registry_2026_08_23:
       evidence. Overflow fails closed by invalidating all components.
     - Failure projection is bounded and excludes payload contents, paths,
       command lines, provider output, and credentials.
+    - The registry is the only component receipt, manifest, and payload digest
+      authority on Manager service runtime paths. Engine onboarding, installed
+      service reconciliation, bot discovery, and component invocation consume
+      its verified snapshots and cannot start an independent hash pass.
+    - The public projection uses checking for both initial and invalidated
+      verification work. The internal stale state fails closed immediately and
+      remains visible through the bounded reason code
+      component_verification_stale while revalidation is queued or running.
+    - Native platform filesystem notifications cover the Manager receipt root
+      and every admitted active component root. Receipt replacement invalidates
+      the named component; payload change invalidates its owning component;
+      watcher overflow invalidates all components.
   acceptance:
     - Overview renders while delayed verification of more than 100 MB reports
       checking, and repeated component requests perform no hashing.

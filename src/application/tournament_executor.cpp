@@ -297,8 +297,19 @@ void add_receipt_default_model_option(
 adapters::UciGameEngine game_engine(
     const std::shared_ptr<ports::Store>& store,
     const json& competition,
-    const std::string& id) {
+    const std::string& id,
+    const TournamentExecutor::ComponentInvocationGate& component_invocation_gate) {
     const json data = engine_data(store, id);
+    if (data.value("onboarding_source", "") == "install_receipt") {
+        const std::string component_id = data.value("component_id", "");
+        if (!component_id.empty() && !component_invocation_gate) {
+            throw std::runtime_error(
+                "receipt-managed engine has no component verification authority");
+        }
+        if (!component_id.empty()) {
+            component_invocation_gate(component_id);
+        }
+    }
     auto options =
         string_map(data.value("option_overrides", json::object()));
     add_receipt_default_model_option(data, options);
@@ -322,7 +333,8 @@ adapters::UciGameEngine game_engine(
 
 void validate_competition_engines(
     const std::shared_ptr<ports::Store>& store,
-    const json& competition) {
+    const json& competition,
+    const TournamentExecutor::ComponentInvocationGate& component_invocation_gate) {
     std::set<std::string> engine_ids;
     for (const auto& engine_id : competition.at("engine_ids")) {
         if (!engine_id.is_string()) {
@@ -335,7 +347,8 @@ void validate_competition_engines(
     for (const auto& engine_id : engine_ids) {
         const json registered = engine_data(store, engine_id);
         const adapters::UciGameEngine engine =
-            game_engine(store, competition, engine_id);
+            game_engine(
+                store, competition, engine_id, component_invocation_gate);
         json expected_runtime = nullptr;
         if (registered.contains("launch_profile") &&
             registered.at("launch_profile").is_object() &&
@@ -931,8 +944,11 @@ struct TournamentExecutor::RunState {
     std::jthread controller;
 };
 
-TournamentExecutor::TournamentExecutor(std::shared_ptr<ports::Store> store)
-    : store_(std::move(store)) {}
+TournamentExecutor::TournamentExecutor(
+    std::shared_ptr<ports::Store> store,
+    ComponentInvocationGate component_invocation_gate)
+    : store_(std::move(store)),
+      component_invocation_gate_(std::move(component_invocation_gate)) {}
 
 TournamentExecutor::~TournamentExecutor() {
     std::vector<std::unique_ptr<RunState>> runs;
@@ -1067,7 +1083,8 @@ void TournamentExecutor::run(
             competition["resolved_opening_positions"] = load_opening_suite(
                 competition.at("opening_suite").get<std::string>());
         }
-        validate_competition_engines(store_, competition);
+        validate_competition_engines(
+            store_, competition, component_invocation_gate_);
         const std::size_t concurrency = std::clamp<std::size_t>(
             competition.value("concurrency", 1U), 1, 64);
         std::string failure;
@@ -1100,10 +1117,12 @@ void TournamentExecutor::run(
                             [this, kind, id, competition, pairing, &state]() {
                                 const auto white = game_engine(
                                     store_, competition,
-                                    pairing.at("white_engine_id").get<std::string>());
+                                    pairing.at("white_engine_id").get<std::string>(),
+                                    component_invocation_gate_);
                                 const auto black = game_engine(
                                     store_, competition,
-                                    pairing.at("black_engine_id").get<std::string>());
+                                    pairing.at("black_engine_id").get<std::string>(),
+                                    component_invocation_gate_);
                                 auto game = existing_game(
                                     store_, id,
                                     pairing.at("sequence").get<std::uint32_t>());

@@ -592,7 +592,8 @@ planned_lichess_incident_history_and_loading_experience_2026_08_23:
     component_loading: https://github.com/iteathen/uci-arena-manager/issues/127
   activation:
     - These requirements describe the approved target and do not claim that
-      current provider operations, Manager routes, or dashboard controls exist.
+      current provider incident/game operations or their Manager routes and
+      dashboard controls exist. The component-loading requirements are active.
     - Runtime UI work follows the provider contract releases and issue-owned
       Manager OpenAPI/schema changes.
   incident_experience:
@@ -633,6 +634,10 @@ planned_lichess_incident_history_and_loading_experience_2026_08_23:
       metadata remains visible.
     - Filesystem watcher overflow invalidates all component trust and shows a
       bounded rechecking state until exact verification completes.
+    - The component inventory exposes one aggregate verification_state and one
+      verification_state per component. Initial and stale work render as
+      checking; verified absence may render Missing only after that component's
+      receipt check completes; bounded failure renders Failed without a path.
   validation:
     - With 646 or more Lichess games, every record is reachable and every
       complete replay reconstructs without browser chess-rule authority.

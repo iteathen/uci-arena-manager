@@ -3,6 +3,7 @@
 #include "arena/ports/store.hpp"
 
 #include <atomic>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -13,7 +14,12 @@ namespace arena::application {
 
 class TournamentExecutor final {
   public:
-    explicit TournamentExecutor(std::shared_ptr<ports::Store> store);
+    using ComponentInvocationGate =
+        std::function<void(const std::string&)>;
+
+    explicit TournamentExecutor(
+        std::shared_ptr<ports::Store> store,
+        ComponentInvocationGate component_invocation_gate = {});
     ~TournamentExecutor();
 
     TournamentExecutor(const TournamentExecutor&) = delete;
@@ -31,6 +37,7 @@ class TournamentExecutor final {
     void run(const std::string& kind, const std::string& id, RunState& state);
 
     std::shared_ptr<ports::Store> store_;
+    ComponentInvocationGate component_invocation_gate_;
     std::mutex mutex_;
     std::map<std::string, std::unique_ptr<RunState>, std::less<>> runs_;
 };

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "arena/application/component_verification_registry.hpp"
+
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
@@ -30,6 +32,12 @@ class EngineOnboarding final {
   public:
     [[nodiscard]] static nlohmann::json discover(
         const std::filesystem::path& manager_data_root,
+        const std::vector<std::filesystem::path>& explicit_roots = {},
+        bool include_path_candidates = true,
+        const EngineDiscoveryOptions& options = {});
+    [[nodiscard]] static nlohmann::json discover(
+        const std::filesystem::path& manager_data_root,
+        const ComponentVerificationRegistry& component_registry,
         const std::vector<std::filesystem::path>& explicit_roots = {},
         bool include_path_candidates = true,
         const EngineDiscoveryOptions& options = {});
