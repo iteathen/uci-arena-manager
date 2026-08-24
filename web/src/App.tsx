@@ -2,6 +2,7 @@ import { IconChess, IconMoon, IconSun } from '@tabler/icons-react'
 import {
   ActionIcon,
   AppShell,
+  Badge,
   Box,
   Burger,
   Button,
@@ -17,7 +18,7 @@ import {
   useMantineColorScheme,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { ApiError, api, connectEvents, exchangePairingToken } from './api/client'
 import { ConfigurationPage } from './pages/ConfigurationPage'
@@ -51,6 +52,37 @@ export default function App() {
   const [authDetail, setAuthDetail] = useState('')
   const [eventsConnected, setEventsConnected] = useState(false)
   const { colorScheme, toggleColorScheme } = useMantineColorScheme()
+  const components = useQuery({
+    queryKey: ['components'],
+    queryFn: api.components,
+    enabled: authState === 'ready',
+    refetchInterval: (query) =>
+      query.state.data?.verification_state === 'checking' ? 500 : 10_000,
+  })
+  const lichessAdapterInstalled = components.data?.components.some(
+    (component) =>
+      component.component_id === 'lichess.adapter' &&
+      component.package_state === 'installed',
+  ) ?? false
+  const providerStatus = useQuery({
+    queryKey: ['provider-status', 'lichess_bot'],
+    queryFn: () => api.providerStatus('lichess_bot'),
+    enabled: authState === 'ready' && lichessAdapterInstalled,
+    retry: false,
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: false,
+  })
+  const activeProviderIncidents =
+    providerStatus.data && 'incidents' in providerStatus.data.status
+      ? (providerStatus.data.status.incidents.active_count ?? 0)
+      : 0
+  const botIncidentBadge = activeProviderIncidents > 0
+    ? (
+        <Badge color="red" size="sm" circle aria-label={`${activeProviderIncidents} active Provider incidents`}>
+          {activeProviderIncidents > 99 ? '99+' : activeProviderIncidents}
+        </Badge>
+      )
+    : undefined
 
   const authenticate = useCallback(() => {
     setAuthState('loading')
@@ -229,6 +261,7 @@ export default function App() {
               href={`#page=${item.key}`}
               label={item.label}
               leftSection={<item.icon size={18} stroke={1.8} />}
+              rightSection={item.key === 'bots' ? botIncidentBadge : undefined}
               active={page === item.key}
               onClick={(event) => {
                 event.preventDefault()
@@ -246,6 +279,7 @@ export default function App() {
               href={`#page=${item.key}`}
               label={item.label}
               leftSection={<item.icon size={18} stroke={1.8} />}
+              rightSection={item.key === 'bots' ? botIncidentBadge : undefined}
               active={page === item.key}
               onClick={(event) => {
                 event.preventDefault()

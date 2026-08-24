@@ -110,12 +110,12 @@ common_contract:
       removed through the audited resource command. Receipt-owned resources
       are changed or removed only through Suite Setup.
     - Reconciliation verifies the complete immutable private runtime and provider component file sets by exact size and SHA-256, rejects symbolic links and unlisted files, and never launches an unverifiable component.
-    - Reconciliation resolves managed dependency entrypoints with the same
+    - "Reconciliation resolves managed dependency entrypoints with the same
       narrow compatibility rule as arena-setup: an already locked and
       attested node_runtime.private candidate may use executable only when the
       canonical node key is absent. The aliased path still requires an exact
       signed file inventory match; no provider, engine, model, or arbitrary
-      component receives this alias, and new managed candidates emit node.
+      component receives this alias, and new managed candidates emit node."
     - Installer-generated provider configuration may reference only exact dependency entrypoints from verified receipts and must remain inside the declared provider workspace.
     - An installed receipt whose provider startup result reports installed true
       reconciles with desired_state running.
@@ -420,17 +420,16 @@ profiles:
       - Qualified timing profiles appear in the bounded output integration projection.
       - Waiting for a target or idle resources remains healthy service state.
 
-planned_lichess_operational_projection_2026_08_23:
-  status: approved_plan_not_runtime_authoritative
+lichess_operational_projection_2026_08_23:
+  status: incidents_runtime_authoritative_games_planned
   suite_record: https://github.com/iteathen/uci-arena-installer/issues/166
   owning_issues:
     incidents: https://github.com/iteathen/uci-arena-manager/issues/125
     games: https://github.com/iteathen/uci-arena-manager/issues/126
   activation:
-    - "The credential-free status-v3 compatibility slice is runtime
-      authoritative at GET /api/v1/providers/{profileId}/status. Incident and
-      game operations remain unavailable until their provider contracts and
-      issue-owned Manager schemas land."
+    - "The credential-free status-v3/v4/v5 compatibility slice and incident
+      page are runtime-authoritative. Game operations remain unavailable until
+      their issue-owned Manager routes and schemas land."
   provider_operations:
     status: provider_status
     incidents: incidents_list
@@ -446,8 +445,10 @@ planned_lichess_operational_projection_2026_08_23:
       absent additive incident/game operations are feature-unavailable, not
       provider incompatibility."
     - "Status v4 supervision and active-incident summaries are consumed only
-      after the exact receipt-verified provider contract declares them."
-  current_status_v3_projection:
+      after the exact receipt-verified provider contract declares them. Status
+      v5 is accepted as the closed additive archive successor, but its archive
+      fields remain inert in the incident slice."
+  provider_status_projection:
     status: runtime_authoritative
     route: GET /api/v1/providers/{profileId}/status
     supported_profile: lichess_bot
@@ -457,15 +458,36 @@ planned_lichess_operational_projection_2026_08_23:
       - "Manager resolves the exact receipt-verified provider operation and
         command prefix, appends only the receipt-owned runtime directory, and
         supplies no credential."
-      - "The closed status-v3 payload is byte- and field-bounded before it is
-        projected; unknown fields, unsafe strings, invalid counters, malformed
-        scheduler faults, or malformed rate-limit state fail closed."
+      - "The closed status-v3, status-v4, or status-v5 payload is byte- and
+        field-bounded before it is projected; unknown fields, unsafe strings,
+        invalid counters, malformed supervision/incidents, malformed scheduler
+        faults, or malformed rate-limit state fail closed."
       - "Rate-limit deadlines, scheduler faults, stream state, game counts,
         and blockers remain provider-owned observations. Manager displays them
         and cannot clear, shorten, or reinterpret them."
       - "Status v3 explicitly reports supervision and incidents unavailable;
         absence is not an empty incident set and does not make the provider
-        incompatible."
+        incompatible. Status v4/v5 exposes the exact provider summary without
+        making Manager a recovery or cooldown authority."
+  incident_projection:
+    status: runtime_authoritative
+    route: GET /api/v1/providers/{profileId}/incidents
+    provider_operation: incidents_list
+    manager_schema: arena_provider_incident_page_projection_v1
+    provider_schema: uci_arena_provider_incident_page_v1
+    filters: [active, all]
+    maximum_page_size: 100
+    rules:
+      - "Operation availability comes only from the receipt-verified service
+        contract, component contract map, and exact Manager operation catalog."
+      - "The public query accepts only filter, after, and limit. Manager maps
+        those scalars to the declared flags plus the receipt-owned runtime
+        directory and never accepts a caller-selected path or command."
+      - "Provider pages are closed, byte-bounded, cursor-monotonic, internally
+        consistent, and sanitized before projection."
+      - "Operation absence returns availability unavailable with a null page;
+        an empty available page is reserved for an invoked provider operation
+        that authoritatively returned no matching incidents."
   bounds:
     incident_pages: stable_provider_keyset_cursor
     game_pages: stable_provider_keyset_cursor_maximum_100_records

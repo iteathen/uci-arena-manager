@@ -5,6 +5,7 @@
 #include "arena/application/process_supervisor.hpp"
 #include "arena/application/tournament_executor.hpp"
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -67,6 +68,11 @@ class ControlPlane final {
     [[nodiscard]] nlohmann::json bot_candidates() const;
     [[nodiscard]] nlohmann::json provider_status(
         const std::string& profile_id) const;
+    [[nodiscard]] nlohmann::json provider_incidents(
+        const std::string& profile_id,
+        const std::string& filter,
+        std::uint64_t after_cursor,
+        std::uint32_t limit) const;
     [[nodiscard]] ReportArtifact report_artifact(
         const std::string& report_id,
         const std::string& format) const;

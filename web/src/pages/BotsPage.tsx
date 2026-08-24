@@ -9,7 +9,7 @@ import { ComponentSetupButton } from '../components/ComponentSetupButton'
 import { BotOperationsPanel } from '../components/BotOperationsPanel'
 import { LichessCredentialSetup } from '../components/LichessCredentialSetup'
 import { botStatusRefreshInterval, canEnableBotStartup, canProbeBot } from './botAdmission'
-import { providerStatusAlerts } from './providerStatusModel'
+import { providerIncidentAlerts, providerStatusAlerts } from './providerStatusModel'
 
 export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
   const queryClient = useQueryClient()
@@ -30,6 +30,7 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
     (component) => component.component_id === 'lichess.adapter',
   )
   const [detectionMessage, setDetectionMessage] = useState('')
+  const [incidentAfter, setIncidentAfter] = useState(0)
   const probe = useMutation({ mutationFn: probeLocalBot })
   const qualification = useMutation({
     mutationFn: qualifyLocalBot,
@@ -46,7 +47,16 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
     refetchInterval: 5_000,
     refetchIntervalInBackground: false,
   })
+  const providerIncidents = useQuery({
+    queryKey: ['provider-incidents', 'lichess_bot', 'all', incidentAfter],
+    queryFn: () => api.providerIncidents('lichess_bot', 'all', incidentAfter, 100),
+    enabled: providerStatus.data?.incident_availability === 'available',
+    retry: false,
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: false,
+  })
   const currentProviderAlerts = providerStatusAlerts(providerStatus.data)
+  const durableProviderAlerts = providerIncidentAlerts(providerIncidents.data, true)
   const startup = useQuery({
     queryKey: ['bot-startup'],
     queryFn: () => controlLocalBot('status'),
@@ -236,6 +246,52 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
                 </Code>
               </Group>
             )}
+            {providerStatus.data && (
+              <Group justify="space-between">
+                <Text size="sm">Durable Provider incidents</Text>
+                <Code>
+                  {providerStatus.data.incident_availability === 'unavailable'
+                    ? 'unavailable'
+                    : 'incidents' in providerStatus.data.status
+                      ? `${providerStatus.data.status.incidents.active_count ?? 0} active`
+                      : 'checking'}
+                </Code>
+              </Group>
+            )}
+            {providerStatus.data && 'supervision' in providerStatus.data.status && (
+              <Group justify="space-between">
+                <Text size="sm">Provider supervision</Text>
+                <Code>{providerStatus.data.status.supervision.state}</Code>
+              </Group>
+            )}
+            {durableProviderAlerts.map((alert) => (
+              <Alert key={alert.key} color={alert.color} title={alert.title}>
+                {alert.detail}
+              </Alert>
+            ))}
+            {providerIncidents.data?.page && (
+              <Group justify="space-between">
+                <Text size="xs" c="dimmed">
+                  {`Provider incident cursors after ${providerIncidents.data.page.after_cursor}; next ${providerIncidents.data.page.next_cursor}.`}
+                </Text>
+                <Group gap="xs">
+                  {incidentAfter > 0 && (
+                    <Button size="xs" variant="subtle" onClick={() => setIncidentAfter(0)}>
+                      First page
+                    </Button>
+                  )}
+                  {providerIncidents.data.page.has_more && (
+                    <Button
+                      size="xs"
+                      variant="subtle"
+                      onClick={() => setIncidentAfter(providerIncidents.data!.page!.next_cursor)}
+                    >
+                      Next incidents
+                    </Button>
+                  )}
+                </Group>
+              </Group>
+            )}
             {currentProviderAlerts.map((alert) => (
               <Alert key={alert.key} color={alert.color} title={alert.title}>
                 {alert.detail}
@@ -244,6 +300,11 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
             {candidate?.package_state === 'installed' && providerStatus.error && (
               <Alert color="orange" title="Current provider status unavailable">
                 {providerStatus.error.message}
+              </Alert>
+            )}
+            {providerIncidents.error && (
+              <Alert color="orange" title="Durable Provider incidents unavailable">
+                {providerIncidents.error.message}
               </Alert>
             )}
             {observedStartup?.blockers.map((blocker) => (

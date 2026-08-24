@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <charconv>
+#include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -126,6 +127,29 @@ json parse_body(const HttpRequestPtr& request) {
 
 drogon::HttpStatusCode status_code(const int status) {
     return static_cast<drogon::HttpStatusCode>(status);
+}
+
+std::uint64_t bounded_query_integer(
+    const HttpRequestPtr& request,
+    const std::string& name,
+    const std::uint64_t default_value,
+    const std::uint64_t maximum) {
+    const std::string value = request->getParameter(name);
+    if (value.empty()) {
+        return default_value;
+    }
+    std::uint64_t parsed_value = 0;
+    const auto parsed = std::from_chars(
+        value.data(), value.data() + value.size(), parsed_value);
+    if (parsed.ec != std::errc{} ||
+        parsed.ptr != value.data() + value.size() ||
+        parsed_value > maximum) {
+        throw arena::application::CommandFailure(
+            "invalid_provider_incident_query",
+            "provider incident filter, cursor, or limit is invalid",
+            400);
+    }
+    return parsed_value;
 }
 
 int run_control_plane(const Options& options) {
@@ -455,6 +479,46 @@ int run_control_plane(const Options& options) {
                 }
                 try {
                     callback(response(control_plane->provider_status(profile_id)));
+                } catch (const arena::application::CommandFailure& failure) {
+                    callback(response(
+                        arena::application::problem_json(failure),
+                        status_code(failure.http_status())));
+                }
+            },
+            {drogon::Get});
+
+        app.registerHandler(
+            "/api/v1/providers/{1}/incidents",
+            [control_plane, auth](
+                const HttpRequestPtr& request,
+                std::function<void(const HttpResponsePtr&)>&& callback,
+                const std::string& profile_id) {
+                if (!authorized(request, auth)) {
+                    callback(response(
+                        {{"code", "authentication_required"}},
+                        drogon::k401Unauthorized));
+                    return;
+                }
+                try {
+                    const std::string filter =
+                        request->getParameter("filter").empty()
+                            ? "active"
+                            : request->getParameter("filter");
+                    const std::uint64_t after_cursor = bounded_query_integer(
+                        request, "after", 0U, 9'007'199'254'740'991ULL);
+                    const std::uint64_t limit = bounded_query_integer(
+                        request, "limit", 100U, 100U);
+                    if (limit == 0U) {
+                        throw arena::application::CommandFailure(
+                            "invalid_provider_incident_query",
+                            "provider incident filter, cursor, or limit is invalid",
+                            400);
+                    }
+                    callback(response(control_plane->provider_incidents(
+                        profile_id,
+                        filter,
+                        after_cursor,
+                        static_cast<std::uint32_t>(limit))));
                 } catch (const arena::application::CommandFailure& failure) {
                     callback(response(
                         arena::application::problem_json(failure),
