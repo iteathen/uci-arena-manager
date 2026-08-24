@@ -278,9 +278,10 @@ planned_operational_projections_2026_08_23:
     incidents: https://github.com/iteathen/uci-arena-manager/issues/125
     games: https://github.com/iteathen/uci-arena-manager/issues/126
   activation:
-    - Current startup, status, options, qualification, and account-control
-      behavior is unchanged. New projections become available only after the
-      receipt-verified provider declares their typed additive operations.
+    - The credential-free status-v3 Manager route and bounded current-status
+      alerts are active. Incident and game projections become available only
+      after the receipt-verified provider declares their typed additive
+      operations.
   incident_projection:
     provider_operation: incidents_list
     manager_access: credential_free_read_only

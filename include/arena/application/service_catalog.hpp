@@ -66,6 +66,15 @@ class ServiceCatalog final {
     [[nodiscard]] static nlohmann::json discover_bot(
         const std::filesystem::path& manager_data_root,
         const BotCommandRunner& command_runner);
+    [[nodiscard]] static nlohmann::json provider_status(
+        const std::filesystem::path& manager_data_root,
+        const ProcessSupervisor& process_supervisor,
+        const ComponentVerificationRegistry& component_registry,
+        const std::string& profile_id);
+    [[nodiscard]] static nlohmann::json provider_status(
+        const std::filesystem::path& manager_data_root,
+        const BotCommandRunner& command_runner,
+        const std::string& profile_id);
     [[nodiscard]] static nlohmann::json probe_bot(
         const std::filesystem::path& manager_data_root,
         const ProcessSupervisor& process_supervisor);

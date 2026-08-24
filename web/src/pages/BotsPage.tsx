@@ -9,6 +9,7 @@ import { ComponentSetupButton } from '../components/ComponentSetupButton'
 import { BotOperationsPanel } from '../components/BotOperationsPanel'
 import { LichessCredentialSetup } from '../components/LichessCredentialSetup'
 import { botStatusRefreshInterval, canEnableBotStartup, canProbeBot } from './botAdmission'
+import { providerStatusAlerts } from './providerStatusModel'
 
 export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
   const queryClient = useQueryClient()
@@ -37,6 +38,15 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
     },
   })
   const candidate = candidates.data?.candidates[0]
+  const providerStatus = useQuery({
+    queryKey: ['provider-status', 'lichess_bot'],
+    queryFn: () => api.providerStatus('lichess_bot'),
+    enabled: candidate?.package_state === 'installed',
+    retry: false,
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: false,
+  })
+  const currentProviderAlerts = providerStatusAlerts(providerStatus.data)
   const startup = useQuery({
     queryKey: ['bot-startup'],
     queryFn: () => controlLocalBot('status'),
@@ -206,6 +216,36 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
                   : 'checking'}
               </Code>
             </Group>
+            {providerStatus.data && (
+              <Group justify="space-between">
+                <Text size="sm">Provider API state</Text>
+                <Code>{providerStatus.data.status.rate_limit.state}</Code>
+              </Group>
+            )}
+            {providerStatus.data && (
+              <Group justify="space-between">
+                <Text size="sm">Provider scheduler</Text>
+                <Code>
+                  {providerStatus.data.status.scheduler.fault
+                    ? 'faulted'
+                    : providerStatus.data.status.scheduler.paused
+                      ? 'paused'
+                      : providerStatus.data.status.scheduler.enabled
+                        ? 'running'
+                        : 'disabled'}
+                </Code>
+              </Group>
+            )}
+            {currentProviderAlerts.map((alert) => (
+              <Alert key={alert.key} color={alert.color} title={alert.title}>
+                {alert.detail}
+              </Alert>
+            ))}
+            {candidate?.package_state === 'installed' && providerStatus.error && (
+              <Alert color="orange" title="Current provider status unavailable">
+                {providerStatus.error.message}
+              </Alert>
+            )}
             {observedStartup?.blockers.map((blocker) => (
               <Alert key={blocker} color="blue" title="Provider status">
                 {blocker.replaceAll('_', ' ')}

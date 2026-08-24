@@ -2031,6 +2031,26 @@ json ControlPlane::bot_candidates() const {
         manager_data_root_, process_supervisor_, *component_registry_);
 }
 
+json ControlPlane::provider_status(const std::string& profile_id) const {
+    try {
+        return ServiceCatalog::provider_status(
+            manager_data_root_,
+            process_supervisor_,
+            *component_registry_,
+            profile_id);
+    } catch (const std::invalid_argument&) {
+        throw CommandFailure(
+            "provider_profile_not_found", "provider profile was not found", 404);
+    } catch (const ComponentVerificationUnavailable& failure) {
+        throw CommandFailure(failure.code(), failure.what(), 409);
+    } catch (const std::exception&) {
+        throw CommandFailure(
+            "provider_status_unavailable",
+            "current provider status is unavailable",
+            503);
+    }
+}
+
 json ControlPlane::generate_report(const json& request, const std::string& actor) {
     if (required_string(request.at("target"), "kind") != "report" ||
         (request.at("target").contains("id") &&

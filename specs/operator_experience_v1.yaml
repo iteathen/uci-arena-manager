@@ -591,12 +591,15 @@ planned_lichess_incident_history_and_loading_experience_2026_08_23:
     history: https://github.com/iteathen/uci-arena-manager/issues/126
     component_loading: https://github.com/iteathen/uci-arena-manager/issues/127
   activation:
-    - These requirements describe the approved target and do not claim that
-      current provider incident/game operations or their Manager routes and
-      dashboard controls exist. The component-loading requirements are active.
+    - The status-v3 compatibility projection is active in Overview and Bots.
+      Provider incident/game operations and their history controls remain
+      planned. The component-loading requirements are active.
     - Runtime UI work follows the provider contract releases and issue-owned
       Manager OpenAPI/schema changes.
   incident_experience:
+    - Before the incident ledger lands, Overview and Bots show current bounded
+      status-v3 cooldown, scheduler-fault, stream, and blocker alerts. They are
+      live status observations, never fabricated durable incidents.
     - Active provider critical/error incidents appear as persistent Overview
       and Bots alerts rather than transient toasts or log-only entries.
     - Alerts show one sanitized provider-owned code, severity, occurrence

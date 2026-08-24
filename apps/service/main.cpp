@@ -442,6 +442,28 @@ int run_control_plane(const Options& options) {
             {drogon::Get});
 
         app.registerHandler(
+            "/api/v1/providers/{1}/status",
+            [control_plane, auth](
+                const HttpRequestPtr& request,
+                std::function<void(const HttpResponsePtr&)>&& callback,
+                const std::string& profile_id) {
+                if (!authorized(request, auth)) {
+                    callback(response(
+                        {{"code", "authentication_required"}},
+                        drogon::k401Unauthorized));
+                    return;
+                }
+                try {
+                    callback(response(control_plane->provider_status(profile_id)));
+                } catch (const arena::application::CommandFailure& failure) {
+                    callback(response(
+                        arena::application::problem_json(failure),
+                        status_code(failure.http_status())));
+                }
+            },
+            {drogon::Get});
+
+        app.registerHandler(
             "/api/v1/resources/{1}",
             [control_plane, auth](
                 const HttpRequestPtr& request,

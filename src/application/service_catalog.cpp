@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -408,7 +409,7 @@ ProviderServiceContract verified_provider_service_contract(
         service.value("component_version", "") !=
             component.receipt.value("component_version", "") ||
         service.value("transport", "") != "cli_json" ||
-        contract_version.size() <= 2 ||
+        contract_version.size() <= 2 || contract_version.size() > 32U ||
         !contract_version.starts_with("1.") ||
         !std::ranges::all_of(
             std::string_view(contract_version).substr(2),
@@ -681,6 +682,316 @@ json project_bot_provider_status(const json& result) {
         {"provider_ready", ready},
         {"stream_connected", result.at("stream_connected")},
         {"blockers", std::move(blockers)},
+    };
+}
+
+bool exact_object_fields(
+    const json& value,
+    const std::initializer_list<std::string_view> fields) {
+    return value.is_object() && value.size() == fields.size() &&
+           std::ranges::all_of(fields, [&value](const std::string_view field) {
+               return value.contains(std::string(field));
+           });
+}
+
+bool bounded_nonnegative_integer(
+    const json& value,
+    const std::uint64_t maximum = 9'007'199'254'740'991ULL) {
+    if (value.is_number_unsigned()) {
+        return value.get<std::uint64_t>() <= maximum;
+    }
+    return value.is_number_integer() && value.get<std::int64_t>() >= 0 &&
+           static_cast<std::uint64_t>(value.get<std::int64_t>()) <= maximum;
+}
+
+bool nullable_bounded_nonnegative_integer(
+    const json& value,
+    const std::uint64_t maximum = 9'007'199'254'740'991ULL) {
+    return value.is_null() || bounded_nonnegative_integer(value, maximum);
+}
+
+bool bounded_date_time(const json& value) {
+    if (value.is_null()) {
+        return true;
+    }
+    if (!value.is_string()) {
+        return false;
+    }
+    const std::string& timestamp = value.get_ref<const std::string&>();
+    if (timestamp.size() < 20U || timestamp.size() > 64U ||
+        timestamp.at(4) != '-' || timestamp.at(7) != '-' ||
+        timestamp.at(10) != 'T' || timestamp.at(13) != ':' ||
+        timestamp.at(16) != ':') {
+        return false;
+    }
+    const auto digits = [&timestamp](const std::size_t first, const std::size_t count) {
+        return first + count <= timestamp.size() &&
+               std::ranges::all_of(
+                   std::string_view(timestamp).substr(first, count),
+                   [](const unsigned char character) {
+                       return std::isdigit(character) != 0;
+                   });
+    };
+    const auto two_digits = [&timestamp](const std::size_t first) {
+        return static_cast<unsigned int>(timestamp.at(first) - '0') * 10U +
+               static_cast<unsigned int>(timestamp.at(first + 1U) - '0');
+    };
+    if (!digits(0U, 4U) || !digits(5U, 2U) || !digits(8U, 2U) ||
+        !digits(11U, 2U) || !digits(14U, 2U) || !digits(17U, 2U)) {
+        return false;
+    }
+    const unsigned int month = two_digits(5U);
+    const unsigned int day = two_digits(8U);
+    const unsigned int hour = two_digits(11U);
+    const unsigned int minute = two_digits(14U);
+    const unsigned int second = two_digits(17U);
+    static constexpr std::array<unsigned int, 12> days_per_month{
+        31U, 28U, 31U, 30U, 31U, 30U, 31U, 31U, 30U, 31U, 30U, 31U};
+    if (month == 0U || month > days_per_month.size() || hour > 23U ||
+        minute > 59U || second > 59U) {
+        return false;
+    }
+    const unsigned int year =
+        static_cast<unsigned int>(timestamp.at(0) - '0') * 1000U +
+        static_cast<unsigned int>(timestamp.at(1) - '0') * 100U +
+        static_cast<unsigned int>(timestamp.at(2) - '0') * 10U +
+        static_cast<unsigned int>(timestamp.at(3) - '0');
+    const bool leap_year =
+        year % 400U == 0U || (year % 4U == 0U && year % 100U != 0U);
+    const unsigned int maximum_day =
+        days_per_month.at(month - 1U) + (month == 2U && leap_year ? 1U : 0U);
+    if (day == 0U || day > maximum_day) {
+        return false;
+    }
+
+    std::size_t zone_start = timestamp.size() - 1U;
+    if (timestamp.back() != 'Z') {
+        if (timestamp.size() < 25U) {
+            return false;
+        }
+        zone_start = timestamp.size() - 6U;
+        if ((timestamp.at(zone_start) != '+' && timestamp.at(zone_start) != '-') ||
+            timestamp.at(zone_start + 3U) != ':' ||
+            !digits(zone_start + 1U, 2U) || !digits(zone_start + 4U, 2U) ||
+            two_digits(zone_start + 1U) > 23U ||
+            two_digits(zone_start + 4U) > 59U) {
+            return false;
+        }
+    }
+    if (zone_start == 19U) {
+        return true;
+    }
+    return zone_start > 20U && timestamp.at(19U) == '.' &&
+           digits(20U, zone_start - 20U);
+}
+
+bool string_enum(
+    const json& value,
+    const std::initializer_list<std::string_view> values) {
+    return value.is_string() &&
+           std::ranges::find(values, value.get_ref<const std::string&>()) !=
+               values.end();
+}
+
+json validate_provider_status_v3(const json& result) {
+    if (result.dump().size() > 64U * 1024U ||
+        !exact_object_fields(
+            result,
+            {"schema", "installed", "registered", "active", "ready",
+             "stream_connected", "stream_state", "runtime_updated_at",
+             "account", "capacity", "games", "scheduler", "rate_limit",
+             "blockers"}) ||
+        result.at("schema") != "uci_arena_lichess_status_v3" ||
+        !result.at("installed").is_boolean() ||
+        !result.at("registered").is_boolean() ||
+        !result.at("active").is_boolean() ||
+        !result.at("ready").is_boolean() ||
+        !result.at("stream_connected").is_boolean() ||
+        !string_enum(
+            result.at("stream_state"),
+            {"starting", "reconciling", "connecting",
+             "waiting_for_api_cooldown", "connected", "disconnected"}) ||
+        !bounded_date_time(result.at("runtime_updated_at"))) {
+        throw std::runtime_error(
+            "the provider returned invalid bounded status-v3 identity");
+    }
+
+    const json& account = result.at("account");
+    if (!account.is_null() &&
+        (!exact_object_fields(account, {"username", "bot"}) ||
+         !account.at("username").is_string() ||
+         !valid_lichess_account_name(
+             account.at("username").get_ref<const std::string&>()) ||
+         account.at("bot") != true)) {
+        throw std::runtime_error(
+            "the provider returned invalid bounded status-v3 account state");
+    }
+
+    static constexpr std::array<std::string_view, 6> slot_fields{
+        "empty", "preparing", "pending", "cancelling", "active", "draining"};
+    const auto valid_slot_counts = [](const json& slots) {
+        if (!exact_object_fields(
+                slots,
+                {"empty", "preparing", "pending", "cancelling", "active",
+                 "draining"})) {
+            return false;
+        }
+        return std::ranges::all_of(
+            slot_fields,
+            [&slots](const std::string_view field) {
+                return bounded_nonnegative_integer(
+                    slots.at(std::string(field)), 64U);
+            });
+    };
+    const json& capacity = result.at("capacity");
+    if (!exact_object_fields(capacity, {"configured", "qualified", "slots"}) ||
+        !nullable_bounded_nonnegative_integer(capacity.at("configured"), 64U) ||
+        !nullable_bounded_nonnegative_integer(capacity.at("qualified"), 64U) ||
+        !valid_slot_counts(capacity.at("slots"))) {
+        throw std::runtime_error(
+            "the provider returned invalid bounded status-v3 capacity");
+    }
+
+    static constexpr std::array<std::string_view, 5> game_fields{
+        "active", "preparing", "pending", "cancelling", "draining"};
+    const json& games = result.at("games");
+    if (!exact_object_fields(
+            games,
+            {"active", "preparing", "pending", "cancelling", "draining"}) ||
+        !std::ranges::all_of(
+            game_fields,
+            [&games](const std::string_view field) {
+                return bounded_nonnegative_integer(
+                    games.at(std::string(field)), 64U);
+            })) {
+        throw std::runtime_error(
+            "the provider returned invalid bounded status-v3 games");
+    }
+
+    const json& scheduler = result.at("scheduler");
+    if (!exact_object_fields(
+            scheduler, {"enabled", "paused", "target_active_bots", "fault"}) ||
+        !scheduler.at("enabled").is_boolean() ||
+        !scheduler.at("paused").is_boolean() ||
+        !nullable_bounded_nonnegative_integer(
+            scheduler.at("target_active_bots"), 64U)) {
+        throw std::runtime_error(
+            "the provider returned invalid bounded status-v3 scheduler");
+    }
+    const json& scheduler_fault = scheduler.at("fault");
+    if (!scheduler_fault.is_null() &&
+        (!exact_object_fields(scheduler_fault, {"kind", "status"}) ||
+         !scheduler_fault.at("kind").is_string() ||
+         !valid_contract_identifier(
+             scheduler_fault.at("kind").get_ref<const std::string&>()) ||
+         (!scheduler_fault.at("status").is_null() &&
+          !bounded_nonnegative_integer(scheduler_fault.at("status"), 599U)) ||
+         (bounded_nonnegative_integer(scheduler_fault.at("status"), 599U) &&
+          scheduler_fault.at("status").get<std::uint64_t>() < 100U))) {
+        throw std::runtime_error(
+            "the provider returned invalid bounded status-v3 scheduler fault");
+    }
+
+    const json& rate_limit = result.at("rate_limit");
+    if (!exact_object_fields(
+            rate_limit,
+            {"state", "cooldown_until", "cooldown_remaining_ms",
+             "strike_count", "challenge_state", "challenge_blocked_until",
+             "challenge_remaining_ms", "challenge_strike_count", "queue_depth",
+             "in_flight_class", "client_lease"}) ||
+        !string_enum(
+            rate_limit.at("state"),
+            {"unknown", "ready", "cooldown", "challenge_quarantined",
+             "challenge_half_open"}) ||
+        !string_enum(
+            rate_limit.at("challenge_state"),
+            {"unknown", "ready", "quarantined", "half_open_ready",
+             "half_open"})) {
+        throw std::runtime_error(
+            "the provider returned invalid bounded status-v3 rate limit");
+    }
+    for (const auto field : {
+             "cooldown_until", "cooldown_remaining_ms", "strike_count",
+             "challenge_blocked_until", "challenge_remaining_ms",
+             "challenge_strike_count", "queue_depth"}) {
+        if (!nullable_bounded_nonnegative_integer(rate_limit.at(field))) {
+            throw std::runtime_error(
+                "the provider returned invalid bounded status-v3 rate-limit counter");
+        }
+    }
+    const json& in_flight_class = rate_limit.at("in_flight_class");
+    if (!in_flight_class.is_null() &&
+        (!in_flight_class.is_string() ||
+         !valid_contract_identifier(
+             in_flight_class.get_ref<const std::string&>()) ||
+         in_flight_class.get_ref<const std::string&>().size() > 64U)) {
+        throw std::runtime_error(
+            "the provider returned invalid bounded status-v3 in-flight class");
+    }
+    const json& client_lease = rate_limit.at("client_lease");
+    if (!exact_object_fields(
+            client_lease,
+            {"state", "active_clients", "heartbeat_at", "expires_at"}) ||
+        !string_enum(
+            client_lease.at("state"),
+            {"unknown", "authoritative", "missing", "conflict"}) ||
+        !nullable_bounded_nonnegative_integer(client_lease.at("active_clients")) ||
+        !nullable_bounded_nonnegative_integer(client_lease.at("heartbeat_at")) ||
+        !nullable_bounded_nonnegative_integer(client_lease.at("expires_at"))) {
+        throw std::runtime_error(
+            "the provider returned invalid bounded status-v3 client lease");
+    }
+
+    const json& blockers = result.at("blockers");
+    if (!blockers.is_array() || blockers.size() > 64U) {
+        throw std::runtime_error(
+            "the provider returned invalid bounded status-v3 blockers");
+    }
+    std::set<std::string> unique_blockers;
+    for (const auto& blocker : blockers) {
+        if (!blocker.is_string() ||
+            !valid_contract_identifier(blocker.get_ref<const std::string&>()) ||
+            !unique_blockers.insert(blocker.get<std::string>()).second) {
+            throw std::runtime_error(
+                "the provider returned invalid bounded status-v3 blocker");
+        }
+    }
+    return result;
+}
+
+json provider_status_impl(
+    const fs::path& manager_data_root,
+    const ServiceCatalog::BotCommandRunner& command_runner,
+    const ComponentVerificationRegistry* component_registry,
+    const std::string& profile_id) {
+    if (profile_id != "lichess_bot") {
+        throw std::invalid_argument("unknown provider profile");
+    }
+    const fs::path receipts_root = manager_data_root / "receipts";
+    InstalledComponent adapter = installed_component(
+        receipts_root, "lichess.adapter", true, component_registry);
+    ProviderServiceContract contract = verified_provider_service_contract(
+        receipts_root, adapter, component_registry);
+    std::vector<std::string> arguments = provider_operation_arguments(
+        contract, "provider_status", "forbidden");
+    arguments.insert(
+        arguments.end(),
+        {"--runtime-dir", bot_runtime_directory(adapter).string()});
+    const json status = validate_provider_status_v3(command_runner(
+        contract.executable,
+        adapter.active_root,
+        arguments,
+        std::chrono::seconds(30)));
+    return {
+        {"schema", "arena_provider_status_projection_v1"},
+        {"schema_version", 1},
+        {"profile_id", profile_id},
+        {"availability", "available"},
+        {"provider_contract_version", contract.operations.at("version")},
+        {"provider_status_schema", "uci_arena_lichess_status_v3"},
+        {"supervision_availability", "unavailable"},
+        {"incident_availability", "unavailable"},
+        {"status", status},
     };
 }
 
@@ -2597,6 +2908,33 @@ json ServiceCatalog::control_bot(
         response["recovery_requested"] = true;
     }
     return response;
+}
+
+json ServiceCatalog::provider_status(
+    const fs::path& manager_data_root,
+    const ProcessSupervisor& process_supervisor,
+    const ComponentVerificationRegistry& component_registry,
+    const std::string& profile_id) {
+    return provider_status_impl(
+        manager_data_root,
+        [&process_supervisor](
+            const fs::path& executable,
+            const fs::path& working_directory,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds timeout) {
+            return process_supervisor.run_json(
+                executable, working_directory, arguments, timeout);
+        },
+        &component_registry,
+        profile_id);
+}
+
+json ServiceCatalog::provider_status(
+    const fs::path& manager_data_root,
+    const BotCommandRunner& command_runner,
+    const std::string& profile_id) {
+    return provider_status_impl(
+        manager_data_root, command_runner, nullptr, profile_id);
 }
 
 json ServiceCatalog::bot_options(
