@@ -667,6 +667,88 @@ export interface ProviderIncidentPageProjection {
   page: ProviderIncidentPage | null
 }
 
+export interface ProviderGameComponent {
+  component_id: string
+  version: string
+  manifest_sha256: string
+}
+
+export interface ProviderGameSummary {
+  cursor: number
+  game_id: string
+  state: 'live' | 'history'
+  opponent: string
+  color: 'white' | 'black' | null
+  rated: boolean
+  speed: string | null
+  variant: 'standard'
+  clock_limit: number
+  clock_increment: number
+  status: string
+  result: string | null
+  winner: string | null
+  plies: number
+  started_at: number
+  finished_at: number | null
+  archive_completeness: 'live' | 'summary_only' | 'complete' | 'reconciled'
+  incomplete_reason: string | null
+  archive_sha256: string | null
+  provider_component: ProviderGameComponent | null
+  engine_component: ProviderGameComponent | null
+}
+
+export interface ProviderGamePage {
+  schema: 'uci_arena_provider_game_page_v1'
+  scope: 'live' | 'history'
+  before_cursor: number
+  next_cursor: number
+  has_more: boolean
+  games: ProviderGameSummary[]
+}
+
+export interface ProviderGamePageProjection {
+  schema: 'arena_provider_game_page_projection_v1'
+  schema_version: 1
+  profile_id: 'lichess_bot'
+  availability: 'available' | 'unavailable'
+  provider_contract_version: string
+  page: ProviderGamePage | null
+}
+
+export interface ProviderGamePly {
+  ply: number
+  uci_move: string
+  before_fen: string
+  after_fen: string
+  actor_color: 'white' | 'black'
+  clock_ms: number | null
+}
+
+export interface ProviderGame extends ProviderGameSummary {
+  schema: 'uci_arena_provider_game_v1'
+  initial_fen: string | null
+  runtime_provenance: {
+    sha256: string
+    details_available: boolean
+    engine?: Record<string, string | null>
+    model?: Record<string, string | null>
+    evaluation_runtime?: Record<string, string | null>
+    search?: Record<string, string | number | null>
+    timing?: Record<string, string | boolean | null>
+    knowledge?: Record<string, string | null>
+  } | null
+  replay: ProviderGamePly[]
+}
+
+export interface ProviderGameProjection {
+  schema: 'arena_provider_game_projection_v1'
+  schema_version: 1
+  profile_id: 'lichess_bot'
+  availability: 'available' | 'unavailable'
+  provider_contract_version: string
+  game: ProviderGame | null
+}
+
 export interface BotProbeResult {
   schema: 'arena_bot_probe_result_v1'
   schema_version: 1

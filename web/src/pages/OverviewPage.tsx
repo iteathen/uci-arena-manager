@@ -172,7 +172,14 @@ export function OverviewPage({ navigate }: { navigate: (page: string) => void })
               )}
               {durableProviderAlerts.map((alert) => (
                 <Alert key={alert.key} color={alert.color} title={alert.title}>
-                  {alert.detail}
+                  <Group justify="space-between" align="flex-end">
+                    <Text size="sm">{alert.detail}</Text>
+                    {alert.gamePage && (
+                      <Button size="xs" variant="subtle" onClick={() => navigate(alert.gamePage ?? 'history')}>
+                        Open game
+                      </Button>
+                    )}
+                  </Group>
                 </Alert>
               ))}
               {currentProviderAlerts.map((alert) => (

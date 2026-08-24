@@ -9,6 +9,8 @@ export interface ProviderStatusAlert {
   color: 'red' | 'orange' | 'blue'
   title: string
   detail: string
+  gameId?: string
+  gamePage?: 'live' | 'history'
 }
 
 function retryDetail(milliseconds: number | null): string {
@@ -77,6 +79,10 @@ export function providerIncidentAlerts(
           ? `Recovered Provider incident · ${displayCode(incident.code)}`
           : `${incident.severity === 'critical' ? 'Critical' : 'Active'} Provider incident · ${displayCode(incident.code)}`,
       detail: incidentDetail(incident),
+      gameId: incident.game_id ?? undefined,
+      gamePage: incident.game_id
+        ? incident.state === 'active' ? 'live' as const : 'history' as const
+        : undefined,
     }))
 }
 

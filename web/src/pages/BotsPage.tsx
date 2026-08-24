@@ -258,6 +258,24 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
                 </Code>
               </Group>
             )}
+            {providerStatus.data && (
+              <Group justify="space-between">
+                <Text size="sm">Provider game activity</Text>
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  onClick={() => navigate(
+                    providerStatus.data.status.games.active > 0 ? 'live' : 'history',
+                  )}
+                >
+                  {'archive_available' in providerStatus.data.status.games
+                    ? `${providerStatus.data.status.games.active} live · ${providerStatus.data.status.games.total ?? 0} retained`
+                    : providerStatus.data.status.games.active > 0
+                      ? `${providerStatus.data.status.games.active} live`
+                      : 'Open history'}
+                </Button>
+              </Group>
+            )}
             {providerStatus.data && 'supervision' in providerStatus.data.status && (
               <Group justify="space-between">
                 <Text size="sm">Provider supervision</Text>
@@ -266,7 +284,14 @@ export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
             )}
             {durableProviderAlerts.map((alert) => (
               <Alert key={alert.key} color={alert.color} title={alert.title}>
-                {alert.detail}
+                <Group justify="space-between" align="flex-end">
+                  <Text size="sm">{alert.detail}</Text>
+                  {alert.gamePage && (
+                    <Button size="xs" variant="subtle" onClick={() => navigate(alert.gamePage ?? 'history')}>
+                      Open game
+                    </Button>
+                  )}
+                </Group>
               </Alert>
             ))}
             {providerIncidents.data?.page && (

@@ -152,11 +152,23 @@ export default function App() {
       case 'bots':
         return <BotsPage navigate={navigate} />
       case 'live':
-        return <GameResourcesPage mode="live" navigate={navigate} />
+        return (
+          <GameResourcesPage
+            mode="live"
+            navigate={navigate}
+            providerEnabled={lichessAdapterInstalled}
+          />
+        )
       case 'tournaments':
         return <TournamentPage navigate={navigate} />
       case 'history':
-        return <GameResourcesPage mode="history" navigate={navigate} />
+        return (
+          <GameResourcesPage
+            mode="history"
+            navigate={navigate}
+            providerEnabled={lichessAdapterInstalled}
+          />
+        )
       case 'logs':
         return <LogsPage />
       case 'statistics':
@@ -174,7 +186,7 @@ export default function App() {
       default:
         return <OverviewPage navigate={navigate} />
     }
-  }, [navigate, page])
+  }, [lichessAdapterInstalled, navigate, page])
 
   if (authState !== 'ready') {
     return (

@@ -248,6 +248,98 @@ json provider_incident_page_fixture(
     };
 }
 
+json provider_game_summary_fixture(
+    const std::string& state,
+    const std::uint64_t cursor,
+    const std::string& game_id,
+    const std::string& completeness = "complete") {
+    const bool live = state == "live";
+    const bool summary_only = completeness == "summary_only";
+    const bool complete =
+        completeness == "complete" || completeness == "reconciled";
+    return {
+        {"cursor", cursor},
+        {"game_id", game_id},
+        {"state", state},
+        {"opponent", "FixtureBot"},
+        {"color", "white"},
+        {"rated", false},
+        {"speed", "blitz"},
+        {"variant", "standard"},
+        {"clock_limit", 300},
+        {"clock_increment", 3},
+        {"status", live ? "started" : "mate"},
+        {"result", live ? json(nullptr) : json("win")},
+        {"winner", live ? json(nullptr) : json("white")},
+        {"plies", complete ? 2 : 0},
+        {"started_at", 1'777'000'000'000ULL + cursor},
+        {"finished_at",
+         live ? json(nullptr) : json(1'777'000'010'000ULL + cursor)},
+        {"archive_completeness", completeness},
+        {"incomplete_reason",
+         summary_only ? json("historical_moves_unavailable") : json(nullptr)},
+        {"archive_sha256",
+         complete ? json("sha256:" + std::string(64, 'a')) : json(nullptr)},
+        {"provider_component",
+         {{"component_id", "lichess.adapter"},
+          {"version", "1.0.24"},
+          {"manifest_sha256", "sha256:" + std::string(64, 'b')}}},
+        {"engine_component", nullptr},
+    };
+}
+
+json provider_game_page_fixture(
+    const std::string& scope = "history",
+    const std::uint64_t before_cursor = 0) {
+    return {
+        {"schema", "uci_arena_provider_game_page_v1"},
+        {"scope", scope},
+        {"before_cursor", before_cursor},
+        {"next_cursor", 7},
+        {"has_more", false},
+        {"games",
+         json::array({
+             provider_game_summary_fixture(
+                 scope, 9, "fixture-game-nine",
+                 scope == "live" ? "live" : "complete"),
+             provider_game_summary_fixture(
+                 scope, 7, "fixture-game-seven",
+                 scope == "live" ? "live" : "summary_only"),
+         })},
+    };
+}
+
+json provider_game_detail_fixture(
+    const std::string& game_id = "fixture-game-nine") {
+    json game = provider_game_summary_fixture(
+        "history", 9, game_id, "complete");
+    game["schema"] = "uci_arena_provider_game_v1";
+    game["initial_fen"] =
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    game["runtime_provenance"] = {
+        {"sha256", "sha256:" + std::string(64, 'c')},
+        {"details_available", false},
+    };
+    game["replay"] = json::array({
+        {{"ply", 0},
+         {"uci_move", "e2e4"},
+         {"before_fen", game.at("initial_fen")},
+         {"after_fen",
+          "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"},
+         {"actor_color", "white"},
+         {"clock_ms", 300'000}},
+        {{"ply", 1},
+         {"uci_move", "e7e5"},
+         {"before_fen",
+          "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"},
+         {"after_fen",
+          "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"},
+         {"actor_color", "black"},
+         {"clock_ms", 299'000}},
+    });
+    return game;
+}
+
 void write_installed_component(
     const fs::path& data_root,
     const fs::path& install_root,
@@ -298,7 +390,8 @@ void attach_bot_provider_contract(
     const bool alternate_operation_prefixes = false,
     const std::string& contract_version = "1.0",
     const bool installed_qualification = true,
-    const bool provider_incidents = false) {
+    const bool provider_incidents = false,
+    const bool provider_games = false) {
     const fs::path receipt_path =
         data_root / "receipts" / "lichess.adapter.json";
     json receipt = read_json(receipt_path);
@@ -415,6 +508,36 @@ void attach_bot_provider_contract(
         manifest["contracts"]["incident_page"] =
             "contracts/incident-page-schema.json";
     }
+    if (provider_games) {
+        operations["operations"]["games_list"] = {
+            {"arguments",
+             alternate_operation_prefixes
+                 ? json::array({"matches", "scan"})
+                 : json::array({"games", "list"})},
+            {"optional_arguments",
+             json::array({"--scope", "--before", "--limit", "--runtime-dir"})},
+            {"mutates", false},
+            {"credential", "forbidden"},
+            {"response", "uci_arena_provider_game_page_v1"},
+            {"response_schema", "contracts/game-page-schema.json"},
+        };
+        operations["operations"]["game_get"] = {
+            {"arguments",
+             alternate_operation_prefixes
+                 ? json::array({"match", "inspect"})
+                 : json::array({"game", "get"})},
+            {"required_arguments", json::array({"--game-id"})},
+            {"optional_arguments", json::array({"--runtime-dir"})},
+            {"mutates", false},
+            {"credential", "forbidden"},
+            {"response", "uci_arena_provider_game_v1"},
+            {"response_schema", "contracts/game-detail-schema.json"},
+        };
+        manifest["contracts"]["game_page"] =
+            "contracts/game-page-schema.json";
+        manifest["contracts"]["game_detail"] =
+            "contracts/game-detail-schema.json";
+    }
     json service_contract{
         {"schema", "uci_arena_service_contract_v1"},
         {"service",
@@ -460,6 +583,12 @@ void attach_bot_provider_contract(
         service_contract["incident_page_schema"] =
             "contracts/incident-page-schema.json";
     }
+    if (provider_games) {
+        service_contract["game_page_schema"] =
+            "contracts/game-page-schema.json";
+        service_contract["game_detail_schema"] =
+            "contracts/game-detail-schema.json";
+    }
     std::vector<std::pair<std::string, json>> documents{
         {"contracts/service-contract.json", service_contract},
         {"contracts/manager-operations.json", operations},
@@ -471,6 +600,20 @@ void attach_bot_provider_contract(
         documents.push_back({
             "contracts/incident-page-schema.json",
             {{"$id", "uci_arena_provider_incident_page_v1"},
+             {"type", "object"},
+             {"additionalProperties", false}},
+        });
+    }
+    if (provider_games) {
+        documents.push_back({
+            "contracts/game-page-schema.json",
+            {{"$id", "uci_arena_provider_game_page_v1"},
+             {"type", "object"},
+             {"additionalProperties", false}},
+        });
+        documents.push_back({
+            "contracts/game-detail-schema.json",
+            {{"$id", "uci_arena_provider_game_v1"},
              {"type", "object"},
              {"additionalProperties", false}},
         });
@@ -516,7 +659,8 @@ void write_ready_bot_fixture(
     const bool alternate_operation_prefixes = false,
     const std::string& contract_version = "1.0",
     const bool installed_qualification = true,
-    const bool provider_incidents = false) {
+    const bool provider_incidents = false,
+    const bool provider_games = false) {
     const fs::path data = root / "data";
     const fs::path install = root / "install";
     write_installed_component(
@@ -561,7 +705,8 @@ void write_ready_bot_fixture(
         {root / "workspaces" / "lichess-adapter"});
     attach_bot_provider_contract(
         data, direct_invocation, alternate_operation_prefixes,
-        contract_version, installed_qualification, provider_incidents);
+        contract_version, installed_qualification, provider_incidents,
+        provider_games);
 
     const std::array<std::pair<std::string, fs::path>, 5> locators{{
         {"timing_profile", root / "uci_time_profile_v3.json"},
@@ -2188,6 +2333,205 @@ TEST_CASE("provider incidents are explicitly unavailable when the operation is a
             100),
         std::invalid_argument);
     REQUIRE_FALSE(launched);
+    fs::remove_all(root);
+}
+
+TEST_CASE("provider games use declared operations and stable descending cursors") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-provider-games-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(
+        root, "node", true, true, "1.1", true, true, true);
+    std::vector<std::vector<std::string>> calls;
+    const auto runner = [&calls](
+                            const fs::path& executable,
+                            const fs::path& working_directory,
+                            const std::vector<std::string>& arguments,
+                            const std::chrono::milliseconds timeout) {
+        REQUIRE(executable.filename() == "adapter.mjs");
+        REQUIRE(fs::is_directory(working_directory));
+        REQUIRE(timeout == std::chrono::seconds(30));
+        calls.push_back(arguments);
+        if (arguments.at(0) == "matches") {
+            return provider_game_page_fixture("history", 11);
+        }
+        return provider_game_detail_fixture("fixture-game-nine");
+    };
+
+    const json page = arena::application::ServiceCatalog::provider_games(
+        root / "data", runner, "lichess_bot", "history", 11, 25);
+    REQUIRE(page.at("schema") == "arena_provider_game_page_projection_v1");
+    REQUIRE(page.at("availability") == "available");
+    REQUIRE(page.at("page").at("games").size() == 2);
+    REQUIRE(page.at("page").at("next_cursor") == 7);
+    REQUIRE(calls.at(0) == std::vector<std::string>{
+        "matches", "scan", "--scope", "history", "--before", "11",
+        "--limit", "25", "--runtime-dir", calls.at(0).at(9)});
+    REQUIRE(fs::is_directory(calls.at(0).at(9)));
+
+    const json detail = arena::application::ServiceCatalog::provider_game(
+        root / "data", runner, "lichess_bot", "fixture-game-nine");
+    REQUIRE(detail.at("schema") == "arena_provider_game_projection_v1");
+    REQUIRE(detail.at("game").at("archive_completeness") == "complete");
+    REQUIRE(detail.at("game").at("replay").size() == 2);
+    REQUIRE(calls.at(1).at(0) == "match");
+    REQUIRE(calls.at(1).at(1) == "inspect");
+    REQUIRE(calls.at(1).at(2) == "--game-id");
+    REQUIRE(calls.at(1).at(3) == "fixture-game-nine");
+    REQUIRE(calls.at(1).at(4) == "--runtime-dir");
+    REQUIRE(fs::is_directory(calls.at(1).at(5)));
+
+    const auto invalid_page = [&root](const json& candidate) {
+        return arena::application::ServiceCatalog::provider_games(
+            root / "data",
+            [&candidate](const fs::path&,
+                         const fs::path&,
+                         const std::vector<std::string>&,
+                         const std::chrono::milliseconds) { return candidate; },
+            "lichess_bot",
+            "history",
+            11,
+            100);
+    };
+    json non_monotonic = provider_game_page_fixture("history", 11);
+    non_monotonic["games"][1]["cursor"] = 10;
+    REQUIRE_THROWS_AS(invalid_page(non_monotonic), std::runtime_error);
+    json extra_field = provider_game_page_fixture("history", 11);
+    extra_field["games"][0]["storage_path"] = "MUST_NOT_ESCAPE";
+    REQUIRE_THROWS_AS(invalid_page(extra_field), std::runtime_error);
+    json secret_looking = provider_game_page_fixture("history", 11);
+    secret_looking["games"][0]["speed"] = "github_pat-aaaaaaaa";
+    REQUIRE_THROWS_AS(invalid_page(secret_looking), std::runtime_error);
+
+    json broken_replay = provider_game_detail_fixture();
+    broken_replay["replay"][1]["before_fen"] = broken_replay["initial_fen"];
+    REQUIRE_THROWS_AS(
+        arena::application::ServiceCatalog::provider_game(
+            root / "data",
+            [&broken_replay](const fs::path&,
+                             const fs::path&,
+                             const std::vector<std::string>&,
+                             const std::chrono::milliseconds) {
+                return broken_replay;
+            },
+            "lichess_bot",
+            "fixture-game-nine"),
+        std::runtime_error);
+    json path_bearing_replay = provider_game_detail_fixture();
+    path_bearing_replay["replay"][0]["before_fen"] = "C:\\private\\archive";
+    REQUIRE_THROWS_AS(
+        arena::application::ServiceCatalog::provider_game(
+            root / "data",
+            [&path_bearing_replay](const fs::path&,
+                                   const fs::path&,
+                                   const std::vector<std::string>&,
+                                   const std::chrono::milliseconds) {
+                return path_bearing_replay;
+            },
+            "lichess_bot",
+            "fixture-game-nine"),
+        std::runtime_error);
+    fs::remove_all(root);
+}
+
+TEST_CASE("provider games are explicitly unavailable when capability is absent") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-provider-games-legacy-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(root);
+    bool launched = false;
+    const auto runner = [&launched](
+                            const fs::path&,
+                            const fs::path&,
+                            const std::vector<std::string>&,
+                            const std::chrono::milliseconds) {
+        launched = true;
+        return provider_game_page_fixture();
+    };
+    const json page = arena::application::ServiceCatalog::provider_games(
+        root / "data", runner, "lichess_bot", "history", 0, 100);
+    REQUIRE(page.at("availability") == "unavailable");
+    REQUIRE(page.at("page").is_null());
+    const json detail = arena::application::ServiceCatalog::provider_game(
+        root / "data", runner, "lichess_bot", "fixture-game-nine");
+    REQUIRE(detail.at("availability") == "unavailable");
+    REQUIRE(detail.at("game").is_null());
+    REQUIRE_FALSE(launched);
+    REQUIRE_THROWS_AS(
+        arena::application::ServiceCatalog::provider_games(
+            root / "data", runner, "lichess_bot", "private", 0, 100),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        arena::application::ServiceCatalog::provider_game(
+            root / "data", runner, "lichess_bot", "../private"),
+        std::invalid_argument);
+    REQUIRE_FALSE(launched);
+    fs::remove_all(root);
+}
+
+TEST_CASE("provider game keyset projection reaches 646 records exactly once") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-provider-games-pagination-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(
+        root, "node", true, false, "1.1", true, true, true);
+    const auto runner = [](
+                            const fs::path&,
+                            const fs::path&,
+                            const std::vector<std::string>& arguments,
+                            const std::chrono::milliseconds) {
+        const auto before_flag =
+            std::ranges::find(arguments, std::string{"--before"});
+        REQUIRE(before_flag != arguments.end());
+        const std::uint64_t before =
+            std::stoull(*std::next(before_flag));
+        std::uint64_t cursor = before == 0U ? 646U : before - 1U;
+        json games = json::array();
+        while (cursor > 0U && games.size() < 100U) {
+            games.push_back(provider_game_summary_fixture(
+                "history", cursor, "game-" + std::to_string(cursor),
+                "summary_only"));
+            --cursor;
+        }
+        const bool has_more = cursor > 0U;
+        return json{
+            {"schema", "uci_arena_provider_game_page_v1"},
+            {"scope", "history"},
+            {"before_cursor", before},
+            {"next_cursor",
+             games.empty() ? 0U
+                           : games.back().at("cursor").get<std::uint64_t>()},
+            {"has_more", has_more},
+            {"games", std::move(games)},
+        };
+    };
+
+    std::set<std::string> visited;
+    std::uint64_t before = 0U;
+    std::size_t pages = 0U;
+    while (true) {
+        const json projection =
+            arena::application::ServiceCatalog::provider_games(
+                root / "data",
+                runner,
+                "lichess_bot",
+                "history",
+                before,
+                100);
+        const json& page = projection.at("page");
+        for (const auto& game : page.at("games")) {
+            REQUIRE(visited.insert(game.at("game_id").get<std::string>()).second);
+        }
+        ++pages;
+        if (!page.at("has_more").get<bool>()) {
+            break;
+        }
+        before = page.at("next_cursor").get<std::uint64_t>();
+    }
+    REQUIRE(pages == 7U);
+    REQUIRE(visited.size() == 646U);
+    REQUIRE(visited.contains("game-1"));
+    REQUIRE(visited.contains("game-646"));
     fs::remove_all(root);
 }
 

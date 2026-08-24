@@ -584,7 +584,7 @@ reports:
     - provenance
 
 lichess_incident_history_and_loading_experience_2026_08_23:
-  status: incident_and_component_loading_runtime_authoritative_history_planned
+  status: runtime_authoritative
   suite_record: https://github.com/iteathen/uci-arena-installer/issues/166
   owning_issues:
     incidents: https://github.com/iteathen/uci-arena-manager/issues/125
@@ -593,7 +593,7 @@ lichess_incident_history_and_loading_experience_2026_08_23:
   activation:
     - The status-v3/v4/v5 compatibility projection and Provider incident
       operation are active in Overview, Bots, and the navigation badge.
-      Provider game operations and history controls remain planned. The
+      Provider game operations, shared game surfaces, replay controls, and
       component-loading requirements are active.
     - Runtime UI consumes only the Manager OpenAPI projection; it never invokes
       provider commands or interprets provider-private state.

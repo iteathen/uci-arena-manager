@@ -272,7 +272,7 @@ readiness:
         reserve and learns replacement evidence only from completed games.
 
 operational_projections_2026_08_23:
-  status: incident_projection_runtime_authoritative_game_projection_planned
+  status: runtime_authoritative
   suite_record: https://github.com/iteathen/uci-arena-installer/issues/166
   owning_issues:
     incidents: https://github.com/iteathen/uci-arena-manager/issues/125
@@ -363,8 +363,10 @@ acceptance:
   - Automated HTTP integration uses a loopback fake Lichess API with a
     non-secret fixture token and never requires an operator credential.
   - A fake conforming provider with a different executable layout proves that
-    startup, status, qualification, options, and account controls resolve the published
-    operation catalog rather than hardcoded provider verbs or source paths.
-  - Planned incident and game projections remain unavailable for current
-    providers until their additive operations are declared; no empty or
-    fabricated data substitutes for an absent capability.
+    startup, status, qualification, options, account, incident, and game
+    controls resolve the published operation catalog rather than hardcoded
+    provider verbs or source paths.
+  - Incident and game projections are runtime-authoritative when their exact
+    additive operations are declared. Otherwise they remain explicitly
+    unavailable; no empty or fabricated data substitutes for an absent
+    capability.

@@ -133,7 +133,9 @@ std::uint64_t bounded_query_integer(
     const HttpRequestPtr& request,
     const std::string& name,
     const std::uint64_t default_value,
-    const std::uint64_t maximum) {
+    const std::uint64_t maximum,
+    const std::string& error_code,
+    const std::string& error_detail) {
     const std::string value = request->getParameter(name);
     if (value.empty()) {
         return default_value;
@@ -145,9 +147,7 @@ std::uint64_t bounded_query_integer(
         parsed.ptr != value.data() + value.size() ||
         parsed_value > maximum) {
         throw arena::application::CommandFailure(
-            "invalid_provider_incident_query",
-            "provider incident filter, cursor, or limit is invalid",
-            400);
+            error_code, error_detail, 400);
     }
     return parsed_value;
 }
@@ -505,9 +505,13 @@ int run_control_plane(const Options& options) {
                             ? "active"
                             : request->getParameter("filter");
                     const std::uint64_t after_cursor = bounded_query_integer(
-                        request, "after", 0U, 9'007'199'254'740'991ULL);
+                        request, "after", 0U, 9'007'199'254'740'991ULL,
+                        "invalid_provider_incident_query",
+                        "provider incident filter, cursor, or limit is invalid");
                     const std::uint64_t limit = bounded_query_integer(
-                        request, "limit", 100U, 100U);
+                        request, "limit", 100U, 100U,
+                        "invalid_provider_incident_query",
+                        "provider incident filter, cursor, or limit is invalid");
                     if (limit == 0U) {
                         throw arena::application::CommandFailure(
                             "invalid_provider_incident_query",
@@ -519,6 +523,74 @@ int run_control_plane(const Options& options) {
                         filter,
                         after_cursor,
                         static_cast<std::uint32_t>(limit))));
+                } catch (const arena::application::CommandFailure& failure) {
+                    callback(response(
+                        arena::application::problem_json(failure),
+                        status_code(failure.http_status())));
+                }
+            },
+            {drogon::Get});
+
+        app.registerHandler(
+            "/api/v1/providers/{1}/games",
+            [control_plane, auth](
+                const HttpRequestPtr& request,
+                std::function<void(const HttpResponsePtr&)>&& callback,
+                const std::string& profile_id) {
+                if (!authorized(request, auth)) {
+                    callback(response(
+                        {{"code", "authentication_required"}},
+                        drogon::k401Unauthorized));
+                    return;
+                }
+                try {
+                    const std::string scope =
+                        request->getParameter("scope").empty()
+                            ? "live"
+                            : request->getParameter("scope");
+                    const std::uint64_t before_cursor = bounded_query_integer(
+                        request, "before", 0U, 9'007'199'254'740'991ULL,
+                        "invalid_provider_game_query",
+                        "provider game scope, cursor, or limit is invalid");
+                    const std::uint64_t limit = bounded_query_integer(
+                        request, "limit", 100U, 100U,
+                        "invalid_provider_game_query",
+                        "provider game scope, cursor, or limit is invalid");
+                    if (limit == 0U) {
+                        throw arena::application::CommandFailure(
+                            "invalid_provider_game_query",
+                            "provider game scope, cursor, or limit is invalid",
+                            400);
+                    }
+                    callback(response(control_plane->provider_games(
+                        profile_id,
+                        scope,
+                        before_cursor,
+                        static_cast<std::uint32_t>(limit))));
+                } catch (const arena::application::CommandFailure& failure) {
+                    callback(response(
+                        arena::application::problem_json(failure),
+                        status_code(failure.http_status())));
+                }
+            },
+            {drogon::Get});
+
+        app.registerHandler(
+            "/api/v1/providers/{1}/games/{2}",
+            [control_plane, auth](
+                const HttpRequestPtr& request,
+                std::function<void(const HttpResponsePtr&)>&& callback,
+                const std::string& profile_id,
+                const std::string& game_id) {
+                if (!authorized(request, auth)) {
+                    callback(response(
+                        {{"code", "authentication_required"}},
+                        drogon::k401Unauthorized));
+                    return;
+                }
+                try {
+                    callback(response(control_plane->provider_game(
+                        profile_id, game_id)));
                 } catch (const arena::application::CommandFailure& failure) {
                     callback(response(
                         arena::application::problem_json(failure),

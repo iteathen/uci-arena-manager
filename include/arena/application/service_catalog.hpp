@@ -91,6 +91,32 @@ class ServiceCatalog final {
         const std::string& filter,
         std::uint64_t after_cursor,
         std::uint32_t limit);
+    [[nodiscard]] static nlohmann::json provider_games(
+        const std::filesystem::path& manager_data_root,
+        const ProcessSupervisor& process_supervisor,
+        const ComponentVerificationRegistry& component_registry,
+        const std::string& profile_id,
+        const std::string& scope,
+        std::uint64_t before_cursor,
+        std::uint32_t limit);
+    [[nodiscard]] static nlohmann::json provider_games(
+        const std::filesystem::path& manager_data_root,
+        const BotCommandRunner& command_runner,
+        const std::string& profile_id,
+        const std::string& scope,
+        std::uint64_t before_cursor,
+        std::uint32_t limit);
+    [[nodiscard]] static nlohmann::json provider_game(
+        const std::filesystem::path& manager_data_root,
+        const ProcessSupervisor& process_supervisor,
+        const ComponentVerificationRegistry& component_registry,
+        const std::string& profile_id,
+        const std::string& game_id);
+    [[nodiscard]] static nlohmann::json provider_game(
+        const std::filesystem::path& manager_data_root,
+        const BotCommandRunner& command_runner,
+        const std::string& profile_id,
+        const std::string& game_id);
     [[nodiscard]] static nlohmann::json probe_bot(
         const std::filesystem::path& manager_data_root,
         const ProcessSupervisor& process_supervisor);

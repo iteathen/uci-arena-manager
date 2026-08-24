@@ -465,22 +465,20 @@ report_contract:
     - Artifact downloads resolve only the report UUID and one allowlisted format, verify the persisted digest, and require the same authenticated local session as other read APIs.
 
 lichess_incident_and_game_projection_2026_08_23:
-  status: incident_projection_runtime_authoritative_game_projection_planned
+  status: runtime_authoritative
   suite_record: https://github.com/iteathen/uci-arena-installer/issues/166
   owning_issues:
     incidents: https://github.com/iteathen/uci-arena-manager/issues/125
     games: https://github.com/iteathen/uci-arena-manager/issues/126
   activation:
-    - The credential-free provider status and incident routes, bounded status
-      alerts, durable incident alerts, and supervision projection are runtime-
-      authoritative. Game routes and their UI behavior remain planned.
+    - The credential-free provider status, incident, game-list, and game-detail
+      routes plus their bounded operator projections are runtime-authoritative.
     - Status v3 remains an explicit compatibility shape. Receipt-verified
       Providers may publish closed status v4 or v5; Manager consumes only the
-      shared status, v4 supervision/incident summary, and leaves v5 archive
-      fields inert until the game issue activates them.
-    - The incident request and response schema is authoritative because the
-      Provider now declares the compatible additive operation. Exact game
-      schemas become authoritative only in the game issue implementation PR.
+      shared status, v4 supervision/incident summary, and v5 archive summary.
+    - Incident and game request/response schemas are authoritative only when
+      their compatible additive operations are declared by the exact verified
+      Provider contract.
   provider_status_projection:
     route: GET /api/v1/providers/{profileId}/status
     response_schema: arena_provider_status_projection_v1
@@ -539,7 +537,13 @@ lichess_incident_and_game_projection_2026_08_23:
       - Rate-limit deadlines remain provider authority and no Manager action
         clears, shortens, or bypasses them.
   game_projection:
+    list_route: GET /api/v1/providers/{profileId}/games
+    detail_route: GET /api/v1/providers/{profileId}/games/{gameId}
     provider_operations: [games_list, game_get]
+    list_response_schema: arena_provider_game_page_projection_v1
+    detail_response_schema: arena_provider_game_projection_v1
+    provider_page_schema: uci_arena_provider_game_page_v1
+    provider_detail_schema: uci_arena_provider_game_v1
     list_scopes: [live, history]
     maximum_page_size: 100
     maximum_replay_plies: 2048
@@ -553,6 +557,19 @@ lichess_incident_and_game_projection_2026_08_23:
         fabricates positions, moves, clocks, or historical component versions.
       - Provider pagination uses stable keyset cursors and the generic bounded
         collection mechanism owned by Manager issue 106.
+      - Request scope, before cursor, limit, and game id are bounded before
+        component resolution. Manager appends only declared flags and the
+        receipt-owned runtime directory to the immutable operation prefix.
+      - Otherwise-compatible Providers without both game operations and both
+        schemas return explicit unavailable projections, never fabricated
+        empty history or detail.
+      - Provider pages are descending by immutable keyset cursor; next_cursor
+        is the oldest returned cursor and therefore reaches every retained
+        record without offset drift.
+      - Detail replay is accepted only for complete or reconciled archives,
+        contains exactly the declared number of contiguous provider-authored
+        plies, and chains adjacent after_fen/before_fen snapshots. Manager
+        validates the transport invariant but never replays chess rules.
   non_goals:
     - manager_side_provider_persistence
     - provider_store_or_log_access

@@ -352,6 +352,7 @@ struct ProviderServiceContract {
     std::vector<std::string> invocation_prefix;
     json operations;
     bool incident_page_supported{false};
+    bool game_archive_supported{false};
 };
 
 ProviderServiceContract verified_provider_service_contract(
@@ -462,37 +463,55 @@ ProviderServiceContract verified_provider_service_contract(
     static_cast<void>(verify_referenced_contract(
         "status_schema", "status_schema_path", "status_schema_sha256"));
 
-    bool incident_page_contract = false;
-    if (contract.contains("incident_page_schema")) {
-        if (!contract.at("incident_page_schema").is_string() ||
+    const auto verify_optional_schema = [&component, &contract](
+                                            const char* contract_field,
+                                            const char* manifest_field,
+                                            const char* expected_schema) {
+        if (!contract.contains(contract_field)) {
+            return false;
+        }
+        if (!contract.at(contract_field).is_string() ||
             !component.manifest.contains("contracts") ||
             !component.manifest.at("contracts").is_object() ||
-            component.manifest.at("contracts").value("incident_page", "") !=
-                contract.at("incident_page_schema").get<std::string>()) {
+            component.manifest.at("contracts").value(manifest_field, "") !=
+                contract.at(contract_field).get<std::string>()) {
             throw std::runtime_error(
-                "installed provider incident contract reference is incompatible");
+                "installed provider optional contract reference is incompatible");
         }
-        const fs::path incident_relative =
-            contract.at("incident_page_schema").get<std::string>();
-        std::string incident_digest;
+        const fs::path relative =
+            contract.at(contract_field).get<std::string>();
+        std::string digest;
         for (const auto& file : component.manifest.at("files")) {
             if (fs::path(file.value("path", "")).lexically_normal() ==
-                incident_relative.lexically_normal()) {
-                incident_digest = file.value("sha256", "");
+                relative.lexically_normal()) {
+                digest = file.value("sha256", "");
                 break;
             }
         }
-        const fs::path incident_path = verified_component_file(
-            component, incident_relative, incident_digest);
-        const json incident_schema = read_json_file(incident_path);
-        if (incident_schema.value("$id", "") !=
-                "uci_arena_provider_incident_page_v1" ||
-            incident_schema.value("type", "") != "object" ||
-            incident_schema.value("additionalProperties", true)) {
+        if (digest.empty()) {
             throw std::runtime_error(
-                "installed provider incident page schema is incompatible");
+                "installed provider optional contract digest is unavailable");
         }
-        incident_page_contract = true;
+        const json schema = read_json_file(
+            verified_component_file(component, relative, digest));
+        if (schema.value("$id", "") != expected_schema ||
+            schema.value("type", "") != "object" ||
+            schema.value("additionalProperties", true)) {
+            throw std::runtime_error(
+                "installed provider optional schema is incompatible");
+        }
+        return true;
+    };
+    const bool incident_page_contract = verify_optional_schema(
+        "incident_page_schema", "incident_page",
+        "uci_arena_provider_incident_page_v1");
+    const bool game_page_contract = verify_optional_schema(
+        "game_page_schema", "game_page", "uci_arena_provider_game_page_v1");
+    const bool game_detail_contract = verify_optional_schema(
+        "game_detail_schema", "game_detail", "uci_arena_provider_game_v1");
+    if (game_page_contract != game_detail_contract) {
+        throw std::runtime_error(
+            "installed provider game schemas disagree");
     }
 
     if (!contract.contains("credential_contract") ||
@@ -594,6 +613,44 @@ ProviderServiceContract verified_provider_service_contract(
                 "installed provider incident operation is incompatible");
         }
     }
+    const bool games_list_operation =
+        operations.at("operations").contains("games_list");
+    const bool game_get_operation =
+        operations.at("operations").contains("game_get");
+    if (games_list_operation != game_get_operation ||
+        games_list_operation != game_page_contract) {
+        throw std::runtime_error(
+            "installed provider game operations and schemas disagree");
+    }
+    if (games_list_operation) {
+        const json& games_list =
+            operations.at("operations").at("games_list");
+        const json& game_get = operations.at("operations").at("game_get");
+        if (games_list.value("mutates", true) ||
+            games_list.value("credential", "") != "forbidden" ||
+            games_list.value("response", "") !=
+                "uci_arena_provider_game_page_v1" ||
+            games_list.value("response_schema", "") !=
+                contract.at("game_page_schema").get<std::string>() ||
+            !games_list.contains("optional_arguments") ||
+            games_list.at("optional_arguments") != json::array(
+                {"--scope", "--before", "--limit", "--runtime-dir"}) ||
+            game_get.value("mutates", true) ||
+            game_get.value("credential", "") != "forbidden" ||
+            game_get.value("response", "") !=
+                "uci_arena_provider_game_v1" ||
+            game_get.value("response_schema", "") !=
+                contract.at("game_detail_schema").get<std::string>() ||
+            !game_get.contains("required_arguments") ||
+            game_get.at("required_arguments") !=
+                json::array({"--game-id"}) ||
+            !game_get.contains("optional_arguments") ||
+            game_get.at("optional_arguments") !=
+                json::array({"--runtime-dir"})) {
+            throw std::runtime_error(
+                "installed provider game operation is incompatible");
+        }
+    }
 
     if (!contract.contains("invocation") ||
         !contract.at("invocation").is_object()) {
@@ -607,6 +664,7 @@ ProviderServiceContract verified_provider_service_contract(
             {},
             operations,
             incident_operation,
+            games_list_operation,
         };
     }
     if (invocation_kind != "dependency_runtime" ||
@@ -642,6 +700,7 @@ ProviderServiceContract verified_provider_service_contract(
         {component_entrypoint.string()},
         operations,
         incident_operation,
+        games_list_operation,
     };
 }
 
@@ -1417,6 +1476,543 @@ json provider_incidents_impl(
         {"availability", "available"},
         {"provider_contract_version", contract.operations.at("version")},
         {"page", page},
+    };
+}
+
+bool valid_provider_game_text(
+    const json& value,
+    const std::size_t maximum) {
+    if (!value.is_string()) {
+        return false;
+    }
+    const std::string& text = value.get_ref<const std::string&>();
+    return !text.empty() && text.size() <= maximum &&
+           std::ranges::none_of(text, [](const unsigned char character) {
+               return std::iscntrl(character) != 0;
+           });
+}
+
+bool valid_provider_opponent(const json& value) {
+    if (!value.is_string()) {
+        return false;
+    }
+    const std::string& opponent = value.get_ref<const std::string&>();
+    return opponent.size() <= 32U &&
+           std::ranges::all_of(opponent, [](const unsigned char character) {
+               return (character >= 'A' && character <= 'Z') ||
+                      (character >= 'a' && character <= 'z') ||
+                      (character >= '0' && character <= '9') ||
+                      character == '_' || character == '-';
+           });
+}
+
+bool valid_provider_game_token(const json& value, const bool nullable = false) {
+    if (nullable && value.is_null()) {
+        return true;
+    }
+    if (!value.is_string()) {
+        return false;
+    }
+    const std::string& token = value.get_ref<const std::string&>();
+    if (token.empty() || token.size() > 128U ||
+        !std::ranges::all_of(token, [](const unsigned char character) {
+            return (character >= 'A' && character <= 'Z') ||
+                   (character >= 'a' && character <= 'z') ||
+                   (character >= '0' && character <= '9') || character == '.' ||
+                   character == '_' || character == ':' || character == '+' ||
+                   character == '-';
+        })) {
+        return false;
+    }
+    std::string lowercase = token;
+    std::ranges::transform(
+        lowercase,
+        lowercase.begin(),
+        [](const unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+    static const std::regex secret_pattern(
+        R"((^|[._:+-])(authorization|bearer|cookie|credential|password|secret|token)([._:+-]|$)|^(sk|ghp|github_pat)-[a-z0-9_-]{8,}$|^[a-z0-9_-]{8,}\.[a-z0-9_-]{8,}\.[a-z0-9_-]{8,}$)");
+    return !std::regex_search(lowercase, secret_pattern);
+}
+
+bool valid_provider_game_id(const json& value) {
+    if (!value.is_string()) {
+        return false;
+    }
+    const std::string& game_id = value.get_ref<const std::string&>();
+    return !game_id.empty() && game_id.size() <= 64U &&
+           std::ranges::all_of(game_id, [](const unsigned char character) {
+               return (character >= 'A' && character <= 'Z') ||
+                      (character >= 'a' && character <= 'z') ||
+                      (character >= '0' && character <= '9') ||
+                      character == '_' || character == '-';
+           });
+}
+
+bool valid_provider_sha256(const json& value, const bool nullable = false) {
+    if (nullable && value.is_null()) {
+        return true;
+    }
+    if (!value.is_string()) {
+        return false;
+    }
+    const std::string& digest = value.get_ref<const std::string&>();
+    return digest.size() == 71U && digest.starts_with("sha256:") &&
+           std::ranges::all_of(
+               std::string_view(digest).substr(7U),
+               [](const unsigned char character) {
+                   return std::isdigit(character) != 0 ||
+                          (character >= 'a' && character <= 'f');
+               });
+}
+
+bool valid_provider_component(const json& value) {
+    return value.is_null() ||
+           (exact_object_fields(
+                value, {"component_id", "version", "manifest_sha256"}) &&
+            valid_provider_game_token(value.at("component_id")) &&
+            valid_provider_game_token(value.at("version")) &&
+            valid_provider_sha256(value.at("manifest_sha256")));
+}
+
+std::uint64_t validate_provider_game_summary(
+    const json& game,
+    const std::string& expected_state) {
+    constexpr std::uint64_t maximum_safe_integer = 9'007'199'254'740'991ULL;
+    if (!exact_object_fields(
+            game,
+            {"cursor", "game_id", "state", "opponent", "color", "rated",
+             "speed", "variant", "clock_limit", "clock_increment", "status",
+             "result", "winner", "plies", "started_at", "finished_at",
+             "archive_completeness", "incomplete_reason", "archive_sha256",
+             "provider_component", "engine_component"})) {
+        throw std::runtime_error(
+            "the provider returned an invalid closed game summary");
+    }
+    if (
+        !bounded_nonnegative_integer(game.at("cursor"), maximum_safe_integer) ||
+        game.at("cursor").get<std::uint64_t>() == 0U ||
+        !valid_provider_game_id(game.at("game_id")) ||
+        game.at("state") != expected_state) {
+        throw std::runtime_error(
+            "the provider returned an invalid game summary identity");
+    }
+    if (
+        !valid_provider_opponent(game.at("opponent")) ||
+        (!game.at("color").is_null() &&
+         !string_enum(game.at("color"), {"white", "black"})) ||
+        !game.at("rated").is_boolean() ||
+        !valid_provider_game_token(game.at("speed"), true) ||
+        game.at("variant") != "standard") {
+        throw std::runtime_error(
+            "the provider returned invalid bounded game presentation");
+    }
+    if (
+        !bounded_nonnegative_integer(game.at("clock_limit"), maximum_safe_integer) ||
+        !bounded_nonnegative_integer(
+            game.at("clock_increment"), maximum_safe_integer) ||
+        !valid_provider_game_token(game.at("status")) ||
+        !valid_provider_game_token(game.at("result"), true) ||
+        !valid_provider_game_token(game.at("winner"), true) ||
+        !bounded_nonnegative_integer(game.at("plies"), 2'048U) ||
+        !bounded_nonnegative_integer(game.at("started_at"), maximum_safe_integer) ||
+        !nullable_bounded_nonnegative_integer(
+            game.at("finished_at"), maximum_safe_integer)) {
+        throw std::runtime_error(
+            "the provider returned invalid bounded game timing");
+    }
+    if (
+        !string_enum(
+            game.at("archive_completeness"),
+            {"live", "summary_only", "complete", "reconciled"}) ||
+        (!game.at("incomplete_reason").is_null() &&
+         !valid_incident_identifier(game.at("incomplete_reason"))) ||
+        !valid_provider_sha256(game.at("archive_sha256"), true) ||
+        !valid_provider_component(game.at("provider_component")) ||
+        !valid_provider_component(game.at("engine_component"))) {
+        throw std::runtime_error(
+            "the provider returned invalid bounded game archive metadata");
+    }
+    const std::string completeness =
+        game.at("archive_completeness").get<std::string>();
+    const bool complete =
+        completeness == "complete" || completeness == "reconciled";
+    if ((expected_state == "live" &&
+         (completeness != "live" || !game.at("finished_at").is_null())) ||
+        (expected_state == "history" &&
+         (completeness == "live" || game.at("finished_at").is_null())) ||
+        ((completeness == "summary_only") !=
+         !game.at("incomplete_reason").is_null()) ||
+        (complete != !game.at("archive_sha256").is_null())) {
+        throw std::runtime_error(
+            "the provider returned an inconsistent game summary");
+    }
+    return game.at("cursor").get<std::uint64_t>();
+}
+
+json validate_provider_game_page(
+    const json& result,
+    const std::string& expected_scope,
+    const std::uint64_t expected_before_cursor,
+    const std::uint32_t expected_limit) {
+    constexpr std::uint64_t maximum_safe_integer = 9'007'199'254'740'991ULL;
+    if (result.dump().size() > 512U * 1024U ||
+        !exact_object_fields(
+            result,
+            {"schema", "scope", "before_cursor", "next_cursor", "has_more",
+             "games"}) ||
+        result.at("schema") != "uci_arena_provider_game_page_v1" ||
+        result.at("scope") != expected_scope ||
+        !bounded_nonnegative_integer(
+            result.at("before_cursor"), maximum_safe_integer) ||
+        result.at("before_cursor").get<std::uint64_t>() !=
+            expected_before_cursor ||
+        !bounded_nonnegative_integer(
+            result.at("next_cursor"), maximum_safe_integer) ||
+        !result.at("has_more").is_boolean() ||
+        !result.at("games").is_array() ||
+        result.at("games").size() > expected_limit ||
+        result.at("games").size() > 100U) {
+        throw std::runtime_error(
+            "the provider returned an invalid bounded game page");
+    }
+
+    std::uint64_t previous_cursor = maximum_safe_integer;
+    bool first = true;
+    for (const auto& game : result.at("games")) {
+        const std::uint64_t cursor =
+            validate_provider_game_summary(game, expected_scope);
+        if ((expected_before_cursor != 0U && cursor >= expected_before_cursor) ||
+            (!first && cursor >= previous_cursor)) {
+            throw std::runtime_error(
+                "the provider returned a non-monotonic game page");
+        }
+        first = false;
+        previous_cursor = cursor;
+    }
+    const json& games = result.at("games");
+    const std::uint64_t expected_next_cursor =
+        games.empty() ? 0U : previous_cursor;
+    if (result.at("next_cursor").get<std::uint64_t>() !=
+            expected_next_cursor ||
+        (games.empty() && result.at("has_more").get<bool>()) ||
+        (result.at("has_more").get<bool>() &&
+         games.size() != expected_limit)) {
+        throw std::runtime_error(
+            "the provider returned an inconsistent game cursor page");
+    }
+    return result;
+}
+
+bool valid_provider_fen(const json& value) {
+    if (!valid_provider_game_text(value, 128U)) {
+        return false;
+    }
+    const std::string& fen = value.get_ref<const std::string&>();
+    std::array<std::string_view, 6> fields{};
+    std::size_t field_index = 0U;
+    std::size_t start = 0U;
+    for (std::size_t index = 0U; index <= fen.size(); ++index) {
+        if (index != fen.size() && fen.at(index) != ' ') {
+            continue;
+        }
+        if (field_index >= fields.size() || index == start) {
+            return false;
+        }
+        fields.at(field_index++) =
+            std::string_view(fen).substr(start, index - start);
+        start = index + 1U;
+    }
+    if (field_index != fields.size() ||
+        std::ranges::count(fields.at(0), '/') != 7 ||
+        std::ranges::any_of(fields.at(0), [](const unsigned char character) {
+            return character != '/' &&
+                   !(character >= '1' && character <= '8') &&
+                   std::string_view{"prnbqkPRNBQK"}.find(
+                       static_cast<char>(character)) == std::string_view::npos;
+        }) ||
+        (fields.at(1) != "w" && fields.at(1) != "b") ||
+        (fields.at(2) != "-" &&
+         std::ranges::any_of(fields.at(2), [](const char character) {
+             return std::string_view{"KQkq"}.find(character) ==
+                    std::string_view::npos;
+         })) ||
+        (fields.at(3) != "-" &&
+         (fields.at(3).size() != 2U || fields.at(3).at(0) < 'a' ||
+          fields.at(3).at(0) > 'h' ||
+          (fields.at(3).at(1) != '3' && fields.at(3).at(1) != '6'))) ||
+        std::ranges::any_of(fields.at(4), [](const unsigned char character) {
+            return character < '0' || character > '9';
+        }) ||
+        std::ranges::any_of(fields.at(5), [](const unsigned char character) {
+            return character < '0' || character > '9';
+        })) {
+        return false;
+    }
+    return true;
+}
+
+bool valid_provider_uci_move(const json& value) {
+    if (!value.is_string()) {
+        return false;
+    }
+    const std::string& move = value.get_ref<const std::string&>();
+    return (move.size() == 4U || move.size() == 5U) &&
+           move.at(0) >= 'a' && move.at(0) <= 'h' &&
+           move.at(1) >= '1' && move.at(1) <= '8' &&
+           move.at(2) >= 'a' && move.at(2) <= 'h' &&
+           move.at(3) >= '1' && move.at(3) <= '8' &&
+           (move.size() == 4U || move.at(4) == 'q' || move.at(4) == 'r' ||
+            move.at(4) == 'b' || move.at(4) == 'n');
+}
+
+bool valid_nullable_provider_token_object(
+    const json& value,
+    const std::initializer_list<std::string_view> fields) {
+    return exact_object_fields(value, fields) &&
+           std::ranges::all_of(fields, [&value](const std::string_view field) {
+               return valid_provider_game_token(
+                   value.at(std::string(field)), true);
+           });
+}
+
+bool valid_runtime_provenance(const json& value) {
+    if (value.is_null()) {
+        return true;
+    }
+    if (!value.is_object() || !value.contains("sha256") ||
+        !value.contains("details_available") ||
+        !valid_provider_sha256(value.at("sha256")) ||
+        !value.at("details_available").is_boolean()) {
+        return false;
+    }
+    const bool details = value.at("details_available").get<bool>();
+    if (!details) {
+        return exact_object_fields(value, {"sha256", "details_available"});
+    }
+    if (!exact_object_fields(
+            value,
+            {"sha256", "details_available", "engine", "model",
+             "evaluation_runtime", "search", "timing", "knowledge"}) ||
+        !valid_nullable_provider_token_object(
+            value.at("engine"),
+            {"adapter", "build_fingerprint", "launch_identity_sha256",
+             "uci_identity_sha256"}) ||
+        !valid_nullable_provider_token_object(
+            value.at("model"),
+            {"id", "fingerprint", "checkpoint_hash", "adapter_id"}) ||
+        !valid_nullable_provider_token_object(
+            value.at("evaluation_runtime"),
+            {"name", "numeric_fingerprint", "hardware_driver_fingerprint",
+             "version"}) ||
+        !valid_nullable_provider_token_object(
+            value.at("knowledge"),
+            {"book_configuration_identity", "book_snapshot_identity",
+             "book_manifest_sha256", "tablebase_identity",
+             "tablebase_manifest_identity"})) {
+        return false;
+    }
+    const json& search = value.at("search");
+    if (!exact_object_fields(
+            search,
+            {"core", "threads", "root_workers", "split_depth", "batch_size",
+             "batch_wait_us"}) ||
+        !valid_nullable_provider_token_object(
+            json{{"core", search.at("core")}}, {"core"}) ||
+        !nullable_bounded_nonnegative_integer(search.at("threads")) ||
+        !nullable_bounded_nonnegative_integer(search.at("root_workers")) ||
+        !nullable_bounded_nonnegative_integer(search.at("split_depth")) ||
+        !nullable_bounded_nonnegative_integer(search.at("batch_size")) ||
+        !nullable_bounded_nonnegative_integer(search.at("batch_wait_us"))) {
+        return false;
+    }
+    const json& timing = value.at("timing");
+    return exact_object_fields(
+               timing,
+               {"profile_identity_sha256", "status", "accepted", "applied"}) &&
+           valid_nullable_provider_token_object(
+               json{{"profile_identity_sha256",
+                     timing.at("profile_identity_sha256")},
+                    {"status", timing.at("status")}},
+               {"profile_identity_sha256", "status"}) &&
+           timing.at("accepted").is_boolean() &&
+           timing.at("applied").is_boolean();
+}
+
+json validate_provider_game_detail(
+    const json& result,
+    const std::string& expected_game_id) {
+    if (result.dump().size() > 1024U * 1024U ||
+        !exact_object_fields(
+            result,
+            {"schema", "cursor", "game_id", "state", "opponent", "color",
+             "rated", "speed", "variant", "clock_limit", "clock_increment",
+             "status", "result", "winner", "plies", "started_at",
+             "finished_at", "archive_completeness", "incomplete_reason",
+             "archive_sha256", "provider_component", "engine_component",
+             "initial_fen", "runtime_provenance", "replay"}) ||
+        result.at("schema") != "uci_arena_provider_game_v1" ||
+        result.at("game_id") != expected_game_id ||
+        !string_enum(result.at("state"), {"live", "history"}) ||
+        (!result.at("initial_fen").is_null() &&
+         !valid_provider_fen(result.at("initial_fen"))) ||
+        !valid_runtime_provenance(result.at("runtime_provenance")) ||
+        !result.at("replay").is_array() ||
+        result.at("replay").size() > 2'048U) {
+        throw std::runtime_error(
+            "the provider returned an invalid bounded game detail");
+    }
+    json summary = result;
+    summary.erase("schema");
+    summary.erase("initial_fen");
+    summary.erase("runtime_provenance");
+    summary.erase("replay");
+    validate_provider_game_summary(
+        summary, result.at("state").get<std::string>());
+    const std::string completeness =
+        result.at("archive_completeness").get<std::string>();
+    const bool complete =
+        completeness == "complete" || completeness == "reconciled";
+    const std::size_t declared_plies =
+        result.at("plies").get<std::size_t>();
+    if ((complete &&
+         (result.at("initial_fen").is_null() ||
+          result.at("replay").size() != declared_plies)) ||
+        (!complete && !result.at("replay").empty())) {
+        throw std::runtime_error(
+            "the provider returned an inconsistent game replay");
+    }
+    std::string previous_fen = result.at("initial_fen").is_string()
+        ? result.at("initial_fen").get<std::string>()
+        : std::string{};
+    for (std::size_t index = 0; index < result.at("replay").size(); ++index) {
+        const json& ply = result.at("replay").at(index);
+        if (!exact_object_fields(
+                ply,
+                {"ply", "uci_move", "before_fen", "after_fen",
+                 "actor_color", "clock_ms"}) ||
+            !bounded_nonnegative_integer(ply.at("ply"), 2'047U) ||
+            ply.at("ply").get<std::size_t>() != index ||
+            !valid_provider_uci_move(ply.at("uci_move")) ||
+            !valid_provider_fen(ply.at("before_fen")) ||
+            !valid_provider_fen(ply.at("after_fen")) ||
+            !string_enum(ply.at("actor_color"), {"white", "black"}) ||
+            !nullable_bounded_nonnegative_integer(ply.at("clock_ms")) ||
+            ply.at("before_fen").get<std::string>() != previous_fen) {
+            throw std::runtime_error(
+                "the provider returned a non-contiguous game replay");
+        }
+        previous_fen = ply.at("after_fen").get<std::string>();
+    }
+    return result;
+}
+
+json provider_games_impl(
+    const fs::path& manager_data_root,
+    const ServiceCatalog::BotCommandRunner& command_runner,
+    const ComponentVerificationRegistry* component_registry,
+    const std::string& profile_id,
+    const std::string& scope,
+    const std::uint64_t before_cursor,
+    const std::uint32_t limit) {
+    if (profile_id != "lichess_bot") {
+        throw std::invalid_argument("unknown provider profile");
+    }
+    if ((scope != "live" && scope != "history") || limit == 0U ||
+        limit > 100U || before_cursor > 9'007'199'254'740'991ULL) {
+        throw std::invalid_argument("invalid provider game query");
+    }
+    const fs::path receipts_root = manager_data_root / "receipts";
+    InstalledComponent adapter = installed_component(
+        receipts_root, "lichess.adapter", true, component_registry);
+    ProviderServiceContract contract = verified_provider_service_contract(
+        receipts_root, adapter, component_registry);
+    if (!contract.game_archive_supported) {
+        return {
+            {"schema", "arena_provider_game_page_projection_v1"},
+            {"schema_version", 1},
+            {"profile_id", profile_id},
+            {"availability", "unavailable"},
+            {"provider_contract_version", contract.operations.at("version")},
+            {"page", nullptr},
+        };
+    }
+    std::vector<std::string> arguments = provider_operation_arguments(
+        contract, "games_list", "forbidden");
+    arguments.insert(
+        arguments.end(),
+        {"--scope", scope,
+         "--before", std::to_string(before_cursor),
+         "--limit", std::to_string(limit),
+         "--runtime-dir", bot_runtime_directory(adapter).string()});
+    const json page = validate_provider_game_page(
+        command_runner(
+            contract.executable,
+            adapter.active_root,
+            arguments,
+            std::chrono::seconds(30)),
+        scope,
+        before_cursor,
+        limit);
+    return {
+        {"schema", "arena_provider_game_page_projection_v1"},
+        {"schema_version", 1},
+        {"profile_id", profile_id},
+        {"availability", "available"},
+        {"provider_contract_version", contract.operations.at("version")},
+        {"page", page},
+    };
+}
+
+json provider_game_impl(
+    const fs::path& manager_data_root,
+    const ServiceCatalog::BotCommandRunner& command_runner,
+    const ComponentVerificationRegistry* component_registry,
+    const std::string& profile_id,
+    const std::string& game_id) {
+    if (profile_id != "lichess_bot") {
+        throw std::invalid_argument("unknown provider profile");
+    }
+    const json game_id_value = game_id;
+    if (!valid_provider_game_id(game_id_value)) {
+        throw std::invalid_argument("invalid provider game id");
+    }
+    const fs::path receipts_root = manager_data_root / "receipts";
+    InstalledComponent adapter = installed_component(
+        receipts_root, "lichess.adapter", true, component_registry);
+    ProviderServiceContract contract = verified_provider_service_contract(
+        receipts_root, adapter, component_registry);
+    if (!contract.game_archive_supported) {
+        return {
+            {"schema", "arena_provider_game_projection_v1"},
+            {"schema_version", 1},
+            {"profile_id", profile_id},
+            {"availability", "unavailable"},
+            {"provider_contract_version", contract.operations.at("version")},
+            {"game", nullptr},
+        };
+    }
+    std::vector<std::string> arguments = provider_operation_arguments(
+        contract, "game_get", "forbidden");
+    arguments.insert(
+        arguments.end(),
+        {"--game-id", game_id,
+         "--runtime-dir", bot_runtime_directory(adapter).string()});
+    const json game = validate_provider_game_detail(
+        command_runner(
+            contract.executable,
+            adapter.active_root,
+            arguments,
+            std::chrono::seconds(30)),
+        game_id);
+    return {
+        {"schema", "arena_provider_game_projection_v1"},
+        {"schema_version", 1},
+        {"profile_id", profile_id},
+        {"availability", "available"},
+        {"provider_contract_version", contract.operations.at("version")},
+        {"game", game},
     };
 }
 
@@ -2559,7 +3155,8 @@ json ServiceCatalog::bot_profiles() {
             {"capabilities",
              {"account_probe", "startup_status", "enable_startup",
               "disable_startup", "installed_qualification", "options",
-              "owners", "reservations", "scheduler", "challenge_policy"}},
+              "owners", "reservations", "scheduler", "challenge_policy",
+              "provider_status", "provider_incidents", "provider_games"}},
         },
     });
 }
@@ -3402,6 +3999,82 @@ json ServiceCatalog::provider_incidents(
         filter,
         after_cursor,
         limit);
+}
+
+json ServiceCatalog::provider_games(
+    const fs::path& manager_data_root,
+    const ProcessSupervisor& process_supervisor,
+    const ComponentVerificationRegistry& component_registry,
+    const std::string& profile_id,
+    const std::string& scope,
+    const std::uint64_t before_cursor,
+    const std::uint32_t limit) {
+    return provider_games_impl(
+        manager_data_root,
+        [&process_supervisor](
+            const fs::path& executable,
+            const fs::path& working_directory,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds timeout) {
+            return process_supervisor.run_json(
+                executable, working_directory, arguments, timeout);
+        },
+        &component_registry,
+        profile_id,
+        scope,
+        before_cursor,
+        limit);
+}
+
+json ServiceCatalog::provider_games(
+    const fs::path& manager_data_root,
+    const BotCommandRunner& command_runner,
+    const std::string& profile_id,
+    const std::string& scope,
+    const std::uint64_t before_cursor,
+    const std::uint32_t limit) {
+    return provider_games_impl(
+        manager_data_root,
+        command_runner,
+        nullptr,
+        profile_id,
+        scope,
+        before_cursor,
+        limit);
+}
+
+json ServiceCatalog::provider_game(
+    const fs::path& manager_data_root,
+    const ProcessSupervisor& process_supervisor,
+    const ComponentVerificationRegistry& component_registry,
+    const std::string& profile_id,
+    const std::string& game_id) {
+    return provider_game_impl(
+        manager_data_root,
+        [&process_supervisor](
+            const fs::path& executable,
+            const fs::path& working_directory,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds timeout) {
+            return process_supervisor.run_json(
+                executable, working_directory, arguments, timeout);
+        },
+        &component_registry,
+        profile_id,
+        game_id);
+}
+
+json ServiceCatalog::provider_game(
+    const fs::path& manager_data_root,
+    const BotCommandRunner& command_runner,
+    const std::string& profile_id,
+    const std::string& game_id) {
+    return provider_game_impl(
+        manager_data_root,
+        command_runner,
+        nullptr,
+        profile_id,
+        game_id);
 }
 
 json ServiceCatalog::bot_options(
