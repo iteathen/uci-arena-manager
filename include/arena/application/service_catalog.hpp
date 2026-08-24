@@ -4,6 +4,7 @@
 #include "arena/application/process_supervisor.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <nlohmann/json.hpp>
@@ -75,6 +76,21 @@ class ServiceCatalog final {
         const std::filesystem::path& manager_data_root,
         const BotCommandRunner& command_runner,
         const std::string& profile_id);
+    [[nodiscard]] static nlohmann::json provider_incidents(
+        const std::filesystem::path& manager_data_root,
+        const ProcessSupervisor& process_supervisor,
+        const ComponentVerificationRegistry& component_registry,
+        const std::string& profile_id,
+        const std::string& filter,
+        std::uint64_t after_cursor,
+        std::uint32_t limit);
+    [[nodiscard]] static nlohmann::json provider_incidents(
+        const std::filesystem::path& manager_data_root,
+        const BotCommandRunner& command_runner,
+        const std::string& profile_id,
+        const std::string& filter,
+        std::uint64_t after_cursor,
+        std::uint32_t limit);
     [[nodiscard]] static nlohmann::json probe_bot(
         const std::filesystem::path& manager_data_root,
         const ProcessSupervisor& process_supervisor);

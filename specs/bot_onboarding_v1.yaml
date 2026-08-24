@@ -271,17 +271,16 @@ readiness:
         invalid, or unqualified content as bootstrap. It owns the conservative
         reserve and learns replacement evidence only from completed games.
 
-planned_operational_projections_2026_08_23:
-  status: approved_plan_not_runtime_authoritative
+operational_projections_2026_08_23:
+  status: incident_projection_runtime_authoritative_game_projection_planned
   suite_record: https://github.com/iteathen/uci-arena-installer/issues/166
   owning_issues:
     incidents: https://github.com/iteathen/uci-arena-manager/issues/125
     games: https://github.com/iteathen/uci-arena-manager/issues/126
   activation:
-    - The credential-free status-v3 Manager route and bounded current-status
-      alerts are active. Incident and game projections become available only
-      after the receipt-verified provider declares their typed additive
-      operations.
+    - The credential-free status-v3/v4/v5 Manager route, supervision state,
+      and durable incident projection are active. Game projections become
+      available only after their issue-owned Manager routes land.
   incident_projection:
     provider_operation: incidents_list
     manager_access: credential_free_read_only
@@ -291,6 +290,9 @@ planned_operational_projections_2026_08_23:
         contacting Lichess directly.
       - Status v3 remains accepted. When incidents_list or status v4 is absent,
         the incident feature is unavailable rather than empty or incompatible.
+      - Status v5 is accepted as the closed successor to status v4. Archive
+        summary fields remain Provider-owned and inactive until game projection
+        support lands.
       - Provider-owned cooldown deadlines and recovery state are displayed but
         never mutated or shortened by Manager.
       - Cursor updates deduplicate provider-issued incident identity and never

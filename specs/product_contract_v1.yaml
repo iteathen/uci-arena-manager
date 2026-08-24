@@ -313,8 +313,8 @@ local_match_planner:
       - elo1 must be greater than elo0.
       - The maximum game count is positive and even so reversed colors are
         admitted and evaluated as one pair.
-      - The persisted result contains LLR, thresholds, games, score, and one
-        immutable verdict: accept_h0, accept_h1, or inconclusive.
+      - "The persisted result contains LLR, thresholds, games, score, and one
+        immutable verdict: accept_h0, accept_h1, or inconclusive."
 
 canonical_game:
   variants: [standard, chess960]
@@ -464,20 +464,24 @@ report_contract:
     - A successful command renders every requested format before committing the report resource and durable event. Dry-run renders in memory and performs no filesystem or database write.
     - Artifact downloads resolve only the report UUID and one allowlisted format, verify the persisted digest, and require the same authenticated local session as other read APIs.
 
-planned_lichess_incident_and_game_projection_2026_08_23:
-  status: approved_plan_not_runtime_authoritative
+lichess_incident_and_game_projection_2026_08_23:
+  status: incident_projection_runtime_authoritative_game_projection_planned
   suite_record: https://github.com/iteathen/uci-arena-installer/issues/166
   owning_issues:
     incidents: https://github.com/iteathen/uci-arena-manager/issues/125
     games: https://github.com/iteathen/uci-arena-manager/issues/126
   activation:
-    - The credential-free status-v3 compatibility route and bounded status
-      alerts are runtime-authoritative. Incident and game routes, provider
-      requirements, and their UI behavior remain planned.
-    - Exact request and response schemas become authoritative only in the
-      issue-owned runtime implementation PRs after the provider declares the
-      compatible typed operations.
-  current_status_v3_projection:
+    - The credential-free provider status and incident routes, bounded status
+      alerts, durable incident alerts, and supervision projection are runtime-
+      authoritative. Game routes and their UI behavior remain planned.
+    - Status v3 remains an explicit compatibility shape. Receipt-verified
+      Providers may publish closed status v4 or v5; Manager consumes only the
+      shared status, v4 supervision/incident summary, and leaves v5 archive
+      fields inert until the game issue activates them.
+    - The incident request and response schema is authoritative because the
+      Provider now declares the compatible additive operation. Exact game
+      schemas become authoritative only in the game issue implementation PR.
+  provider_status_projection:
     route: GET /api/v1/providers/{profileId}/status
     response_schema: arena_provider_status_projection_v1
     profile_ids: [lichess_bot]
@@ -489,6 +493,9 @@ planned_lichess_incident_and_game_projection_2026_08_23:
         path, argument, or credential.
       - Status v3 projects bounded runtime, games, scheduler, rate-limit, and
         blocker state while reporting supervision and incidents unavailable.
+      - Closed status v4 projects supervision and incident-summary state.
+        Closed status v5 remains compatible and additionally carries archive
+        summary fields that this incident slice validates but does not use.
       - Component attestation failures retain their typed verification code.
         Provider launch, timeout, parse, and validation failures collapse to
         sanitized provider_status_unavailable without raw provider output.
@@ -509,6 +516,12 @@ planned_lichess_incident_and_game_projection_2026_08_23:
     - Current status v3 providers remain compatible and project incidents and
       archive operations as unavailable instead of making the bot incompatible.
   incident_projection:
+    route: GET /api/v1/providers/{profileId}/incidents
+    provider_operation: incidents_list
+    response_schema: arena_provider_incident_page_projection_v1
+    provider_page_schema: uci_arena_provider_incident_page_v1
+    filters: [active, all]
+    maximum_page_size: 100
     cursor: stable_provider_owned_keyset
     rules:
       - Active critical and error incidents retain provider code, count,
@@ -516,6 +529,13 @@ planned_lichess_incident_and_game_projection_2026_08_23:
         optional retry or game context after provider recovery.
       - Manager deduplicates by provider-issued identity and cursor. It never
         tails raw logs or interprets provider-private error text.
+      - Request filter, after cursor, and limit are bounded before component
+        resolution. The fixed operation prefix and runtime directory come
+        only from the receipt-verified component contract.
+      - An otherwise compatible Provider without incidents_list returns an
+        explicit unavailable projection with no fabricated empty page.
+      - Invalid provider pages, non-monotonic cursors, unsafe detail, launch
+        failures, and timeouts fail with bounded Manager-owned diagnostics.
       - Rate-limit deadlines remain provider authority and no Manager action
         clears, shortens, or bypasses them.
   game_projection:

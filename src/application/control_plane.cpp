@@ -2051,6 +2051,41 @@ json ControlPlane::provider_status(const std::string& profile_id) const {
     }
 }
 
+json ControlPlane::provider_incidents(
+    const std::string& profile_id,
+    const std::string& filter,
+    const std::uint64_t after_cursor,
+    const std::uint32_t limit) const {
+    if (profile_id != "lichess_bot") {
+        throw CommandFailure(
+            "provider_profile_not_found", "provider profile was not found", 404);
+    }
+    if ((filter != "active" && filter != "all") || limit == 0U ||
+        limit > 100U || after_cursor > 9'007'199'254'740'991ULL) {
+        throw CommandFailure(
+            "invalid_provider_incident_query",
+            "provider incident filter, cursor, or limit is invalid",
+            400);
+    }
+    try {
+        return ServiceCatalog::provider_incidents(
+            manager_data_root_,
+            process_supervisor_,
+            *component_registry_,
+            profile_id,
+            filter,
+            after_cursor,
+            limit);
+    } catch (const ComponentVerificationUnavailable& failure) {
+        throw CommandFailure(failure.code(), failure.what(), 409);
+    } catch (const std::exception&) {
+        throw CommandFailure(
+            "provider_incidents_unavailable",
+            "provider incident history is unavailable",
+            503);
+    }
+}
+
 json ControlPlane::generate_report(const json& request, const std::string& actor) {
     if (required_string(request.at("target"), "kind") != "report" ||
         (request.at("target").contains("id") &&

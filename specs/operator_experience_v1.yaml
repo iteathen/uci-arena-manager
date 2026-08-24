@@ -49,9 +49,9 @@ desktop_startup:
       and the historical ten-second observation interval are never authority.
     - A live service remains inside the launcher's Job Object while startup is
       pending and is not killed merely because ten seconds elapsed.
-    - Startup failure is reported as exactly one stable category:
+    - "Startup failure is reported as exactly one stable category:
       service_launch, service_process_exit, service_readiness, pair_helper, or
-      webview_initialization.
+      webview_initialization."
     - The dialog includes the category and one sanitized single-line detail of
       at most 512 characters, without credentials, pairing tokens, or raw
       provider output.
@@ -256,9 +256,9 @@ local_path_picker:
       path through the existing narrow typed interactive-user helper. The
       helper accepts only picker mode, display text, and extension filters and
       never arbitrary filesystem, process, argv, or shell requests.
-    - `arena ui` starts the picker only on loopback and puts an unguessable
+    - "`arena ui` starts the picker only on loopback and puts an unguessable
       per-process bearer token in browser session storage during pairing when
-      the operator explicitly chooses the external-browser surface.
+      the operator explicitly chooses the external-browser surface."
     - Picker requests declare file or directory mode plus display-only hints
       and extension filters; they never supply a command, executable, or shell string.
     - Windows uses the native common item dialog in the logged-in session.
@@ -513,11 +513,11 @@ knowledge_asset_setup:
       as repeated typed scan-root arguments; the
       Installer inspects the selected root and its direct children without a
       recursive drive crawl or mutation.
-    - Discovery is deliberately permissive: partial Syzygy WDL or DTZ sets,
+    - "Discovery is deliberately permissive: partial Syzygy WDL or DTZ sets,
       standalone or sidecar-backed opening books, and parseable legacy,
       incomplete, or runtime-mismatched timing evidence remain catalogued.
       Exact qualification and identity are checked only when the operator asks
-      to apply an asset to a runtime or make a protected-live safety claim.
+      to apply an asset to a runtime or make a protected-live safety claim."
     - Every discovered path has an explicit Review import action. The selected
       candidate and all retained alternatives remain visible with provenance
       and classification. Discovery itself never implies compatibility,
@@ -583,23 +583,24 @@ reports:
     - content_hashes
     - provenance
 
-planned_lichess_incident_history_and_loading_experience_2026_08_23:
-  status: approved_plan_not_runtime_authoritative
+lichess_incident_history_and_loading_experience_2026_08_23:
+  status: incident_and_component_loading_runtime_authoritative_history_planned
   suite_record: https://github.com/iteathen/uci-arena-installer/issues/166
   owning_issues:
     incidents: https://github.com/iteathen/uci-arena-manager/issues/125
     history: https://github.com/iteathen/uci-arena-manager/issues/126
     component_loading: https://github.com/iteathen/uci-arena-manager/issues/127
   activation:
-    - The status-v3 compatibility projection is active in Overview and Bots.
-      Provider incident/game operations and their history controls remain
-      planned. The component-loading requirements are active.
-    - Runtime UI work follows the provider contract releases and issue-owned
-      Manager OpenAPI/schema changes.
+    - The status-v3/v4/v5 compatibility projection and Provider incident
+      operation are active in Overview, Bots, and the navigation badge.
+      Provider game operations and history controls remain planned. The
+      component-loading requirements are active.
+    - Runtime UI consumes only the Manager OpenAPI projection; it never invokes
+      provider commands or interprets provider-private state.
   incident_experience:
-    - Before the incident ledger lands, Overview and Bots show current bounded
-      status-v3 cooldown, scheduler-fault, stream, and blocker alerts. They are
-      live status observations, never fabricated durable incidents.
+    - Status-v3 Providers continue to show current bounded cooldown,
+      scheduler-fault, stream, and blocker alerts. They are live observations,
+      never fabricated durable incidents.
     - Active provider critical/error incidents appear as persistent Overview
       and Bots alerts rather than transient toasts or log-only entries.
     - Alerts show one sanitized provider-owned code, severity, occurrence
@@ -613,6 +614,9 @@ planned_lichess_incident_history_and_loading_experience_2026_08_23:
       cooldown.
     - Providers without the additive incident operation show Incidents
       unavailable while retaining their existing Bots status and controls.
+    - Overview and Bots poll the same Manager-owned incident query key at the
+      existing bounded provider-status cadence. React Query may coalesce reads,
+      but its cache never becomes Provider incident authority.
   game_history_experience:
     - Live Games and Game History merge Manager-owned local records with
       provider-owned Lichess records using a source filter and source badge.

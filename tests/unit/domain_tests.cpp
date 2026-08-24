@@ -163,6 +163,91 @@ json provider_status_v3_fixture() {
     };
 }
 
+json provider_status_v4_fixture() {
+    json status = provider_status_v3_fixture();
+    status["schema"] = "uci_arena_lichess_status_v4";
+    status["supervision"] = {
+        {"state", "restart_pending"},
+        {"restart_pending", true},
+        {"exit_receipt_state", "ready"},
+        {"last_exit",
+         {{"disposition", "unexpected_exit"},
+          {"exited_at", "2026-08-23T18:44:30.000Z"},
+          {"child_exit_code", 3'221'225'481ULL}}},
+    };
+    status["incidents"] = {
+        {"available", true},
+        {"active_count", 2},
+        {"highest_severity", "critical"},
+        {"latest_cursor", 8},
+        {"truncated", false},
+        {"truncated_rows", 0},
+    };
+    return status;
+}
+
+json provider_status_v5_fixture() {
+    json status = provider_status_v4_fixture();
+    status["schema"] = "uci_arena_lichess_status_v5";
+    status["games"].update({
+        {"archive_available", true},
+        {"total", 646},
+        {"complete", 636},
+        {"incomplete", 10},
+        {"storage_bytes", 4'194'304},
+    });
+    return status;
+}
+
+json provider_incident_page_fixture(
+    const std::string& filter = "active",
+    const std::uint64_t after_cursor = 0) {
+    return {
+        {"schema", "uci_arena_provider_incident_page_v1"},
+        {"filter", filter},
+        {"after_cursor", after_cursor},
+        {"next_cursor", after_cursor + 8},
+        {"has_more", false},
+        {"incidents",
+         json::array({
+             {{"cursor", after_cursor + 3},
+              {"code", "api_request_failed"},
+              {"severity", "error"},
+              {"source", "api"},
+              {"operation", "online_bots"},
+              {"first_occurrence", 1'777'000'000'000ULL},
+              {"last_occurrence", 1'777'000'010'000ULL},
+              {"occurrence_count", 2},
+              {"state", "active"},
+              {"resolved_at", nullptr},
+              {"http_status", 429},
+              {"retry_deadline", 1'777'000'060'000ULL},
+              {"game_id", nullptr},
+              {"detail", "Lichess request retry window 1/2 elapsed with HTTP 429"}},
+             {{"cursor", after_cursor + 8},
+              {"code", "stream_disconnected"},
+              {"severity", "critical"},
+              {"source", "stream"},
+              {"operation", "event_stream"},
+              {"first_occurrence", 1'777'000'020'000ULL},
+              {"last_occurrence", 1'777'000'030'000ULL},
+              {"occurrence_count", 1},
+              {"state", "active"},
+              {"resolved_at", nullptr},
+              {"http_status", nullptr},
+              {"retry_deadline", 1'777'000'060'000ULL},
+              {"game_id", "fixture-game"},
+              {"detail", "Provider event stream disconnected"}},
+         })},
+        {"retention",
+         {{"maximum_rows", 2'048},
+          {"resolved_retention_ms", 7'776'000'000ULL},
+          {"last_truncated_cursor", nullptr},
+          {"truncated_rows", 0},
+          {"truncated_active_rows", 0}}},
+    };
+}
+
 void write_installed_component(
     const fs::path& data_root,
     const fs::path& install_root,
@@ -212,7 +297,8 @@ void attach_bot_provider_contract(
     const bool direct_invocation = false,
     const bool alternate_operation_prefixes = false,
     const std::string& contract_version = "1.0",
-    const bool installed_qualification = true) {
+    const bool installed_qualification = true,
+    const bool provider_incidents = false) {
     const fs::path receipt_path =
         data_root / "receipts" / "lichess.adapter.json";
     json receipt = read_json(receipt_path);
@@ -312,7 +398,24 @@ void attach_bot_provider_contract(
     if (!installed_qualification) {
         operations["operations"].erase("qualification_run");
     }
-    const json service_contract{
+    if (provider_incidents) {
+        operations["operations"]["incidents_list"] = {
+            {"arguments",
+             alternate_operation_prefixes
+                 ? json::array({"alerts", "scan"})
+                 : json::array({"incidents", "list"})},
+            {"optional_arguments",
+             json::array(
+                 {"--filter", "--after-cursor", "--limit", "--runtime-dir"})},
+            {"mutates", false},
+            {"credential", "forbidden"},
+            {"response", "uci_arena_provider_incident_page_v1"},
+            {"response_schema", "contracts/incident-page-schema.json"},
+        };
+        manifest["contracts"]["incident_page"] =
+            "contracts/incident-page-schema.json";
+    }
+    json service_contract{
         {"schema", "uci_arena_service_contract_v1"},
         {"service",
          {{"component_id", "lichess.adapter"},
@@ -353,13 +456,25 @@ void attach_bot_provider_contract(
           {"unknown_operation", "fail_closed"},
           {"unknown_major_version", "incompatible"}}},
     };
-    const std::vector<std::pair<std::string, json>> documents{
+    if (provider_incidents) {
+        service_contract["incident_page_schema"] =
+            "contracts/incident-page-schema.json";
+    }
+    std::vector<std::pair<std::string, json>> documents{
         {"contracts/service-contract.json", service_contract},
         {"contracts/manager-operations.json", operations},
         {"contracts/configuration-schema.json", json{{"schema", "fixture"}}},
         {"contracts/configuration-update-schema.json", json{{"schema", "fixture"}}},
         {"contracts/status-schema.json", json{{"schema", "fixture"}}},
     };
+    if (provider_incidents) {
+        documents.push_back({
+            "contracts/incident-page-schema.json",
+            {{"$id", "uci_arena_provider_incident_page_v1"},
+             {"type", "object"},
+             {"additionalProperties", false}},
+        });
+    }
     std::map<std::string, std::string> digests;
     for (const auto& [relative, document] : documents) {
         const std::string contents = document.dump(2) + '\n';
@@ -400,7 +515,8 @@ void write_ready_bot_fixture(
     const bool direct_invocation = false,
     const bool alternate_operation_prefixes = false,
     const std::string& contract_version = "1.0",
-    const bool installed_qualification = true) {
+    const bool installed_qualification = true,
+    const bool provider_incidents = false) {
     const fs::path data = root / "data";
     const fs::path install = root / "install";
     write_installed_component(
@@ -445,7 +561,7 @@ void write_ready_bot_fixture(
         {root / "workspaces" / "lichess-adapter"});
     attach_bot_provider_contract(
         data, direct_invocation, alternate_operation_prefixes,
-        contract_version, installed_qualification);
+        contract_version, installed_qualification, provider_incidents);
 
     const std::array<std::pair<std::string, fs::path>, 5> locators{{
         {"timing_profile", root / "uci_time_profile_v3.json"},
@@ -1893,6 +2009,183 @@ TEST_CASE("generic provider status projects a bounded receipt-declared status-v3
                 return provider_status_v3_fixture();
             },
             "unknown"),
+        std::invalid_argument);
+    REQUIRE_FALSE(launched);
+    fs::remove_all(root);
+}
+
+TEST_CASE("provider status consumes closed v4 and v5 without acquiring archive authority") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-provider-status-current-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(root, "node", true, true, "1.1", true, true);
+
+    const json v4 = arena::application::ServiceCatalog::provider_status(
+        root / "data",
+        [](const fs::path&,
+           const fs::path&,
+           const std::vector<std::string>&,
+           const std::chrono::milliseconds) {
+            return provider_status_v4_fixture();
+        },
+        "lichess_bot");
+    REQUIRE(v4.at("provider_status_schema") == "uci_arena_lichess_status_v4");
+    REQUIRE(v4.at("supervision_availability") == "available");
+    REQUIRE(v4.at("incident_availability") == "available");
+    REQUIRE(v4.at("status").at("supervision").at("restart_pending") == true);
+    REQUIRE(v4.at("status").at("incidents").at("active_count") == 2);
+
+    const json v5 = arena::application::ServiceCatalog::provider_status(
+        root / "data",
+        [](const fs::path&,
+           const fs::path&,
+           const std::vector<std::string>&,
+           const std::chrono::milliseconds) {
+            return provider_status_v5_fixture();
+        },
+        "lichess_bot");
+    REQUIRE(v5.at("provider_status_schema") == "uci_arena_lichess_status_v5");
+    REQUIRE(v5.at("status").at("games").at("total") == 646);
+
+    REQUIRE_THROWS_AS(
+        arena::application::ServiceCatalog::provider_status(
+            root / "data",
+            [](const fs::path&,
+               const fs::path&,
+               const std::vector<std::string>&,
+               const std::chrono::milliseconds) {
+                json invalid = provider_status_v4_fixture();
+                invalid["supervision"]["last_exit"]["command"] =
+                    "MUST_NOT_ESCAPE";
+                return invalid;
+            },
+            "lichess_bot"),
+        std::runtime_error);
+    REQUIRE_THROWS_AS(
+        arena::application::ServiceCatalog::provider_status(
+            root / "data",
+            [](const fs::path&,
+               const fs::path&,
+               const std::vector<std::string>&,
+               const std::chrono::milliseconds) {
+                json invalid = provider_status_v5_fixture();
+                invalid["games"]["storage_bytes"] =
+                    9'007'199'254'740'992ULL;
+                return invalid;
+            },
+            "lichess_bot"),
+        std::runtime_error);
+    fs::remove_all(root);
+}
+
+TEST_CASE("provider incidents use the declared operation and validate cursor pages") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-provider-incidents-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(root, "node", true, true, "1.1", true, true);
+    fs::path observed_executable;
+    fs::path observed_working_directory;
+    std::vector<std::string> observed_arguments;
+    const json result = arena::application::ServiceCatalog::provider_incidents(
+        root / "data",
+        [&observed_executable, &observed_working_directory, &observed_arguments](
+            const fs::path& executable,
+            const fs::path& working_directory,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds timeout) {
+            observed_executable = executable;
+            observed_working_directory = working_directory;
+            observed_arguments = arguments;
+            REQUIRE(timeout == std::chrono::seconds(30));
+            return provider_incident_page_fixture("all", 11);
+        },
+        "lichess_bot",
+        "all",
+        11,
+        25);
+
+    REQUIRE(result.at("schema") ==
+            "arena_provider_incident_page_projection_v1");
+    REQUIRE(result.at("availability") == "available");
+    REQUIRE(result.at("provider_contract_version") == "1.1");
+    REQUIRE(result.at("page").at("incidents").size() == 2);
+    REQUIRE(result.at("page").at("next_cursor") == 19);
+    REQUIRE(observed_executable.filename() == "adapter.mjs");
+    REQUIRE(fs::is_directory(observed_working_directory));
+    REQUIRE(observed_arguments.size() == 10);
+    REQUIRE(observed_arguments.at(0) == "alerts");
+    REQUIRE(observed_arguments.at(1) == "scan");
+    REQUIRE(observed_arguments.at(2) == "--filter");
+    REQUIRE(observed_arguments.at(3) == "all");
+    REQUIRE(observed_arguments.at(4) == "--after-cursor");
+    REQUIRE(observed_arguments.at(5) == "11");
+    REQUIRE(observed_arguments.at(6) == "--limit");
+    REQUIRE(observed_arguments.at(7) == "25");
+    REQUIRE(observed_arguments.at(8) == "--runtime-dir");
+    REQUIRE(fs::is_directory(observed_arguments.at(9)));
+
+    const auto invalid_page = [&root](const json& page) {
+        return arena::application::ServiceCatalog::provider_incidents(
+            root / "data",
+            [&page](const fs::path&,
+                    const fs::path&,
+                    const std::vector<std::string>&,
+                    const std::chrono::milliseconds) { return page; },
+            "lichess_bot",
+            "active",
+            0,
+            100);
+    };
+    json non_monotonic = provider_incident_page_fixture();
+    non_monotonic["incidents"][1]["cursor"] = 3;
+    REQUIRE_THROWS_AS(invalid_page(non_monotonic), std::runtime_error);
+    json private_detail = provider_incident_page_fixture();
+    private_detail["incidents"][0]["detail"] =
+        "credential at C:\\private\\provider";
+    REQUIRE_THROWS_AS(invalid_page(private_detail), std::runtime_error);
+    json extra_field = provider_incident_page_fixture();
+    extra_field["incidents"][0]["raw_output"] = "MUST_NOT_ESCAPE";
+    REQUIRE_THROWS_AS(invalid_page(extra_field), std::runtime_error);
+    fs::remove_all(root);
+}
+
+TEST_CASE("provider incidents are explicitly unavailable when the operation is absent") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-provider-incidents-legacy-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(root);
+    bool launched = false;
+    const json result = arena::application::ServiceCatalog::provider_incidents(
+        root / "data",
+        [&launched](const fs::path&,
+                    const fs::path&,
+                    const std::vector<std::string>&,
+                    const std::chrono::milliseconds) {
+            launched = true;
+            return provider_incident_page_fixture();
+        },
+        "lichess_bot",
+        "active",
+        0,
+        100);
+    REQUIRE(result.at("availability") == "unavailable");
+    REQUIRE(result.at("page").is_null());
+    REQUIRE_FALSE(launched);
+
+    REQUIRE_THROWS_AS(
+        arena::application::ServiceCatalog::provider_incidents(
+            root / "data",
+            [&launched](const fs::path&,
+                        const fs::path&,
+                        const std::vector<std::string>&,
+                        const std::chrono::milliseconds) {
+                launched = true;
+                return provider_incident_page_fixture();
+            },
+            "lichess_bot",
+            "private",
+            0,
+            100),
         std::invalid_argument);
     REQUIRE_FALSE(launched);
     fs::remove_all(root);

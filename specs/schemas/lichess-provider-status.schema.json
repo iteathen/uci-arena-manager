@@ -1,0 +1,268 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "arena_lichess_provider_status_compatible_v1",
+  "title": "Compatible UCI Arena Lichess Provider Status",
+  "oneOf": [
+    {
+      "allOf": [
+        {"$ref": "#/$defs/common"},
+        {
+          "type": "object",
+          "required": ["schema", "games"],
+          "properties": {
+            "schema": {"const": "uci_arena_lichess_status_v3"},
+            "games": {"$ref": "#/$defs/games_v3_v4"}
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    {
+      "allOf": [
+        {"$ref": "#/$defs/common"},
+        {
+          "type": "object",
+          "required": ["schema", "games", "supervision", "incidents"],
+          "properties": {
+            "schema": {"const": "uci_arena_lichess_status_v4"},
+            "games": {"$ref": "#/$defs/games_v3_v4"},
+            "supervision": {"$ref": "#/$defs/supervision"},
+            "incidents": {"$ref": "#/$defs/incidents"}
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    {
+      "allOf": [
+        {"$ref": "#/$defs/common"},
+        {
+          "type": "object",
+          "required": ["schema", "games", "supervision", "incidents"],
+          "properties": {
+            "schema": {"const": "uci_arena_lichess_status_v5"},
+            "games": {"$ref": "#/$defs/games_v5"},
+            "supervision": {"$ref": "#/$defs/supervision"},
+            "incidents": {"$ref": "#/$defs/incidents"}
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    }
+  ],
+  "$defs": {
+    "nonnegative_integer": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "nullable_nonnegative_integer": {
+      "oneOf": [
+        {"$ref": "#/$defs/nonnegative_integer"},
+        {"type": "null"}
+      ]
+    },
+    "count": {"type": "integer", "minimum": 0, "maximum": 64},
+    "nullable_capacity": {
+      "oneOf": [
+        {"type": "integer", "minimum": 0, "maximum": 64},
+        {"type": "null"}
+      ]
+    },
+    "slot_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["empty", "preparing", "pending", "cancelling", "active", "draining"],
+      "properties": {
+        "empty": {"$ref": "#/$defs/count"},
+        "preparing": {"$ref": "#/$defs/count"},
+        "pending": {"$ref": "#/$defs/count"},
+        "cancelling": {"$ref": "#/$defs/count"},
+        "active": {"$ref": "#/$defs/count"},
+        "draining": {"$ref": "#/$defs/count"}
+      }
+    },
+    "games_v3_v4": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["active", "preparing", "pending", "cancelling", "draining"],
+      "properties": {
+        "active": {"$ref": "#/$defs/count"},
+        "preparing": {"$ref": "#/$defs/count"},
+        "pending": {"$ref": "#/$defs/count"},
+        "cancelling": {"$ref": "#/$defs/count"},
+        "draining": {"$ref": "#/$defs/count"}
+      }
+    },
+    "games_v5": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "active", "preparing", "pending", "cancelling", "draining",
+        "archive_available", "total", "complete", "incomplete", "storage_bytes"
+      ],
+      "properties": {
+        "active": {"$ref": "#/$defs/count"},
+        "preparing": {"$ref": "#/$defs/count"},
+        "pending": {"$ref": "#/$defs/count"},
+        "cancelling": {"$ref": "#/$defs/count"},
+        "draining": {"$ref": "#/$defs/count"},
+        "archive_available": {"type": "boolean"},
+        "total": {"$ref": "#/$defs/nullable_nonnegative_integer"},
+        "complete": {"$ref": "#/$defs/nullable_nonnegative_integer"},
+        "incomplete": {"$ref": "#/$defs/nullable_nonnegative_integer"},
+        "storage_bytes": {"$ref": "#/$defs/nullable_nonnegative_integer"}
+      }
+    },
+    "supervision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "restart_pending", "exit_receipt_state", "last_exit"],
+      "properties": {
+        "state": {
+          "enum": ["unknown", "unregistered", "disabled", "active", "restart_pending", "clean_stopped", "inactive"]
+        },
+        "restart_pending": {"type": "boolean"},
+        "exit_receipt_state": {"enum": ["unknown", "unavailable", "ready", "failed"]},
+        "last_exit": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["disposition", "exited_at", "child_exit_code"],
+              "properties": {
+                "disposition": {"enum": ["clean_exit", "unexpected_exit"]},
+                "exited_at": {"type": "string", "format": "date-time", "maxLength": 64},
+                "child_exit_code": {"type": "integer", "minimum": 0, "maximum": 4294967295}
+              }
+            }
+          ]
+        }
+      }
+    },
+    "incidents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available", "active_count", "highest_severity", "latest_cursor", "truncated", "truncated_rows"],
+      "properties": {
+        "available": {"type": "boolean"},
+        "active_count": {"$ref": "#/$defs/nullable_nonnegative_integer"},
+        "highest_severity": {
+          "oneOf": [
+            {"enum": ["info", "warning", "error", "critical"]},
+            {"type": "null"}
+          ]
+        },
+        "latest_cursor": {"$ref": "#/$defs/nullable_nonnegative_integer"},
+        "truncated": {"type": ["boolean", "null"]},
+        "truncated_rows": {"$ref": "#/$defs/nullable_nonnegative_integer"}
+      }
+    },
+    "common": {
+      "type": "object",
+      "required": [
+        "installed", "registered", "active", "ready", "stream_connected",
+        "stream_state", "runtime_updated_at", "account", "capacity",
+        "scheduler", "rate_limit", "blockers"
+      ],
+      "properties": {
+        "installed": {"type": "boolean"},
+        "registered": {"type": "boolean"},
+        "active": {"type": "boolean"},
+        "ready": {"type": "boolean"},
+        "stream_connected": {"type": "boolean"},
+        "stream_state": {
+          "enum": ["starting", "reconciling", "connecting", "waiting_for_api_cooldown", "connected", "disconnected"]
+        },
+        "runtime_updated_at": {"type": ["string", "null"], "format": "date-time", "maxLength": 64},
+        "account": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["username", "bot"],
+              "properties": {
+                "username": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9_-]+$"},
+                "bot": {"const": true}
+              }
+            }
+          ]
+        },
+        "capacity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["configured", "qualified", "slots"],
+          "properties": {
+            "configured": {"$ref": "#/$defs/nullable_capacity"},
+            "qualified": {"$ref": "#/$defs/nullable_capacity"},
+            "slots": {"$ref": "#/$defs/slot_counts"}
+          }
+        },
+        "scheduler": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "paused", "target_active_bots", "fault"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "paused": {"type": "boolean"},
+            "target_active_bots": {"$ref": "#/$defs/nullable_capacity"},
+            "fault": {
+              "oneOf": [
+                {"type": "null"},
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["kind", "status"],
+                  "properties": {
+                    "kind": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$"},
+                    "status": {"type": ["integer", "null"], "minimum": 100, "maximum": 599}
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "rate_limit": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state", "cooldown_until", "cooldown_remaining_ms", "strike_count",
+            "challenge_state", "challenge_blocked_until", "challenge_remaining_ms",
+            "challenge_strike_count", "queue_depth", "in_flight_class", "client_lease"
+          ],
+          "properties": {
+            "state": {"enum": ["unknown", "ready", "cooldown", "challenge_quarantined", "challenge_half_open"]},
+            "cooldown_until": {"$ref": "#/$defs/nullable_nonnegative_integer"},
+            "cooldown_remaining_ms": {"$ref": "#/$defs/nullable_nonnegative_integer"},
+            "strike_count": {"$ref": "#/$defs/nullable_nonnegative_integer"},
+            "challenge_state": {"enum": ["unknown", "ready", "quarantined", "half_open_ready", "half_open"]},
+            "challenge_blocked_until": {"$ref": "#/$defs/nullable_nonnegative_integer"},
+            "challenge_remaining_ms": {"$ref": "#/$defs/nullable_nonnegative_integer"},
+            "challenge_strike_count": {"$ref": "#/$defs/nullable_nonnegative_integer"},
+            "queue_depth": {"$ref": "#/$defs/nullable_nonnegative_integer"},
+            "in_flight_class": {"type": ["string", "null"], "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9._-]+$"},
+            "client_lease": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["state", "active_clients", "heartbeat_at", "expires_at"],
+              "properties": {
+                "state": {"enum": ["unknown", "authoritative", "missing", "conflict"]},
+                "active_clients": {"$ref": "#/$defs/nullable_nonnegative_integer"},
+                "heartbeat_at": {"$ref": "#/$defs/nullable_nonnegative_integer"},
+                "expires_at": {"$ref": "#/$defs/nullable_nonnegative_integer"}
+              }
+            }
+          }
+        },
+        "blockers": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$"}
+        }
+      }
+    }
+  }
+}

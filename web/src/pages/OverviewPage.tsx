@@ -23,7 +23,7 @@ import type { ManagedServiceData } from '../api/types'
 import { Chessboard } from '../components/Chessboard'
 import { MetricCard } from '../components/MetricCard'
 import { PageHeader } from '../components/PageHeader'
-import { providerStatusAlerts } from './providerStatusModel'
+import { providerIncidentAlerts, providerStatusAlerts } from './providerStatusModel'
 
 export function OverviewPage({ navigate }: { navigate: (page: string) => void }) {
   const status = useQuery({ queryKey: ['status'], queryFn: api.status, refetchInterval: 10_000 })
@@ -42,6 +42,14 @@ export function OverviewPage({ navigate }: { navigate: (page: string) => void })
     queryKey: ['provider-status', 'lichess_bot'],
     queryFn: () => api.providerStatus('lichess_bot'),
     enabled: lichessAdapterInstalled,
+    retry: false,
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: false,
+  })
+  const providerIncidents = useQuery({
+    queryKey: ['provider-incidents', 'lichess_bot', 'active', 0],
+    queryFn: () => api.providerIncidents('lichess_bot', 'active', 0, 100),
+    enabled: providerStatus.data?.incident_availability === 'available',
     retry: false,
     refetchInterval: 5_000,
     refetchIntervalInBackground: false,
@@ -67,12 +75,19 @@ export function OverviewPage({ navigate }: { navigate: (page: string) => void })
       service.data.integration_state === 'incompatible',
   )
   const currentProviderAlerts = providerStatusAlerts(providerStatus.data)
+  const durableProviderAlerts = providerIncidentAlerts(providerIncidents.data)
+  const activeProviderIncidentCount =
+    providerStatus.data && 'incidents' in providerStatus.data.status
+      ? (providerStatus.data.status.incidents.active_count ?? 0)
+      : 0
   const attention =
     componentIssues.length +
     serviceIssues.length +
     currentProviderAlerts.length +
+    activeProviderIncidentCount +
     (status.isError ? 1 : 0) +
-    (lichessAdapterInstalled && providerStatus.isError ? 1 : 0)
+    (lichessAdapterInstalled && providerStatus.isError ? 1 : 0) +
+    (providerIncidents.isError ? 1 : 0)
   const evidence = (services.data ?? []).find(
     (service) => service.data.profile_id === 'uci_arena_evidence',
   )
@@ -83,7 +98,9 @@ export function OverviewPage({ navigate }: { navigate: (page: string) => void })
     components.isLoading ||
     services.isLoading ||
     componentVerificationChecking ||
-    (lichessAdapterInstalled && providerStatus.isLoading)
+    (lichessAdapterInstalled && providerStatus.isLoading) ||
+    (providerStatus.data?.incident_availability === 'available' &&
+      providerIncidents.isLoading)
 
   return (
     <>
@@ -148,6 +165,16 @@ export function OverviewPage({ navigate }: { navigate: (page: string) => void })
                   Manager could not obtain the credential-free provider status projection.
                 </Alert>
               )}
+              {providerIncidents.isError && (
+                <Alert color="orange" title="Durable Lichess incidents unavailable">
+                  Manager could not obtain the bounded Provider incident page.
+                </Alert>
+              )}
+              {durableProviderAlerts.map((alert) => (
+                <Alert key={alert.key} color={alert.color} title={alert.title}>
+                  {alert.detail}
+                </Alert>
+              ))}
               {currentProviderAlerts.map((alert) => (
                 <Alert key={alert.key} color={alert.color} title={alert.title}>
                   {alert.detail}
@@ -155,9 +182,13 @@ export function OverviewPage({ navigate }: { navigate: (page: string) => void })
               ))}
               {lichessAdapterInstalled &&
                 providerStatus.data &&
-                currentProviderAlerts.length === 0 && (
+                currentProviderAlerts.length === 0 &&
+                durableProviderAlerts.length === 0 &&
+                !providerIncidents.isError && (
                   <Alert color="teal" title="Current Lichess provider status healthy">
-                    {`The provider reports ready with no current bounded blockers. Durable incident history is unavailable on contract v${providerStatus.data.provider_contract_version}.`}
+                    {providerStatus.data.incident_availability === 'available'
+                      ? 'The Provider reports no current bounded blockers or active durable incidents.'
+                      : `The Provider reports ready with no current bounded blockers. Durable incident history is unavailable on contract v${providerStatus.data.provider_contract_version}.`}
                   </Alert>
                 )}
               <Group className="attention-row" justify="space-between">

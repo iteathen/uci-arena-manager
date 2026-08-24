@@ -11,6 +11,7 @@
 #include <fstream>
 #include <initializer_list>
 #include <optional>
+#include <regex>
 #include <set>
 #include <stdexcept>
 #include <string_view>
@@ -350,6 +351,7 @@ struct ProviderServiceContract {
     fs::path executable;
     std::vector<std::string> invocation_prefix;
     json operations;
+    bool incident_page_supported{false};
 };
 
 ProviderServiceContract verified_provider_service_contract(
@@ -460,6 +462,39 @@ ProviderServiceContract verified_provider_service_contract(
     static_cast<void>(verify_referenced_contract(
         "status_schema", "status_schema_path", "status_schema_sha256"));
 
+    bool incident_page_contract = false;
+    if (contract.contains("incident_page_schema")) {
+        if (!contract.at("incident_page_schema").is_string() ||
+            !component.manifest.contains("contracts") ||
+            !component.manifest.at("contracts").is_object() ||
+            component.manifest.at("contracts").value("incident_page", "") !=
+                contract.at("incident_page_schema").get<std::string>()) {
+            throw std::runtime_error(
+                "installed provider incident contract reference is incompatible");
+        }
+        const fs::path incident_relative =
+            contract.at("incident_page_schema").get<std::string>();
+        std::string incident_digest;
+        for (const auto& file : component.manifest.at("files")) {
+            if (fs::path(file.value("path", "")).lexically_normal() ==
+                incident_relative.lexically_normal()) {
+                incident_digest = file.value("sha256", "");
+                break;
+            }
+        }
+        const fs::path incident_path = verified_component_file(
+            component, incident_relative, incident_digest);
+        const json incident_schema = read_json_file(incident_path);
+        if (incident_schema.value("$id", "") !=
+                "uci_arena_provider_incident_page_v1" ||
+            incident_schema.value("type", "") != "object" ||
+            incident_schema.value("additionalProperties", true)) {
+            throw std::runtime_error(
+                "installed provider incident page schema is incompatible");
+        }
+        incident_page_contract = true;
+    }
+
     if (!contract.contains("credential_contract") ||
         !contract.at("credential_contract").is_object() ||
         contract.at("credential_contract").value("contents_visible_to", "") !=
@@ -537,6 +572,28 @@ ProviderServiceContract verified_provider_service_contract(
                 operation);
         }
     }
+    const bool incident_operation =
+        operations.at("operations").contains("incidents_list");
+    if (incident_operation != incident_page_contract) {
+        throw std::runtime_error(
+            "installed provider incident operation and schema disagree");
+    }
+    if (incident_operation) {
+        const json& incident =
+            operations.at("operations").at("incidents_list");
+        if (incident.value("mutates", true) ||
+            incident.value("credential", "") != "forbidden" ||
+            incident.value("response", "") !=
+                "uci_arena_provider_incident_page_v1" ||
+            incident.value("response_schema", "") !=
+                contract.at("incident_page_schema").get<std::string>() ||
+            !incident.contains("optional_arguments") ||
+            incident.at("optional_arguments") != json::array(
+                {"--filter", "--after-cursor", "--limit", "--runtime-dir"})) {
+            throw std::runtime_error(
+                "installed provider incident operation is incompatible");
+        }
+    }
 
     if (!contract.contains("invocation") ||
         !contract.at("invocation").is_object()) {
@@ -545,7 +602,12 @@ ProviderServiceContract verified_provider_service_contract(
     const json& invocation = contract.at("invocation");
     const std::string invocation_kind = invocation.value("kind", "");
     if (invocation_kind == "direct") {
-        return {component_entrypoint, {}, operations};
+        return {
+            component_entrypoint,
+            {},
+            operations,
+            incident_operation,
+        };
     }
     if (invocation_kind != "dependency_runtime" ||
         !invocation.contains("runtime_component_id") ||
@@ -579,6 +641,7 @@ ProviderServiceContract verified_provider_service_contract(
         verified_entrypoint(runtime, runtime_entrypoint),
         {component_entrypoint.string()},
         operations,
+        incident_operation,
     };
 }
 
@@ -654,8 +717,14 @@ fs::path bot_runtime_directory(const InstalledComponent& adapter) {
 }
 
 json project_bot_provider_status(const json& result) {
-    if (!result.is_object() || result.dump().size() > 64U * 1024U ||
-        result.value("schema", "") != "uci_arena_lichess_status_v3" ||
+    if (!result.is_object() || result.dump().size() > 64U * 1024U) {
+        throw std::runtime_error(
+            "the provider returned invalid bounded bot status");
+    }
+    const std::string status_schema = result.value("schema", "");
+    if ((status_schema != "uci_arena_lichess_status_v3" &&
+         status_schema != "uci_arena_lichess_status_v4" &&
+         status_schema != "uci_arena_lichess_status_v5") ||
         !result.contains("active") || !result.at("active").is_boolean() ||
         !result.contains("ready") || !result.at("ready").is_boolean() ||
         !result.contains("stream_connected") ||
@@ -793,15 +862,30 @@ bool string_enum(
                values.end();
 }
 
-json validate_provider_status_v3(const json& result) {
-    if (result.dump().size() > 64U * 1024U ||
-        !exact_object_fields(
-            result,
-            {"schema", "installed", "registered", "active", "ready",
-             "stream_connected", "stream_state", "runtime_updated_at",
-             "account", "capacity", "games", "scheduler", "rate_limit",
-             "blockers"}) ||
-        result.at("schema") != "uci_arena_lichess_status_v3" ||
+json validate_provider_status(const json& result) {
+    if (!result.is_object() || result.dump().size() > 64U * 1024U) {
+        throw std::runtime_error(
+            "the provider returned invalid bounded status identity");
+    }
+    const std::string schema = result.value("schema", "");
+    const bool status_v3 = schema == "uci_arena_lichess_status_v3";
+    const bool status_v4 = schema == "uci_arena_lichess_status_v4";
+    const bool status_v5 = schema == "uci_arena_lichess_status_v5";
+    const bool extended_status = status_v4 || status_v5;
+    if (!(status_v3 || extended_status) ||
+        !(status_v3
+              ? exact_object_fields(
+                    result,
+                    {"schema", "installed", "registered", "active", "ready",
+                     "stream_connected", "stream_state", "runtime_updated_at",
+                     "account", "capacity", "games", "scheduler", "rate_limit",
+                     "blockers"})
+              : exact_object_fields(
+                    result,
+                    {"schema", "installed", "registered", "active", "ready",
+                     "stream_connected", "stream_state", "runtime_updated_at",
+                     "account", "capacity", "games", "scheduler", "rate_limit",
+                     "supervision", "incidents", "blockers"})) ||
         !result.at("installed").is_boolean() ||
         !result.at("registered").is_boolean() ||
         !result.at("active").is_boolean() ||
@@ -813,7 +897,7 @@ json validate_provider_status_v3(const json& result) {
              "waiting_for_api_cooldown", "connected", "disconnected"}) ||
         !bounded_date_time(result.at("runtime_updated_at"))) {
         throw std::runtime_error(
-            "the provider returned invalid bounded status-v3 identity");
+            "the provider returned invalid bounded status identity");
     }
 
     const json& account = result.at("account");
@@ -855,9 +939,16 @@ json validate_provider_status_v3(const json& result) {
     static constexpr std::array<std::string_view, 5> game_fields{
         "active", "preparing", "pending", "cancelling", "draining"};
     const json& games = result.at("games");
-    if (!exact_object_fields(
-            games,
-            {"active", "preparing", "pending", "cancelling", "draining"}) ||
+    const bool game_shape_valid = status_v5
+        ? exact_object_fields(
+              games,
+              {"active", "preparing", "pending", "cancelling", "draining",
+               "archive_available", "total", "complete", "incomplete",
+               "storage_bytes"})
+        : exact_object_fields(
+              games,
+              {"active", "preparing", "pending", "cancelling", "draining"});
+    if (!game_shape_valid ||
         !std::ranges::all_of(
             game_fields,
             [&games](const std::string_view field) {
@@ -865,7 +956,16 @@ json validate_provider_status_v3(const json& result) {
                     games.at(std::string(field)), 64U);
             })) {
         throw std::runtime_error(
-            "the provider returned invalid bounded status-v3 games");
+            "the provider returned invalid bounded status games");
+    }
+    if (status_v5 &&
+        (!games.at("archive_available").is_boolean() ||
+         !nullable_bounded_nonnegative_integer(games.at("total")) ||
+         !nullable_bounded_nonnegative_integer(games.at("complete")) ||
+         !nullable_bounded_nonnegative_integer(games.at("incomplete")) ||
+         !nullable_bounded_nonnegative_integer(games.at("storage_bytes")))) {
+        throw std::runtime_error(
+            "the provider returned invalid bounded status-v5 archive summary");
     }
 
     const json& scheduler = result.at("scheduler");
@@ -942,6 +1042,75 @@ json validate_provider_status_v3(const json& result) {
             "the provider returned invalid bounded status-v3 client lease");
     }
 
+    if (extended_status) {
+        const json& supervision = result.at("supervision");
+        if (!exact_object_fields(
+                supervision,
+                {"state", "restart_pending", "exit_receipt_state", "last_exit"}) ||
+            !string_enum(
+                supervision.at("state"),
+                {"unknown", "unregistered", "disabled", "active",
+                 "restart_pending", "clean_stopped", "inactive"}) ||
+            !supervision.at("restart_pending").is_boolean() ||
+            !string_enum(
+                supervision.at("exit_receipt_state"),
+                {"unknown", "unavailable", "ready", "failed"})) {
+            throw std::runtime_error(
+                "the provider returned invalid bounded supervision state");
+        }
+        const json& last_exit = supervision.at("last_exit");
+        if (!last_exit.is_null() &&
+            (!exact_object_fields(
+                 last_exit, {"disposition", "exited_at", "child_exit_code"}) ||
+             !string_enum(
+                 last_exit.at("disposition"),
+                 {"clean_exit", "unexpected_exit"}) ||
+             !bounded_date_time(last_exit.at("exited_at")) ||
+             last_exit.at("exited_at").is_null() ||
+             !bounded_nonnegative_integer(
+                 last_exit.at("child_exit_code"), 4'294'967'295ULL))) {
+            throw std::runtime_error(
+                "the provider returned invalid bounded supervision exit receipt");
+        }
+
+        const json& incidents = result.at("incidents");
+        if (!exact_object_fields(
+                incidents,
+                {"available", "active_count", "highest_severity",
+                 "latest_cursor", "truncated", "truncated_rows"}) ||
+            !incidents.at("available").is_boolean() ||
+            !nullable_bounded_nonnegative_integer(incidents.at("active_count")) ||
+            !nullable_bounded_nonnegative_integer(incidents.at("latest_cursor")) ||
+            !nullable_bounded_nonnegative_integer(incidents.at("truncated_rows")) ||
+            (!incidents.at("highest_severity").is_null() &&
+             !string_enum(
+                 incidents.at("highest_severity"),
+                 {"info", "warning", "error", "critical"})) ||
+            (!incidents.at("truncated").is_null() &&
+             !incidents.at("truncated").is_boolean())) {
+            throw std::runtime_error(
+                "the provider returned invalid bounded incident summary");
+        }
+        const bool available = incidents.at("available").get<bool>();
+        if ((!available &&
+             (!incidents.at("active_count").is_null() ||
+              !incidents.at("highest_severity").is_null() ||
+              !incidents.at("latest_cursor").is_null() ||
+              !incidents.at("truncated").is_null() ||
+              !incidents.at("truncated_rows").is_null())) ||
+            (available &&
+             (incidents.at("active_count").is_null() ||
+              incidents.at("latest_cursor").is_null() ||
+              incidents.at("truncated").is_null() ||
+              incidents.at("truncated_rows").is_null())) ||
+            (available &&
+             ((incidents.at("active_count").get<std::uint64_t>() == 0U) !=
+              incidents.at("highest_severity").is_null()))) {
+            throw std::runtime_error(
+                "the provider returned inconsistent bounded incident summary");
+        }
+    }
+
     const json& blockers = result.at("blockers");
     if (!blockers.is_array() || blockers.size() > 64U) {
         throw std::runtime_error(
@@ -977,21 +1146,277 @@ json provider_status_impl(
     arguments.insert(
         arguments.end(),
         {"--runtime-dir", bot_runtime_directory(adapter).string()});
-    const json status = validate_provider_status_v3(command_runner(
+    const json status = validate_provider_status(command_runner(
         contract.executable,
         adapter.active_root,
         arguments,
         std::chrono::seconds(30)));
+    const std::string status_schema = status.at("schema").get<std::string>();
+    const bool extended_status =
+        status_schema == "uci_arena_lichess_status_v4" ||
+        status_schema == "uci_arena_lichess_status_v5";
+    if (extended_status != contract.incident_page_supported) {
+        throw std::runtime_error(
+            "provider status and incident operation compatibility disagree");
+    }
     return {
         {"schema", "arena_provider_status_projection_v1"},
         {"schema_version", 1},
         {"profile_id", profile_id},
         {"availability", "available"},
         {"provider_contract_version", contract.operations.at("version")},
-        {"provider_status_schema", "uci_arena_lichess_status_v3"},
-        {"supervision_availability", "unavailable"},
-        {"incident_availability", "unavailable"},
+        {"provider_status_schema", status_schema},
+        {"supervision_availability",
+         extended_status ? "available" : "unavailable"},
+        {"incident_availability",
+         contract.incident_page_supported ? "available" : "unavailable"},
         {"status", status},
+    };
+}
+
+bool valid_incident_identifier(const json& value) {
+    if (!value.is_string()) {
+        return false;
+    }
+    const std::string& identifier = value.get_ref<const std::string&>();
+    if (identifier.empty() || identifier.size() > 64U ||
+        identifier.front() < 'a' || identifier.front() > 'z') {
+        return false;
+    }
+    return std::ranges::all_of(identifier, [](const unsigned char character) {
+        return (character >= 'a' && character <= 'z') ||
+               (character >= '0' && character <= '9') || character == '_';
+    });
+}
+
+bool valid_incident_game_id(const json& value) {
+    if (value.is_null()) {
+        return true;
+    }
+    if (!value.is_string()) {
+        return false;
+    }
+    const std::string& game_id = value.get_ref<const std::string&>();
+    return !game_id.empty() && game_id.size() <= 64U &&
+           std::ranges::all_of(game_id, [](const unsigned char character) {
+               return std::isalnum(character) != 0 || character == '_' ||
+                      character == '-';
+           });
+}
+
+bool valid_incident_detail(const json& value) {
+    if (!value.is_string()) {
+        return false;
+    }
+    const std::string& detail = value.get_ref<const std::string&>();
+    const std::size_t characters = std::ranges::count_if(
+        detail, [](const unsigned char character) {
+            return (character & 0xC0U) != 0x80U;
+        });
+    if (detail.empty() || characters > 512U ||
+        ((detail.front() == '{' && detail.back() == '}') ||
+         (detail.front() == '[' && detail.back() == ']')) ||
+        std::ranges::any_of(detail, [](const unsigned char character) {
+            return std::iscntrl(character) != 0;
+        })) {
+        return false;
+    }
+    std::string lowercase(detail);
+    std::ranges::transform(
+        lowercase, lowercase.begin(), [](const unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+    static const std::array<std::regex, 8> forbidden{
+        std::regex(
+            R"(\b(authorization|cookie|set-cookie|password|passwd|secret|token|api[_-]?key|credential)\b)"),
+        std::regex(R"(\bbearer\s+[a-z0-9._~+/=-]{4,})"),
+        std::regex(R"(\b(sk|ghp|github_pat)-[a-z0-9_-]{8,}\b)"),
+        std::regex(
+            R"(\b[a-z0-9_-]{8,}\.[a-z0-9_-]{8,}\.[a-z0-9_-]{8,}\b)"),
+        std::regex(
+            R"((^|\s)([a-z]:[\\/]|\\\\|/([^\s/]+/)+)[^\s]*)"),
+        std::regex(R"((^|\s)--[a-z][a-z0-9-]*(\s|=|$))"),
+        std::regex(
+            R"(\b(cmd\.exe|powershell(\.exe)?|pwsh(\.exe)?|sh\s+-c|bash\s+-c|node(\.exe)?\s+)\b)"),
+        std::regex(
+            R"(\b(uciok|readyok|bestmove|info\s+(depth|score|nodes)|id\s+name|option\s+name)\b)"),
+    };
+    return std::ranges::none_of(forbidden, [&lowercase](const auto& pattern) {
+        return std::regex_search(lowercase, pattern);
+    });
+}
+
+json validate_provider_incident_page(
+    const json& result,
+    const std::string& expected_filter,
+    const std::uint64_t expected_after_cursor,
+    const std::uint32_t expected_limit) {
+    constexpr std::uint64_t maximum_safe_integer = 9'007'199'254'740'991ULL;
+    if (result.dump().size() > 256U * 1024U ||
+        !exact_object_fields(
+            result,
+            {"schema", "filter", "after_cursor", "next_cursor", "has_more",
+             "incidents", "retention"}) ||
+        result.at("schema") != "uci_arena_provider_incident_page_v1" ||
+        result.at("filter") != expected_filter ||
+        !bounded_nonnegative_integer(
+            result.at("after_cursor"), maximum_safe_integer) ||
+        result.at("after_cursor").get<std::uint64_t>() !=
+            expected_after_cursor ||
+        !bounded_nonnegative_integer(
+            result.at("next_cursor"), maximum_safe_integer) ||
+        !result.at("has_more").is_boolean() ||
+        !result.at("incidents").is_array() ||
+        result.at("incidents").size() > expected_limit ||
+        result.at("incidents").size() > 100U) {
+        throw std::runtime_error(
+            "the provider returned an invalid bounded incident page");
+    }
+
+    std::uint64_t previous_cursor = expected_after_cursor;
+    for (const auto& incident : result.at("incidents")) {
+        if (!exact_object_fields(
+                incident,
+                {"cursor", "code", "severity", "source", "operation",
+                 "first_occurrence", "last_occurrence", "occurrence_count",
+                 "state", "resolved_at", "http_status", "retry_deadline",
+                 "game_id", "detail"}) ||
+            !bounded_nonnegative_integer(
+                incident.at("cursor"), maximum_safe_integer) ||
+            incident.at("cursor").get<std::uint64_t>() <= previous_cursor ||
+            !valid_incident_identifier(incident.at("code")) ||
+            !string_enum(
+                incident.at("severity"),
+                {"info", "warning", "error", "critical"}) ||
+            !string_enum(
+                incident.at("source"),
+                {"api", "scheduler", "stream", "startup", "engine_child",
+                 "storage", "status_publication"}) ||
+            !valid_incident_identifier(incident.at("operation")) ||
+            !bounded_nonnegative_integer(
+                incident.at("first_occurrence"), maximum_safe_integer) ||
+            !bounded_nonnegative_integer(
+                incident.at("last_occurrence"), maximum_safe_integer) ||
+            !bounded_nonnegative_integer(
+                incident.at("occurrence_count"), maximum_safe_integer) ||
+            incident.at("occurrence_count").get<std::uint64_t>() == 0U ||
+            !string_enum(incident.at("state"), {"active", "resolved"}) ||
+            !nullable_bounded_nonnegative_integer(
+                incident.at("resolved_at"), maximum_safe_integer) ||
+            (!incident.at("http_status").is_null() &&
+             (!bounded_nonnegative_integer(incident.at("http_status"), 599U) ||
+              incident.at("http_status").get<std::uint64_t>() < 100U)) ||
+            !nullable_bounded_nonnegative_integer(
+                incident.at("retry_deadline"), maximum_safe_integer) ||
+            !valid_incident_game_id(incident.at("game_id")) ||
+            !valid_incident_detail(incident.at("detail"))) {
+            throw std::runtime_error(
+                "the provider returned an invalid bounded incident row");
+        }
+        const std::uint64_t first_occurrence =
+            incident.at("first_occurrence").get<std::uint64_t>();
+        const std::uint64_t last_occurrence =
+            incident.at("last_occurrence").get<std::uint64_t>();
+        const bool active = incident.at("state") == "active";
+        if (first_occurrence > last_occurrence ||
+            (active && !incident.at("resolved_at").is_null()) ||
+            (!active &&
+             (incident.at("resolved_at").is_null() ||
+              incident.at("resolved_at").get<std::uint64_t>() <
+                  last_occurrence))) {
+            throw std::runtime_error(
+                "the provider returned an inconsistent bounded incident row");
+        }
+        previous_cursor = incident.at("cursor").get<std::uint64_t>();
+    }
+
+    const json& incidents = result.at("incidents");
+    const std::uint64_t next_cursor =
+        result.at("next_cursor").get<std::uint64_t>();
+    if (next_cursor != previous_cursor ||
+        (incidents.empty() && result.at("has_more").get<bool>()) ||
+        (result.at("has_more").get<bool>() &&
+         incidents.size() != expected_limit)) {
+        throw std::runtime_error(
+            "the provider returned an inconsistent incident cursor page");
+    }
+
+    const json& retention = result.at("retention");
+    if (!exact_object_fields(
+            retention,
+            {"maximum_rows", "resolved_retention_ms",
+             "last_truncated_cursor", "truncated_rows",
+             "truncated_active_rows"}) ||
+        retention.at("maximum_rows") != 2'048 ||
+        retention.at("resolved_retention_ms") != 7'776'000'000ULL ||
+        !nullable_bounded_nonnegative_integer(
+            retention.at("last_truncated_cursor"), maximum_safe_integer) ||
+        !bounded_nonnegative_integer(
+            retention.at("truncated_rows"), maximum_safe_integer) ||
+        !bounded_nonnegative_integer(
+            retention.at("truncated_active_rows"), maximum_safe_integer) ||
+        retention.at("truncated_active_rows").get<std::uint64_t>() >
+            retention.at("truncated_rows").get<std::uint64_t>()) {
+        throw std::runtime_error(
+            "the provider returned invalid bounded incident retention");
+    }
+    return result;
+}
+
+json provider_incidents_impl(
+    const fs::path& manager_data_root,
+    const ServiceCatalog::BotCommandRunner& command_runner,
+    const ComponentVerificationRegistry* component_registry,
+    const std::string& profile_id,
+    const std::string& filter,
+    const std::uint64_t after_cursor,
+    const std::uint32_t limit) {
+    if (profile_id != "lichess_bot") {
+        throw std::invalid_argument("unknown provider profile");
+    }
+    if ((filter != "active" && filter != "all") || limit == 0U ||
+        limit > 100U || after_cursor > 9'007'199'254'740'991ULL) {
+        throw std::invalid_argument("invalid provider incident query");
+    }
+    const fs::path receipts_root = manager_data_root / "receipts";
+    InstalledComponent adapter = installed_component(
+        receipts_root, "lichess.adapter", true, component_registry);
+    ProviderServiceContract contract = verified_provider_service_contract(
+        receipts_root, adapter, component_registry);
+    if (!contract.incident_page_supported) {
+        return {
+            {"schema", "arena_provider_incident_page_projection_v1"},
+            {"schema_version", 1},
+            {"profile_id", profile_id},
+            {"availability", "unavailable"},
+            {"provider_contract_version", contract.operations.at("version")},
+            {"page", nullptr},
+        };
+    }
+    std::vector<std::string> arguments = provider_operation_arguments(
+        contract, "incidents_list", "forbidden");
+    arguments.insert(
+        arguments.end(),
+        {"--filter", filter,
+         "--after-cursor", std::to_string(after_cursor),
+         "--limit", std::to_string(limit),
+         "--runtime-dir", bot_runtime_directory(adapter).string()});
+    const json page = validate_provider_incident_page(
+        command_runner(
+            contract.executable,
+            adapter.active_root,
+            arguments,
+            std::chrono::seconds(30)),
+        filter,
+        after_cursor,
+        limit);
+    return {
+        {"schema", "arena_provider_incident_page_projection_v1"},
+        {"schema_version", 1},
+        {"profile_id", profile_id},
+        {"availability", "available"},
+        {"provider_contract_version", contract.operations.at("version")},
+        {"page", page},
     };
 }
 
@@ -2935,6 +3360,48 @@ json ServiceCatalog::provider_status(
     const std::string& profile_id) {
     return provider_status_impl(
         manager_data_root, command_runner, nullptr, profile_id);
+}
+
+json ServiceCatalog::provider_incidents(
+    const fs::path& manager_data_root,
+    const ProcessSupervisor& process_supervisor,
+    const ComponentVerificationRegistry& component_registry,
+    const std::string& profile_id,
+    const std::string& filter,
+    const std::uint64_t after_cursor,
+    const std::uint32_t limit) {
+    return provider_incidents_impl(
+        manager_data_root,
+        [&process_supervisor](
+            const fs::path& executable,
+            const fs::path& working_directory,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds timeout) {
+            return process_supervisor.run_json(
+                executable, working_directory, arguments, timeout);
+        },
+        &component_registry,
+        profile_id,
+        filter,
+        after_cursor,
+        limit);
+}
+
+json ServiceCatalog::provider_incidents(
+    const fs::path& manager_data_root,
+    const BotCommandRunner& command_runner,
+    const std::string& profile_id,
+    const std::string& filter,
+    const std::uint64_t after_cursor,
+    const std::uint32_t limit) {
+    return provider_incidents_impl(
+        manager_data_root,
+        command_runner,
+        nullptr,
+        profile_id,
+        filter,
+        after_cursor,
+        limit);
 }
 
 json ServiceCatalog::bot_options(

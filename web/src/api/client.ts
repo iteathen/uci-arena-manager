@@ -14,6 +14,7 @@ import type {
   ComponentInventory,
   EngineCandidates,
   EngineProbeResult,
+  ProviderIncidentPageProjection,
   ProviderStatusProjection,
   Resource,
   ResourceKind,
@@ -574,6 +575,21 @@ export const api = {
     request<ProviderStatusProjection>(
       `/api/v1/providers/${encodeURIComponent(profileId)}/status`,
     ),
+  providerIncidents: (
+    profileId: 'lichess_bot',
+    filter: 'active' | 'all' = 'active',
+    after = 0,
+    limit = 100,
+  ) => {
+    const query = new URLSearchParams({
+      filter,
+      after: String(after),
+      limit: String(limit),
+    })
+    return request<ProviderIncidentPageProjection>(
+      `/api/v1/providers/${encodeURIComponent(profileId)}/incidents?${query.toString()}`,
+    )
+  },
   discoverService: (profileId: ServiceProfile['profile_id']) =>
     request<ServiceDiscovery>(`/api/v1/service-profiles/${profileId}/discovery`),
   engineCandidates: (root = '') =>
