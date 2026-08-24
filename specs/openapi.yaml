@@ -331,6 +331,33 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BotDiscovery"
+  /providers/{profileId}/status:
+    get:
+      operationId: getProviderStatus
+      description: >
+        Return a bounded current-status projection from the exact
+        receipt-verified provider operation. The Manager never supplies a
+        credential and status-v3 explicitly reports durable supervision and
+        incident projections unavailable.
+      parameters:
+        - name: profileId
+          in: path
+          required: true
+          schema:
+            enum: [lichess_bot]
+      responses:
+        "200":
+          description: Current provider status is available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderStatusProjection"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
   /resources/{kind}:
     get:
       operationId: listResources
@@ -559,6 +586,283 @@ components:
           type: array
           items:
             type: object
+    ProviderStatusProjection:
+      type: object
+      additionalProperties: false
+      required:
+        - schema
+        - schema_version
+        - profile_id
+        - availability
+        - provider_contract_version
+        - provider_status_schema
+        - supervision_availability
+        - incident_availability
+        - status
+      properties:
+        schema:
+          const: arena_provider_status_projection_v1
+        schema_version:
+          const: 1
+        profile_id:
+          const: lichess_bot
+        availability:
+          const: available
+        provider_contract_version:
+          type: string
+          pattern: '^1\.[0-9]+$'
+          maxLength: 32
+        provider_status_schema:
+          const: uci_arena_lichess_status_v3
+        supervision_availability:
+          const: unavailable
+        incident_availability:
+          const: unavailable
+        status:
+          $ref: "#/components/schemas/LichessProviderStatusV3"
+    LichessProviderStatusV3:
+      type: object
+      additionalProperties: false
+      required:
+        - schema
+        - installed
+        - registered
+        - active
+        - ready
+        - stream_connected
+        - stream_state
+        - runtime_updated_at
+        - account
+        - capacity
+        - games
+        - scheduler
+        - rate_limit
+        - blockers
+      properties:
+        schema:
+          const: uci_arena_lichess_status_v3
+        installed:
+          type: boolean
+        registered:
+          type: boolean
+        active:
+          type: boolean
+        ready:
+          type: boolean
+        stream_connected:
+          type: boolean
+        stream_state:
+          enum:
+            - starting
+            - reconciling
+            - connecting
+            - waiting_for_api_cooldown
+            - connected
+            - disconnected
+        runtime_updated_at:
+          type: [string, "null"]
+          format: date-time
+          maxLength: 64
+        account:
+          oneOf:
+            - type: "null"
+            - type: object
+              additionalProperties: false
+              required: [username, bot]
+              properties:
+                username:
+                  type: string
+                  minLength: 1
+                  maxLength: 64
+                  pattern: '^[A-Za-z0-9_-]+$'
+                bot:
+                  const: true
+        capacity:
+          type: object
+          additionalProperties: false
+          required: [configured, qualified, slots]
+          properties:
+            configured:
+              type: [integer, "null"]
+              minimum: 0
+              maximum: 64
+            qualified:
+              type: [integer, "null"]
+              minimum: 0
+              maximum: 64
+            slots:
+              $ref: "#/components/schemas/ProviderSlotCounts"
+        games:
+          type: object
+          additionalProperties: false
+          required: [active, preparing, pending, cancelling, draining]
+          properties:
+            active:
+              type: integer
+              minimum: 0
+              maximum: 64
+            preparing:
+              type: integer
+              minimum: 0
+              maximum: 64
+            pending:
+              type: integer
+              minimum: 0
+              maximum: 64
+            cancelling:
+              type: integer
+              minimum: 0
+              maximum: 64
+            draining:
+              type: integer
+              minimum: 0
+              maximum: 64
+        scheduler:
+          type: object
+          additionalProperties: false
+          required: [enabled, paused, target_active_bots, fault]
+          properties:
+            enabled:
+              type: boolean
+            paused:
+              type: boolean
+            target_active_bots:
+              type: [integer, "null"]
+              minimum: 0
+              maximum: 64
+            fault:
+              oneOf:
+                - type: "null"
+                - type: object
+                  additionalProperties: false
+                  required: [kind, status]
+                  properties:
+                    kind:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                      pattern: '^[A-Za-z0-9._-]+$'
+                    status:
+                      type: [integer, "null"]
+                      minimum: 100
+                      maximum: 599
+        rate_limit:
+          $ref: "#/components/schemas/ProviderRateLimitStatus"
+        blockers:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^[A-Za-z0-9._-]+$'
+    ProviderSlotCounts:
+      type: object
+      additionalProperties: false
+      required: [empty, preparing, pending, cancelling, active, draining]
+      properties:
+        empty:
+          type: integer
+          minimum: 0
+          maximum: 64
+        preparing:
+          type: integer
+          minimum: 0
+          maximum: 64
+        pending:
+          type: integer
+          minimum: 0
+          maximum: 64
+        cancelling:
+          type: integer
+          minimum: 0
+          maximum: 64
+        active:
+          type: integer
+          minimum: 0
+          maximum: 64
+        draining:
+          type: integer
+          minimum: 0
+          maximum: 64
+    ProviderRateLimitStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - state
+        - cooldown_until
+        - cooldown_remaining_ms
+        - strike_count
+        - challenge_state
+        - challenge_blocked_until
+        - challenge_remaining_ms
+        - challenge_strike_count
+        - queue_depth
+        - in_flight_class
+        - client_lease
+      properties:
+        state:
+          enum:
+            - unknown
+            - ready
+            - cooldown
+            - challenge_quarantined
+            - challenge_half_open
+        cooldown_until:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 9007199254740991
+        cooldown_remaining_ms:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 9007199254740991
+        strike_count:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 9007199254740991
+        challenge_state:
+          enum: [unknown, ready, quarantined, half_open_ready, half_open]
+        challenge_blocked_until:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 9007199254740991
+        challenge_remaining_ms:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 9007199254740991
+        challenge_strike_count:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 9007199254740991
+        queue_depth:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 9007199254740991
+        in_flight_class:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 64
+          pattern: '^[A-Za-z0-9._-]+$'
+        client_lease:
+          type: object
+          additionalProperties: false
+          required: [state, active_clients, heartbeat_at, expires_at]
+          properties:
+            state:
+              enum: [unknown, authoritative, missing, conflict]
+            active_clients:
+              type: [integer, "null"]
+              minimum: 0
+              maximum: 9007199254740991
+            heartbeat_at:
+              type: [integer, "null"]
+              minimum: 0
+              maximum: 9007199254740991
+            expires_at:
+              type: [integer, "null"]
+              minimum: 0
+              maximum: 9007199254740991
     SystemStatus:
       type: object
       required:

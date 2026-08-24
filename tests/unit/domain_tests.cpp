@@ -111,6 +111,58 @@ json manager_bot_options_fixture() {
     };
 }
 
+json provider_status_v3_fixture() {
+    return {
+        {"schema", "uci_arena_lichess_status_v3"},
+        {"installed", true},
+        {"registered", true},
+        {"active", true},
+        {"ready", false},
+        {"stream_connected", false},
+        {"stream_state", "waiting_for_api_cooldown"},
+        {"runtime_updated_at", "2026-08-23T18:45:00.000Z"},
+        {"account", {{"username", "ArenaBot"}, {"bot", true}}},
+        {"capacity",
+         {{"configured", 2},
+          {"qualified", 2},
+          {"slots",
+           {{"empty", 1},
+            {"preparing", 0},
+            {"pending", 0},
+            {"cancelling", 0},
+            {"active", 1},
+            {"draining", 0}}}}},
+        {"games",
+         {{"active", 1},
+          {"preparing", 0},
+          {"pending", 0},
+          {"cancelling", 0},
+          {"draining", 0}}},
+        {"scheduler",
+         {{"enabled", true},
+          {"paused", false},
+          {"target_active_bots", 1},
+          {"fault", {{"kind", "api_request_failed"}, {"status", 429}}}}},
+        {"rate_limit",
+         {{"state", "cooldown"},
+          {"cooldown_until", 1'777'000'000'000ULL},
+          {"cooldown_remaining_ms", 45'000},
+          {"strike_count", 2},
+          {"challenge_state", "quarantined"},
+          {"challenge_blocked_until", 1'777'000'000'000ULL},
+          {"challenge_remaining_ms", 45'000},
+          {"challenge_strike_count", 2},
+          {"queue_depth", 1},
+          {"in_flight_class", nullptr},
+          {"client_lease",
+           {{"state", "authoritative"},
+            {"active_clients", 1},
+            {"heartbeat_at", 1'776'999'950'000ULL},
+            {"expires_at", 1'777'000'010'000ULL}}}}},
+        {"blockers", {"rate_limit_cooldown"}},
+    };
+}
+
 void write_installed_component(
     const fs::path& data_root,
     const fs::path& install_root,
@@ -1747,6 +1799,102 @@ TEST_CASE("conforming direct provider substitutes its declared operation prefixe
     REQUIRE(observed_arguments.at(0) == "settings");
     REQUIRE(observed_arguments.at(1) == "show");
     REQUIRE(observed_arguments.at(2) == "--config");
+    fs::remove_all(root);
+}
+
+TEST_CASE("generic provider status projects a bounded receipt-declared status-v3 operation") {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("arena-provider-status-" + arena::domain::uuid_v7());
+    write_ready_bot_fixture(root, "node", true, true);
+    fs::path observed_executable;
+    fs::path observed_working_directory;
+    std::vector<std::string> observed_arguments;
+    const json result = arena::application::ServiceCatalog::provider_status(
+        root / "data",
+        [&observed_executable, &observed_working_directory, &observed_arguments](
+            const fs::path& executable,
+            const fs::path& working_directory,
+            const std::vector<std::string>& arguments,
+            const std::chrono::milliseconds timeout) {
+            observed_executable = executable;
+            observed_working_directory = working_directory;
+            observed_arguments = arguments;
+            REQUIRE(timeout == std::chrono::seconds(30));
+            return provider_status_v3_fixture();
+        },
+        "lichess_bot");
+
+    REQUIRE(result.at("schema") == "arena_provider_status_projection_v1");
+    REQUIRE(result.at("profile_id") == "lichess_bot");
+    REQUIRE(result.at("provider_contract_version") == "1.0");
+    REQUIRE(result.at("supervision_availability") == "unavailable");
+    REQUIRE(result.at("incident_availability") == "unavailable");
+    REQUIRE(result.at("status").at("scheduler").at("fault").at("status") == 429);
+    REQUIRE(result.at("status").at("rate_limit").at("state") == "cooldown");
+    REQUIRE(observed_executable.filename() == "adapter.mjs");
+    REQUIRE(fs::is_directory(observed_working_directory));
+    REQUIRE(observed_arguments.size() == 4);
+    REQUIRE(observed_arguments.at(0) == "provider");
+    REQUIRE(observed_arguments.at(1) == "observe");
+    REQUIRE(observed_arguments.at(2) == "--runtime-dir");
+    REQUIRE(fs::is_directory(observed_arguments.at(3)));
+
+    const auto invalid_runner = [](
+                                    const fs::path&,
+                                    const fs::path&,
+                                    const std::vector<std::string>&,
+                                    const std::chrono::milliseconds) {
+        json invalid = provider_status_v3_fixture();
+        invalid["token"] = "MUST_NOT_ESCAPE";
+        return invalid;
+    };
+    REQUIRE_THROWS_AS(
+        arena::application::ServiceCatalog::provider_status(
+            root / "data", invalid_runner, "lichess_bot"),
+        std::runtime_error);
+    REQUIRE_THROWS_AS(
+        arena::application::ServiceCatalog::provider_status(
+            root / "data",
+            [](const fs::path&,
+               const fs::path&,
+               const std::vector<std::string>&,
+               const std::chrono::milliseconds) {
+                json invalid = provider_status_v3_fixture();
+                invalid["rate_limit"]["queue_depth"] =
+                    9'007'199'254'740'992ULL;
+                return invalid;
+            },
+            "lichess_bot"),
+        std::runtime_error);
+    REQUIRE_THROWS_AS(
+        arena::application::ServiceCatalog::provider_status(
+            root / "data",
+            [](const fs::path&,
+               const fs::path&,
+               const std::vector<std::string>&,
+               const std::chrono::milliseconds) {
+                json invalid = provider_status_v3_fixture();
+                invalid["runtime_updated_at"] = "2026-13-99T99:99:99Z";
+                return invalid;
+            },
+            "lichess_bot"),
+        std::runtime_error);
+    bool launched = false;
+    REQUIRE_THROWS_AS(
+        arena::application::ServiceCatalog::provider_status(
+            root / "data",
+            [&launched](
+                const fs::path&,
+                const fs::path&,
+                const std::vector<std::string>&,
+                const std::chrono::milliseconds) {
+                launched = true;
+                return provider_status_v3_fixture();
+            },
+            "unknown"),
+        std::invalid_argument);
+    REQUIRE_FALSE(launched);
     fs::remove_all(root);
 }
 

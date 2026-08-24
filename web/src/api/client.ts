@@ -14,6 +14,7 @@ import type {
   ComponentInventory,
   EngineCandidates,
   EngineProbeResult,
+  ProviderStatusProjection,
   Resource,
   ResourceKind,
   ServiceDiscovery,
@@ -569,6 +570,10 @@ export const api = {
   components: () => request<ComponentInventory>('/api/v1/components'),
   botProfiles: () => request<BotProfile[]>('/api/v1/bot-profiles'),
   botCandidates: () => request<BotCandidates>('/api/v1/bot-candidates'),
+  providerStatus: (profileId: 'lichess_bot') =>
+    request<ProviderStatusProjection>(
+      `/api/v1/providers/${encodeURIComponent(profileId)}/status`,
+    ),
   discoverService: (profileId: ServiceProfile['profile_id']) =>
     request<ServiceDiscovery>(`/api/v1/service-profiles/${profileId}/discovery`),
   engineCandidates: (root = '') =>

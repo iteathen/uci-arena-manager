@@ -427,9 +427,10 @@ planned_lichess_operational_projection_2026_08_23:
     incidents: https://github.com/iteathen/uci-arena-manager/issues/125
     games: https://github.com/iteathen/uci-arena-manager/issues/126
   activation:
-    - "No operation is required or invokable from this section alone. Exact
-      schemas, catalog entries, routes, and timeouts land with the provider and
-      Manager implementation PRs."
+    - "The credential-free status-v3 compatibility slice is runtime
+      authoritative at GET /api/v1/providers/{profileId}/status. Incident and
+      game operations remain unavailable until their provider contracts and
+      issue-owned Manager schemas land."
   provider_operations:
     status: provider_status
     incidents: incidents_list
@@ -446,6 +447,25 @@ planned_lichess_operational_projection_2026_08_23:
       provider incompatibility."
     - "Status v4 supervision and active-incident summaries are consumed only
       after the exact receipt-verified provider contract declares them."
+  current_status_v3_projection:
+    status: runtime_authoritative
+    route: GET /api/v1/providers/{profileId}/status
+    supported_profile: lichess_bot
+    provider_operation: provider_status
+    response_schema: arena_provider_status_projection_v1
+    rules:
+      - "Manager resolves the exact receipt-verified provider operation and
+        command prefix, appends only the receipt-owned runtime directory, and
+        supplies no credential."
+      - "The closed status-v3 payload is byte- and field-bounded before it is
+        projected; unknown fields, unsafe strings, invalid counters, malformed
+        scheduler faults, or malformed rate-limit state fail closed."
+      - "Rate-limit deadlines, scheduler faults, stream state, game counts,
+        and blockers remain provider-owned observations. Manager displays them
+        and cannot clear, shorten, or reinterpret them."
+      - "Status v3 explicitly reports supervision and incidents unavailable;
+        absence is not an empty incident set and does not make the provider
+        incompatible."
   bounds:
     incident_pages: stable_provider_keyset_cursor
     game_pages: stable_provider_keyset_cursor_maximum_100_records

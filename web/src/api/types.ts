@@ -480,6 +480,88 @@ export interface BotCandidates {
   candidates: BotCandidate[]
 }
 
+export interface ProviderStatusProjection {
+  schema: 'arena_provider_status_projection_v1'
+  schema_version: 1
+  profile_id: 'lichess_bot'
+  availability: 'available'
+  provider_contract_version: string
+  provider_status_schema: 'uci_arena_lichess_status_v3'
+  supervision_availability: 'unavailable'
+  incident_availability: 'unavailable'
+  status: {
+    schema: 'uci_arena_lichess_status_v3'
+    installed: boolean
+    registered: boolean
+    active: boolean
+    ready: boolean
+    stream_connected: boolean
+    stream_state:
+      | 'starting'
+      | 'reconciling'
+      | 'connecting'
+      | 'waiting_for_api_cooldown'
+      | 'connected'
+      | 'disconnected'
+    runtime_updated_at: string | null
+    account: { username: string; bot: true } | null
+    capacity: {
+      configured: number | null
+      qualified: number | null
+      slots: {
+        empty: number
+        preparing: number
+        pending: number
+        cancelling: number
+        active: number
+        draining: number
+      }
+    }
+    games: {
+      active: number
+      preparing: number
+      pending: number
+      cancelling: number
+      draining: number
+    }
+    scheduler: {
+      enabled: boolean
+      paused: boolean
+      target_active_bots: number | null
+      fault: { kind: string; status: number | null } | null
+    }
+    rate_limit: {
+      state:
+        | 'unknown'
+        | 'ready'
+        | 'cooldown'
+        | 'challenge_quarantined'
+        | 'challenge_half_open'
+      cooldown_until: number | null
+      cooldown_remaining_ms: number | null
+      strike_count: number | null
+      challenge_state:
+        | 'unknown'
+        | 'ready'
+        | 'quarantined'
+        | 'half_open_ready'
+        | 'half_open'
+      challenge_blocked_until: number | null
+      challenge_remaining_ms: number | null
+      challenge_strike_count: number | null
+      queue_depth: number | null
+      in_flight_class: string | null
+      client_lease: {
+        state: 'unknown' | 'authoritative' | 'missing' | 'conflict'
+        active_clients: number | null
+        heartbeat_at: number | null
+        expires_at: number | null
+      }
+    }
+    blockers: string[]
+  }
+}
+
 export interface BotProbeResult {
   schema: 'arena_bot_probe_result_v1'
   schema_version: 1

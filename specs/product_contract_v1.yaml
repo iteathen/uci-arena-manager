@@ -471,12 +471,27 @@ planned_lichess_incident_and_game_projection_2026_08_23:
     incidents: https://github.com/iteathen/uci-arena-manager/issues/125
     games: https://github.com/iteathen/uci-arena-manager/issues/126
   activation:
-    - This section records the approved product target but adds no current API
-      route, OpenAPI authority, provider requirement, database record, or UI
-      behavior.
+    - The credential-free status-v3 compatibility route and bounded status
+      alerts are runtime-authoritative. Incident and game routes, provider
+      requirements, and their UI behavior remain planned.
     - Exact request and response schemas become authoritative only in the
       issue-owned runtime implementation PRs after the provider declares the
       compatible typed operations.
+  current_status_v3_projection:
+    route: GET /api/v1/providers/{profileId}/status
+    response_schema: arena_provider_status_projection_v1
+    profile_ids: [lichess_bot]
+    rules:
+      - Unknown profiles return a typed not-found problem without process
+        launch.
+      - Installed status resolves only the verified provider_status operation
+        and receipt-owned runtime directory, never a browser-selected command,
+        path, argument, or credential.
+      - Status v3 projects bounded runtime, games, scheduler, rate-limit, and
+        blocker state while reporting supervision and incidents unavailable.
+      - Component attestation failures retain their typed verification code.
+        Provider launch, timeout, parse, and validation failures collapse to
+        sanitized provider_status_unavailable without raw provider output.
   read_only_routes:
     - GET /api/v1/providers/{profileId}/status
     - GET /api/v1/providers/{profileId}/incidents

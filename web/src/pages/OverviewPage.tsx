@@ -7,6 +7,7 @@ import {
   IconPlayerPlay,
 } from '@tabler/icons-react'
 import {
+  Alert,
   Button,
   Grid,
   Group,
@@ -22,6 +23,7 @@ import type { ManagedServiceData } from '../api/types'
 import { Chessboard } from '../components/Chessboard'
 import { MetricCard } from '../components/MetricCard'
 import { PageHeader } from '../components/PageHeader'
+import { providerStatusAlerts } from './providerStatusModel'
 
 export function OverviewPage({ navigate }: { navigate: (page: string) => void }) {
   const status = useQuery({ queryKey: ['status'], queryFn: api.status, refetchInterval: 10_000 })
@@ -30,6 +32,19 @@ export function OverviewPage({ navigate }: { navigate: (page: string) => void })
     queryFn: api.components,
     refetchInterval: (query) =>
       query.state.data?.verification_state === 'checking' ? 500 : 10_000,
+  })
+  const lichessAdapterInstalled = components.data?.components.some(
+    (component) =>
+      component.component_id === 'lichess.adapter' &&
+      component.package_state === 'installed',
+  ) ?? false
+  const providerStatus = useQuery({
+    queryKey: ['provider-status', 'lichess_bot'],
+    queryFn: () => api.providerStatus('lichess_bot'),
+    enabled: lichessAdapterInstalled,
+    retry: false,
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: false,
   })
   const services = useQuery({
     queryKey: ['resources', 'managed_service'],
@@ -51,7 +66,13 @@ export function OverviewPage({ navigate }: { navigate: (page: string) => void })
       service.data.observed_state === 'degraded' ||
       service.data.integration_state === 'incompatible',
   )
-  const attention = componentIssues.length + serviceIssues.length + (status.isError ? 1 : 0)
+  const currentProviderAlerts = providerStatusAlerts(providerStatus.data)
+  const attention =
+    componentIssues.length +
+    serviceIssues.length +
+    currentProviderAlerts.length +
+    (status.isError ? 1 : 0) +
+    (lichessAdapterInstalled && providerStatus.isError ? 1 : 0)
   const evidence = (services.data ?? []).find(
     (service) => service.data.profile_id === 'uci_arena_evidence',
   )
@@ -61,7 +82,8 @@ export function OverviewPage({ navigate }: { navigate: (page: string) => void })
     status.isLoading ||
     components.isLoading ||
     services.isLoading ||
-    componentVerificationChecking
+    componentVerificationChecking ||
+    (lichessAdapterInstalled && providerStatus.isLoading)
 
   return (
     <>
@@ -121,6 +143,23 @@ export function OverviewPage({ navigate }: { navigate: (page: string) => void })
               <IconActivityHeartbeat className="panel-icon" />
             </Group>
             <Stack gap="sm">
+              {lichessAdapterInstalled && providerStatus.isError && (
+                <Alert color="orange" title="Current Lichess provider status unavailable">
+                  Manager could not obtain the credential-free provider status projection.
+                </Alert>
+              )}
+              {currentProviderAlerts.map((alert) => (
+                <Alert key={alert.key} color={alert.color} title={alert.title}>
+                  {alert.detail}
+                </Alert>
+              ))}
+              {lichessAdapterInstalled &&
+                providerStatus.data &&
+                currentProviderAlerts.length === 0 && (
+                  <Alert color="teal" title="Current Lichess provider status healthy">
+                    {`The provider reports ready with no current bounded blockers. Durable incident history is unavailable on contract v${providerStatus.data.provider_contract_version}.`}
+                  </Alert>
+                )}
               <Group className="attention-row" justify="space-between">
                 <div>
                   <Text fw={600}>
