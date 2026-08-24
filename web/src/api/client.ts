@@ -15,6 +15,8 @@ import type {
   EngineCandidates,
   EngineProbeResult,
   ProviderIncidentPageProjection,
+  ProviderGamePageProjection,
+  ProviderGameProjection,
   ProviderStatusProjection,
   Resource,
   ResourceKind,
@@ -590,6 +592,25 @@ export const api = {
       `/api/v1/providers/${encodeURIComponent(profileId)}/incidents?${query.toString()}`,
     )
   },
+  providerGames: (
+    profileId: 'lichess_bot',
+    scope: 'live' | 'history',
+    before = 0,
+    limit = 100,
+  ) => {
+    const query = new URLSearchParams({
+      scope,
+      before: String(before),
+      limit: String(limit),
+    })
+    return request<ProviderGamePageProjection>(
+      `/api/v1/providers/${encodeURIComponent(profileId)}/games?${query.toString()}`,
+    )
+  },
+  providerGame: (profileId: 'lichess_bot', gameId: string) =>
+    request<ProviderGameProjection>(
+      `/api/v1/providers/${encodeURIComponent(profileId)}/games/${encodeURIComponent(gameId)}`,
+    ),
   discoverService: (profileId: ServiceProfile['profile_id']) =>
     request<ServiceDiscovery>(`/api/v1/service-profiles/${profileId}/discovery`),
   engineCandidates: (root = '') =>

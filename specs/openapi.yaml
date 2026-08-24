@@ -412,6 +412,91 @@ paths:
           $ref: "#/components/responses/Problem"
         "503":
           $ref: "#/components/responses/Problem"
+  /providers/{profileId}/games:
+    get:
+      operationId: listProviderGames
+      description: >
+        Return one closed bounded Provider-owned game page through the exact
+        receipt-verified games_list operation. Manager supplies no credential,
+        persists no Provider record, and never opens Provider storage.
+      parameters:
+        - name: profileId
+          in: path
+          required: true
+          schema:
+            enum: [lichess_bot]
+        - name: scope
+          in: query
+          required: false
+          schema:
+            enum: [live, history]
+            default: live
+        - name: before
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 9007199254740991
+            default: 0
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 100
+      responses:
+        "200":
+          description: Provider game page or explicit feature-unavailable projection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderGamePageProjection"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /providers/{profileId}/games/{gameId}:
+    get:
+      operationId: getProviderGame
+      description: >
+        Return one closed bounded Provider-owned game detail through the exact
+        receipt-verified game_get operation. Replay is present only for a
+        complete or reconciled archive and consists solely of Provider-authored
+        FEN transitions; Manager performs no chess-rule reconstruction.
+      parameters:
+        - name: profileId
+          in: path
+          required: true
+          schema:
+            enum: [lichess_bot]
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_-]{1,64}$'
+      responses:
+        "200":
+          description: Provider game detail or explicit feature-unavailable projection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderGameProjection"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
   /resources/{kind}:
     get:
       operationId: listResources
@@ -708,6 +793,64 @@ components:
             - type: "null"
     ProviderIncidentPage:
       $ref: "schemas/provider-incident-page.schema.json"
+    ProviderGamePageProjection:
+      type: object
+      additionalProperties: false
+      required:
+        - schema
+        - schema_version
+        - profile_id
+        - availability
+        - provider_contract_version
+        - page
+      properties:
+        schema:
+          const: arena_provider_game_page_projection_v1
+        schema_version:
+          const: 1
+        profile_id:
+          const: lichess_bot
+        availability:
+          enum: [available, unavailable]
+        provider_contract_version:
+          type: string
+          pattern: '^1\.[0-9]+$'
+          maxLength: 32
+        page:
+          oneOf:
+            - $ref: "#/components/schemas/ProviderGamePage"
+            - type: "null"
+    ProviderGameProjection:
+      type: object
+      additionalProperties: false
+      required:
+        - schema
+        - schema_version
+        - profile_id
+        - availability
+        - provider_contract_version
+        - game
+      properties:
+        schema:
+          const: arena_provider_game_projection_v1
+        schema_version:
+          const: 1
+        profile_id:
+          const: lichess_bot
+        availability:
+          enum: [available, unavailable]
+        provider_contract_version:
+          type: string
+          pattern: '^1\.[0-9]+$'
+          maxLength: 32
+        game:
+          oneOf:
+            - $ref: "#/components/schemas/ProviderGame"
+            - type: "null"
+    ProviderGamePage:
+      $ref: "schemas/provider-game-page.schema.json"
+    ProviderGame:
+      $ref: "schemas/provider-game-detail.schema.json"
     LichessProviderStatusV3:
       type: object
       additionalProperties: false

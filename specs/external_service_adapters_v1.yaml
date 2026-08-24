@@ -421,15 +421,14 @@ profiles:
       - Waiting for a target or idle resources remains healthy service state.
 
 lichess_operational_projection_2026_08_23:
-  status: incidents_runtime_authoritative_games_planned
+  status: runtime_authoritative
   suite_record: https://github.com/iteathen/uci-arena-installer/issues/166
   owning_issues:
     incidents: https://github.com/iteathen/uci-arena-manager/issues/125
     games: https://github.com/iteathen/uci-arena-manager/issues/126
   activation:
-    - "The credential-free status-v3/v4/v5 compatibility slice and incident
-      page are runtime-authoritative. Game operations remain unavailable until
-      their issue-owned Manager routes and schemas land."
+    - "The credential-free status-v3/v4/v5 compatibility slice plus incident,
+      game-list, and game-detail projections are runtime-authoritative."
   provider_operations:
     status: provider_status
     incidents: incidents_list
@@ -446,8 +445,8 @@ lichess_operational_projection_2026_08_23:
       provider incompatibility."
     - "Status v4 supervision and active-incident summaries are consumed only
       after the exact receipt-verified provider contract declares them. Status
-      v5 is accepted as the closed additive archive successor, but its archive
-      fields remain inert in the incident slice."
+      v5 is accepted as the closed additive archive successor and its archive
+      summary is projected without transferring archive authority."
   provider_status_projection:
     status: runtime_authoritative
     route: GET /api/v1/providers/{profileId}/status
@@ -488,6 +487,35 @@ lichess_operational_projection_2026_08_23:
       - "Operation absence returns availability unavailable with a null page;
         an empty available page is reserved for an invoked provider operation
         that authoritatively returned no matching incidents."
+  game_projection:
+    status: runtime_authoritative
+    list_route: GET /api/v1/providers/{profileId}/games
+    detail_route: GET /api/v1/providers/{profileId}/games/{gameId}
+    list_operation: games_list
+    detail_operation: game_get
+    manager_list_schema: arena_provider_game_page_projection_v1
+    manager_detail_schema: arena_provider_game_projection_v1
+    provider_page_schema: uci_arena_provider_game_page_v1
+    provider_detail_schema: uci_arena_provider_game_v1
+    scopes: [live, history]
+    rules:
+      - "Game capability is available only when the receipt-verified service
+        contract, manifest contract map, schemas, and exact operation catalog
+        consistently declare both game operations."
+      - "The list query accepts only scope, before, and limit; detail accepts
+        one bounded game id. Manager maps them to fixed declared flags plus
+        the receipt-owned runtime directory and supplies no credential."
+      - "Pages are closed and byte-bounded, contain at most 100 descending
+        cursor rows, match the requested scope, and advance by the oldest
+        returned cursor."
+      - "Details are closed and byte-bounded. Complete or reconciled archives
+        carry at most 2,048 contiguous provider-authored FEN transitions;
+        live and summary-only records carry no replay."
+      - "Manager projects Provider provenance exactly when present and never
+        substitutes current component identity for missing historical data."
+      - "Operation absence returns an explicit unavailable projection. Empty
+        available pages and missing Provider records retain their distinct
+        Provider-authored meanings."
   bounds:
     incident_pages: stable_provider_keyset_cursor
     game_pages: stable_provider_keyset_cursor_maximum_100_records

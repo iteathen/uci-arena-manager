@@ -73,6 +73,14 @@ class ControlPlane final {
         const std::string& filter,
         std::uint64_t after_cursor,
         std::uint32_t limit) const;
+    [[nodiscard]] nlohmann::json provider_games(
+        const std::string& profile_id,
+        const std::string& scope,
+        std::uint64_t before_cursor,
+        std::uint32_t limit) const;
+    [[nodiscard]] nlohmann::json provider_game(
+        const std::string& profile_id,
+        const std::string& game_id) const;
     [[nodiscard]] ReportArtifact report_artifact(
         const std::string& report_id,
         const std::string& format) const;

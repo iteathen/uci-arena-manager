@@ -2086,6 +2086,76 @@ json ControlPlane::provider_incidents(
     }
 }
 
+json ControlPlane::provider_games(
+    const std::string& profile_id,
+    const std::string& scope,
+    const std::uint64_t before_cursor,
+    const std::uint32_t limit) const {
+    if (profile_id != "lichess_bot") {
+        throw CommandFailure(
+            "provider_profile_not_found", "provider profile was not found", 404);
+    }
+    if ((scope != "live" && scope != "history") || limit == 0U ||
+        limit > 100U || before_cursor > 9'007'199'254'740'991ULL) {
+        throw CommandFailure(
+            "invalid_provider_game_query",
+            "provider game scope, cursor, or limit is invalid",
+            400);
+    }
+    try {
+        return ServiceCatalog::provider_games(
+            manager_data_root_,
+            process_supervisor_,
+            *component_registry_,
+            profile_id,
+            scope,
+            before_cursor,
+            limit);
+    } catch (const ComponentVerificationUnavailable& failure) {
+        throw CommandFailure(failure.code(), failure.what(), 409);
+    } catch (const std::exception&) {
+        throw CommandFailure(
+            "provider_games_unavailable",
+            "provider game collection is unavailable",
+            503);
+    }
+}
+
+json ControlPlane::provider_game(
+    const std::string& profile_id,
+    const std::string& game_id) const {
+    const json game_id_value = game_id;
+    if (profile_id != "lichess_bot") {
+        throw CommandFailure(
+            "provider_profile_not_found", "provider profile was not found", 404);
+    }
+    if (!game_id_value.is_string() || game_id.empty() || game_id.size() > 64U ||
+        !std::ranges::all_of(game_id, [](const unsigned char character) {
+            return (character >= 'A' && character <= 'Z') ||
+                   (character >= 'a' && character <= 'z') ||
+                   (character >= '0' && character <= '9') ||
+                   character == '_' || character == '-';
+        })) {
+        throw CommandFailure(
+            "invalid_provider_game_id", "provider game id is invalid", 400);
+    }
+    try {
+        return ServiceCatalog::provider_game(
+            manager_data_root_,
+            process_supervisor_,
+            *component_registry_,
+            profile_id,
+            game_id);
+    } catch (const ComponentVerificationUnavailable& failure) {
+        throw CommandFailure(failure.code(), failure.what(), 409);
+    } catch (const std::exception&) {
+        throw CommandFailure(
+            "provider_game_unavailable",
+            "provider game detail is unavailable",
+            503);
+    }
+}
+
 json ControlPlane::generate_report(const json& request, const std::string& actor) {
     if (required_string(request.at("target"), "kind") != "report" ||
         (request.at("target").contains("id") &&

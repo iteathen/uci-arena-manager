@@ -200,6 +200,8 @@ describe('providerIncidentAlerts', () => {
     expect(alerts.map((alert) => alert.key)).toEqual(['incident-8', 'incident-3'])
     expect(alerts[0].title).toContain('Critical')
     expect(alerts[0].detail).toContain('game fixture-game')
+    expect(alerts[0].gameId).toBe('fixture-game')
+    expect(alerts[0].gamePage).toBe('live')
     expect(alerts[1].detail).toContain('HTTP 429')
   })
 
