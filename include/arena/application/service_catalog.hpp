@@ -1,5 +1,6 @@
 #pragma once
 
+#include "arena/application/component_verification_registry.hpp"
 #include "arena/application/process_supervisor.hpp"
 
 #include <chrono>
@@ -44,6 +45,9 @@ class ServiceCatalog final {
         const nlohmann::json& parameters);
     [[nodiscard]] static nlohmann::json installed_registrations(
         const std::filesystem::path& manager_data_root);
+    [[nodiscard]] static nlohmann::json installed_registrations(
+        const std::filesystem::path& manager_data_root,
+        const ComponentVerificationRegistry& component_registry);
     [[nodiscard]] static nlohmann::json component_inventory(
         const std::filesystem::path& manager_data_root);
     [[nodiscard]] static nlohmann::json bot_profiles();
@@ -51,7 +55,14 @@ class ServiceCatalog final {
         const std::filesystem::path& manager_data_root);
     [[nodiscard]] static nlohmann::json discover_bot(
         const std::filesystem::path& manager_data_root,
+        const ComponentVerificationRegistry& component_registry);
+    [[nodiscard]] static nlohmann::json discover_bot(
+        const std::filesystem::path& manager_data_root,
         const ProcessSupervisor& process_supervisor);
+    [[nodiscard]] static nlohmann::json discover_bot(
+        const std::filesystem::path& manager_data_root,
+        const ProcessSupervisor& process_supervisor,
+        const ComponentVerificationRegistry& component_registry);
     [[nodiscard]] static nlohmann::json discover_bot(
         const std::filesystem::path& manager_data_root,
         const BotCommandRunner& command_runner);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "arena/application/component_verification_registry.hpp"
 #include "arena/ports/store.hpp"
 #include "arena/application/process_supervisor.hpp"
 #include "arena/application/tournament_executor.hpp"
@@ -59,6 +60,8 @@ class ControlPlane final {
     [[nodiscard]] nlohmann::json service_profiles() const;
     [[nodiscard]] nlohmann::json discover_service_profile(
         const std::string& profile_id) const;
+    [[nodiscard]] nlohmann::json engine_candidates(
+        const std::vector<std::filesystem::path>& explicit_roots = {}) const;
     [[nodiscard]] nlohmann::json component_inventory() const;
     [[nodiscard]] nlohmann::json bot_profiles() const;
     [[nodiscard]] nlohmann::json bot_candidates() const;
@@ -113,6 +116,7 @@ class ControlPlane final {
     std::mutex reconciliation_run_mutex_;
     mutable std::mutex reconciliation_state_mutex_;
     std::filesystem::path manager_data_root_;
+    std::shared_ptr<ComponentVerificationRegistry> component_registry_;
     ProcessSupervisor process_supervisor_;
     TournamentExecutor tournament_executor_;
     std::string started_at_;

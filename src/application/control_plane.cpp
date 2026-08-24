@@ -644,7 +644,15 @@ int CommandFailure::http_status() const noexcept { return http_status_; }
 
 ControlPlane::ControlPlane(std::shared_ptr<ports::Store> store)
     : store_(std::move(store)),
-      tournament_executor_(store_),
+      component_registry_(
+          std::make_shared<ComponentVerificationRegistry>()),
+      tournament_executor_(
+          store_,
+          [registry = component_registry_](const std::string& component_id) {
+              if (registry->started()) {
+                  static_cast<void>(registry->require_verified(component_id));
+              }
+          }),
       started_at_(domain::utc_now()) {}
 
 void ControlPlane::initialize() {
@@ -674,6 +682,7 @@ void ControlPlane::begin_installed_reconciliation(
     const std::filesystem::path& manager_data_root) {
     manager_data_root_ =
         std::filesystem::absolute(manager_data_root).lexically_normal();
+    component_registry_->begin(manager_data_root_);
     const std::string observed_at = domain::utc_now();
     set_installed_service_reconciliation({
         {"schema", "arena_installed_service_reconciliation_v1"},
@@ -715,8 +724,43 @@ void ControlPlane::reconcile_installed_services(
             {"total", 0},
             {"errors", json::array()},
         });
+        if (!component_registry_->wait_for_current_verification(stop_token)) {
+            if (stop_token.stop_requested()) {
+                set_installed_service_reconciliation({
+                    {"schema", "arena_installed_service_reconciliation_v1"},
+                    {"state", "complete_with_errors"},
+                    {"phase", "cancelled"},
+                    {"observed_at", domain::utc_now()},
+                    {"completed", 0},
+                    {"total", 0},
+                    {"changes", json::array()},
+                    {"errors",
+                     json::array({
+                         {{"code", "startup_reconciliation_cancelled"},
+                          {"detail",
+                           "Manager shutdown cancelled component verification"}},
+                     })},
+                });
+                set_installed_engine_reconciliation({
+                    {"schema", "arena_installed_engine_reconciliation_v1"},
+                    {"state", "complete_with_errors"},
+                    {"phase", "cancelled"},
+                    {"observed_at", domain::utc_now()},
+                    {"errors",
+                     json::array({
+                         {{"code", "startup_reconciliation_cancelled"},
+                          {"detail",
+                           "Manager shutdown cancelled pending Engine reconciliation"}},
+                     })},
+                });
+                return;
+            }
+            throw std::runtime_error(
+                "Manager shutdown cancelled component verification");
+        }
         const json discovered =
-            ServiceCatalog::installed_registrations(manager_data_root);
+            ServiceCatalog::installed_registrations(
+                manager_data_root, *component_registry_);
         json changes = json::array();
         json errors = discovered.at("errors");
         std::vector<std::string> refresh_ids;
@@ -994,7 +1038,8 @@ void ControlPlane::reconcile_installed_engine() {
             return;
         }
 
-        const json discovery = EngineOnboarding::discover(manager_data_root_);
+        const json discovery = EngineOnboarding::discover(
+            manager_data_root_, *component_registry_);
         std::vector<json> candidates;
         for (const auto& candidate : discovery.at("candidates")) {
             if (candidate.value("source", "") == "install_receipt" &&
@@ -1328,7 +1373,8 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
         !manager_data_root_.empty()) {
         const std::string requested_candidate_id =
             parameters.at("candidate_id").get<std::string>();
-        const json discovery = EngineOnboarding::discover(manager_data_root_);
+        const json discovery = EngineOnboarding::discover(
+            manager_data_root_, *component_registry_);
         for (const auto& candidate : discovery.at("candidates")) {
             if (candidate.value("candidate_id", "") != requested_candidate_id ||
                 !candidate.contains("executable") ||
@@ -1966,8 +2012,14 @@ json ControlPlane::discover_service_profile(const std::string& profile_id) const
     }
 }
 
+json ControlPlane::engine_candidates(
+    const std::vector<std::filesystem::path>& explicit_roots) const {
+    return EngineOnboarding::discover(
+        manager_data_root_, *component_registry_, explicit_roots);
+}
+
 json ControlPlane::component_inventory() const {
-    return ServiceCatalog::component_inventory(manager_data_root_);
+    return component_registry_->inventory();
 }
 
 json ControlPlane::bot_profiles() const {
@@ -1976,7 +2028,7 @@ json ControlPlane::bot_profiles() const {
 
 json ControlPlane::bot_candidates() const {
     return ServiceCatalog::discover_bot(
-        manager_data_root_, process_supervisor_);
+        manager_data_root_, process_supervisor_, *component_registry_);
 }
 
 json ControlPlane::generate_report(const json& request, const std::string& actor) {
@@ -2463,6 +2515,25 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
             409);
     }
 
+    if (component_registry_->started()) {
+        const std::string component_id =
+            data.value("installed_component_id", "");
+        if (!component_id.empty()) {
+            try {
+                static_cast<void>(
+                    component_registry_->require_verified(component_id));
+                const std::string runtime_component_id =
+                    data.value("runtime_component_id", "");
+                if (!runtime_component_id.empty()) {
+                    static_cast<void>(component_registry_->require_verified(
+                        runtime_component_id));
+                }
+            } catch (const ComponentVerificationUnavailable& failure) {
+                throw CommandFailure(failure.code(), failure.what(), 409);
+            }
+        }
+    }
+
     const std::filesystem::path node = data.at("node_executable").get<std::string>();
     const std::filesystem::path cli = data.at("cli_entrypoint").get<std::string>();
     const std::filesystem::path workspace = data.at("workspace").get<std::string>();
@@ -2509,6 +2580,15 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                     422);
             }
             const json engine_data = json::parse(engine->data_json);
+            if (component_registry_->started() &&
+                engine_data.value("onboarding_source", "") == "install_receipt") {
+                try {
+                    static_cast<void>(component_registry_->require_verified(
+                        engine_data.value("component_id", "")));
+                } catch (const ComponentVerificationUnavailable& failure) {
+                    throw CommandFailure(failure.code(), failure.what(), 409);
+                }
+            }
             if (engine_data.value("component_id", "") != "uci_arena.engine" ||
                 engine_data.value("onboarding_source", "") != "install_receipt" ||
                 !engine_data.value("recommended", false) ||

@@ -478,6 +478,118 @@ void add_candidate(
     }
 }
 
+void append_admitted_component_candidate(
+    const json& receipt,
+    const json& manifest,
+    const fs::path& active_root,
+    const fs::path& executable,
+    json& candidates,
+    std::set<std::string>& seen) {
+    const std::string component_id =
+        receipt.at("component_id").get<std::string>();
+    json metadata{
+        {"authority", "verified_component_inventory"},
+        {"component_id", component_id},
+        {"component_version", receipt.value("component_version", "")},
+        {"recommended", component_id == "uci_arena.engine"},
+    };
+    const std::string artifact_sha256 =
+        receipt.value("artifact_sha256", "");
+    if (artifact_sha256.size() == crypto_hash_sha256_BYTES * 2U &&
+        std::ranges::all_of(
+            artifact_sha256,
+            [](const unsigned char character) {
+                return std::isxdigit(character) != 0;
+            })) {
+        metadata["installed_artifact_sha256"] = artifact_sha256;
+    }
+    if (manifest.contains("default_model") &&
+        manifest.at("default_model").is_object()) {
+        const json& model = manifest.at("default_model");
+        if (model.contains("model_id") &&
+            model.at("model_id").is_string() &&
+            model.contains("display_name") &&
+            model.at("display_name").is_string() &&
+            model.contains("input_adapter_id") &&
+            model.at("input_adapter_id").is_string() &&
+            model.contains("root") && model.at("root").is_string()) {
+            metadata["default_model"] = {
+                {"model_id", model.at("model_id")},
+                {"display_name", model.at("display_name")},
+                {"input_adapter_id", model.at("input_adapter_id")},
+                {"root", model.at("root")},
+            };
+            const fs::path relative_model_root =
+                model.at("root").get<std::string>();
+            if (safe_relative_path(relative_model_root)) {
+                const fs::path model_root = normalized_absolute(
+                    active_root / relative_model_root);
+                if (platform::inspect_path_no_follow(model_root).kind ==
+                    platform::PathEntryKind::directory) {
+                    metadata["uci_options"] = {
+                        {"ModelRoot", model_root.string()},
+                    };
+                }
+            }
+        }
+    }
+    if (declares_capability(manifest, "uci_engine_launch_profile_v1")) {
+        try {
+            const json launch_profile = validated_managed_launch_profile(
+                receipt,
+                active_root,
+                normalized_absolute(executable));
+            if (launch_profile.is_null()) {
+                throw std::runtime_error(
+                    "managed launch profile is not configured");
+            }
+            metadata["arguments"] =
+                launch_profile.at("engine").at("arguments");
+            metadata["uci_options"] = launch_profile.at("uci_options");
+            json timing{{"available", false}};
+            const json& evidence = launch_profile.at("evidence");
+            if (evidence.contains("timing_profile") &&
+                evidence.at("timing_profile").is_object()) {
+                const json& profile = evidence.at("timing_profile");
+                timing = {
+                    {"available", true},
+                    {"schema", profile.value("schema", "")},
+                    {"identity_sha256",
+                     profile.value("identity_sha256", "")},
+                };
+            }
+            metadata["launch_profile"] = {
+                {"schema", "arena_uci_engine_launch_profile_v1"},
+                {"state", launch_profile.at("state")},
+                {"timing_profile", std::move(timing)},
+                {"expected_runtime", launch_profile.at("expected_runtime")},
+            };
+        } catch (const std::exception&) {
+            metadata["state"] = "unavailable";
+            metadata["uci_options"] = json::object();
+            metadata["issues"] = json::array({
+                {
+                    {"code", "engine_launch_profile_invalid"},
+                    {"detail",
+                     "The managed launch profile does not match this verified "
+                     "Engine installation. Repair the suite before registering "
+                     "it."},
+                },
+            });
+        }
+    }
+    add_candidate(
+        candidates,
+        seen,
+        "install_receipt",
+        executable,
+        active_root,
+        component_id == "uci_arena.engine"
+            ? "UCI Arena Engine"
+            : manifest.value("display_name", display_name_for(executable)),
+        metadata);
+}
+
 void append_receipt_candidates(
     const fs::path& data_root,
     json& candidates,
@@ -550,112 +662,61 @@ void append_receipt_candidates(
                 continue;
             }
             const fs::path executable = active_root / *relative;
-            json metadata{
-                {"authority", "verified_component_inventory"},
-                {"component_id", component_id},
-                {"component_version",
-                 receipt.value("component_version", "")},
-                {"recommended", component_id == "uci_arena.engine"},
-            };
-            const std::string artifact_sha256 =
-                receipt.value("artifact_sha256", "");
-            if (artifact_sha256.size() == crypto_hash_sha256_BYTES * 2U &&
-                std::ranges::all_of(
-                    artifact_sha256,
-                    [](const unsigned char character) {
-                        return std::isxdigit(character) != 0;
-                    })) {
-                metadata["installed_artifact_sha256"] = artifact_sha256;
+            append_admitted_component_candidate(
+                receipt,
+                manifest,
+                active_root,
+                executable,
+                candidates,
+                seen);
+        } catch (const std::exception&) {
+        }
+    }
+}
+
+void append_registry_candidates(
+    const ComponentVerificationRegistry& component_registry,
+    json& candidates,
+    std::set<std::string>& seen) {
+    for (const auto& component : component_registry.verified_components()) {
+        try {
+            const json& receipt = component.receipt;
+            const json& manifest = component.manifest;
+            if (receipt.value("state", "") != "installed_managed") {
+                continue;
             }
-            if (manifest.contains("default_model") &&
-                manifest.at("default_model").is_object()) {
-                const json& model = manifest.at("default_model");
-                if (model.contains("model_id") &&
-                    model.at("model_id").is_string() &&
-                    model.contains("display_name") &&
-                    model.at("display_name").is_string() &&
-                    model.contains("input_adapter_id") &&
-                    model.at("input_adapter_id").is_string() &&
-                    model.contains("root") && model.at("root").is_string()) {
-                    metadata["default_model"] = {
-                        {"model_id", model.at("model_id")},
-                        {"display_name", model.at("display_name")},
-                        {"input_adapter_id", model.at("input_adapter_id")},
-                        {"root", model.at("root")},
-                    };
-                    const fs::path relative_model_root =
-                        model.at("root").get<std::string>();
-                    if (safe_relative_path(relative_model_root)) {
-                        const fs::path model_root = normalized_absolute(
-                            active_root / relative_model_root);
-                        std::error_code model_error;
-                        if (fs::is_directory(model_root, model_error) &&
-                            !model_error &&
-                            !fs::is_symlink(model_root, model_error) &&
-                            !model_error) {
-                            metadata["uci_options"] = {
-                                {"ModelRoot", model_root.string()},
-                            };
-                        }
-                    }
-                }
+            const auto relative = discovery_path(manifest, "uci_engine");
+            if (!relative || !manifest.contains("files") ||
+                !manifest.at("files").is_array()) {
+                continue;
             }
-            if (declares_capability(
-                    manifest, "uci_engine_launch_profile_v1")) {
-                try {
-                    const json launch_profile = validated_managed_launch_profile(
-                        receipt,
-                        active_root,
-                        normalized_absolute(executable));
-                    if (launch_profile.is_null()) {
-                        throw std::runtime_error(
-                            "managed launch profile is not configured");
-                    }
-                    metadata["arguments"] =
-                        launch_profile.at("engine").at("arguments");
-                    metadata["uci_options"] =
-                        launch_profile.at("uci_options");
-                    json timing{{"available", false}};
-                    const json& evidence = launch_profile.at("evidence");
-                    if (evidence.contains("timing_profile") &&
-                        evidence.at("timing_profile").is_object()) {
-                        const json& profile = evidence.at("timing_profile");
-                        timing = {
-                            {"available", true},
-                            {"schema", profile.value("schema", "")},
-                            {"identity_sha256",
-                             profile.value("identity_sha256", "")},
-                        };
-                    }
-                    metadata["launch_profile"] = {
-                        {"schema", "arena_uci_engine_launch_profile_v1"},
-                        {"state", launch_profile.at("state")},
-                        {"timing_profile", std::move(timing)},
-                        {"expected_runtime",
-                         launch_profile.at("expected_runtime")},
-                    };
-                } catch (const std::exception&) {
-                    metadata["state"] = "unavailable";
-                    metadata["uci_options"] = json::object();
-                    metadata["issues"] = json::array({
-                        {
-                            {"code", "engine_launch_profile_invalid"},
-                            {"detail",
-                             "The managed launch profile does not match this "
-                             "verified Engine installation. Repair the suite "
-                             "before registering it."},
-                        },
-                    });
-                }
+            const fs::path normalized_relative = relative->lexically_normal();
+            const auto file = std::ranges::find_if(
+                manifest.at("files"),
+                [&normalized_relative](const json& value) {
+                    return value.is_object() && value.contains("path") &&
+                           value.at("path").is_string() &&
+                           fs::path(value.at("path").get<std::string>())
+                                   .lexically_normal() == normalized_relative;
+                });
+            if (file == manifest.at("files").end()) {
+                continue;
             }
-            add_candidate(
-                candidates, seen, "install_receipt", executable, active_root,
-                component_id == "uci_arena.engine"
-                    ? "UCI Arena Engine"
-                    : manifest.value(
-                          "display_name",
-                          display_name_for(executable)),
-                metadata);
+            const fs::path executable =
+                component.active_root / normalized_relative;
+            const auto observation =
+                platform::inspect_path_no_follow(executable);
+            if (observation.kind != platform::PathEntryKind::regular_file ||
+                observation.size_bytes != file->value("size_bytes", 0ULL)) {
+                continue;
+            }
+            append_admitted_component_candidate(
+                receipt,
+                manifest,
+                component.active_root,
+                executable,
+                candidates,
+                seen);
         } catch (const std::exception&) {
         }
     }
@@ -982,14 +1043,19 @@ void append_path_candidates(
 
 }  // namespace
 
-json EngineOnboarding::discover(
+static json discover_impl(
     const fs::path& manager_data_root,
+    const ComponentVerificationRegistry* component_registry,
     const std::vector<fs::path>& explicit_roots,
     const bool include_path_candidates,
     const EngineDiscoveryOptions& options) {
     json candidates = json::array();
     std::set<std::string> seen;
-    append_receipt_candidates(manager_data_root, candidates, seen);
+    if (component_registry != nullptr) {
+        append_registry_candidates(*component_registry, candidates, seen);
+    } else {
+        append_receipt_candidates(manager_data_root, candidates, seen);
+    }
     append_saved_locator(manager_data_root, candidates, seen);
     ExplicitDiscoveryWork explicit_work(options);
     if (explicit_roots.size() >
@@ -1021,6 +1087,33 @@ json EngineOnboarding::discover(
         {"explicit_root_inspection", explicit_work.projection()},
         {"candidates", std::move(candidates)},
     };
+}
+
+json EngineOnboarding::discover(
+    const fs::path& manager_data_root,
+    const std::vector<fs::path>& explicit_roots,
+    const bool include_path_candidates,
+    const EngineDiscoveryOptions& options) {
+    return discover_impl(
+        manager_data_root,
+        nullptr,
+        explicit_roots,
+        include_path_candidates,
+        options);
+}
+
+json EngineOnboarding::discover(
+    const fs::path& manager_data_root,
+    const ComponentVerificationRegistry& component_registry,
+    const std::vector<fs::path>& explicit_roots,
+    const bool include_path_candidates,
+    const EngineDiscoveryOptions& options) {
+    return discover_impl(
+        manager_data_root,
+        &component_registry,
+        explicit_roots,
+        include_path_candidates,
+        options);
 }
 
 std::optional<std::string> EngineOnboarding::runtime_identity_mismatch(

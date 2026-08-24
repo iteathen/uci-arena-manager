@@ -292,7 +292,7 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                 .at("model_fingerprint") == "8104116015256418347");
 
         const fs::path alternate_model_root =
-            active_root / "models" / "operator-selected";
+            root / "operator-models" / "operator-selected";
         fs::create_directories(alternate_model_root);
         json selected_options = candidate_options;
         selected_options["ModelRoot"] = alternate_model_root.string();

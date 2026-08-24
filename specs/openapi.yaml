@@ -295,8 +295,10 @@ paths:
     get:
       operationId: listInstallableComponents
       description: >
-        Project verified receipt state and retained signed-catalog availability.
-        This read surface never installs a component.
+        Return the current process-local asynchronous component-verification
+        projection and retained signed-catalog availability. This read surface
+        never installs a component and never hashes payloads on the request
+        thread.
       responses:
         "200":
           description: Component installation inventory
@@ -478,16 +480,61 @@ components:
       $ref: "schemas/engine-probe-result.schema.json"
     ComponentInventory:
       type: object
-      required: [schema, schema_version, components]
+      additionalProperties: false
+      required:
+        - schema
+        - schema_version
+        - verification_state
+        - retained_catalog_available
+        - components
       properties:
         schema:
           const: arena_component_inventory_v1
         schema_version:
           const: 1
+        verification_state:
+          enum: [checking, verified, failed]
+        retained_catalog_available:
+          type: boolean
         components:
           type: array
+          maxItems: 32
           items:
             type: object
+            additionalProperties: true
+            required:
+              - component_id
+              - display_name
+              - optional
+              - package_state
+              - downloadable
+              - verification_state
+            properties:
+              component_id:
+                type: string
+                maxLength: 128
+              display_name:
+                type: string
+                maxLength: 128
+              optional:
+                type: boolean
+              package_state:
+                enum: [checking, missing, installed, broken]
+              downloadable:
+                type: boolean
+              verification_state:
+                enum: [checking, verified, failed]
+              verification_issue:
+                type: object
+                additionalProperties: false
+                required: [code, detail]
+                properties:
+                  code:
+                    type: string
+                    maxLength: 128
+                  detail:
+                    type: string
+                    maxLength: 512
     BotProfile:
       type: object
       required: [profile_id, display_name, adapter_component_id, optional]

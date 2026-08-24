@@ -293,7 +293,7 @@ int run_control_plane(const Options& options) {
 
         app.registerHandler(
             "/api/v1/engine-candidates",
-            [auth, data_directory = options.data_directory](
+            [control_plane, auth](
                 const HttpRequestPtr& request,
                 std::function<void(const HttpResponsePtr&)>&& callback) {
                 if (!authorized(request, auth)) {
@@ -308,9 +308,7 @@ int run_control_plane(const Options& options) {
                     if (!root.empty()) {
                         roots.emplace_back(root);
                     }
-                    callback(response(
-                        arena::application::EngineOnboarding::discover(
-                            data_directory, roots)));
+                    callback(response(control_plane->engine_candidates(roots)));
                 } catch (const std::exception& error) {
                     callback(response(
                         {{"code", "engine_discovery_failed"},

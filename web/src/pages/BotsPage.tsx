@@ -13,8 +13,18 @@ import { botStatusRefreshInterval, canEnableBotStartup, canProbeBot } from './bo
 export function BotsPage({ navigate }: { navigate: (page: string) => void }) {
   const queryClient = useQueryClient()
   const profiles = useQuery({ queryKey: ['bot-profiles'], queryFn: api.botProfiles })
-  const candidates = useQuery({ queryKey: ['bot-candidates'], queryFn: api.botCandidates })
-  const components = useQuery({ queryKey: ['components'], queryFn: api.components })
+  const candidates = useQuery({
+    queryKey: ['bot-candidates'],
+    queryFn: api.botCandidates,
+    refetchInterval: (query) =>
+      query.state.data?.candidates[0]?.package_state === 'checking' ? 500 : false,
+  })
+  const components = useQuery({
+    queryKey: ['components'],
+    queryFn: api.components,
+    refetchInterval: (query) =>
+      query.state.data?.verification_state === 'checking' ? 500 : 10_000,
+  })
   const adapterComponent = components.data?.components.find(
     (component) => component.component_id === 'lichess.adapter',
   )
