@@ -6,9 +6,10 @@
     "spec:check": "node tools/spec-check.mjs",
     "automation:check": "node tools/check-github-automation.mjs",
     "audit:production": "npm audit --omit=dev --prefix web",
+    "audit:dependencies": "npm audit --package-lock-only --include=dev --audit-level=info --prefix web",
     "naming:check": "node tools/check-model-product-naming.mjs",
     "test:release": "node --test tools/release/*.test.mjs",
-    "check": "npm run spec:check && npm run automation:check && npm run audit:production && npm run naming:check && npm run test:release && npm test --prefix web && npm run build --prefix web"
+    "check": "npm run spec:check && npm run automation:check && npm run audit:production && npm run audit:dependencies && npm run naming:check && npm run test:release && npm test --prefix web && npm run build --prefix web"
   },
   "engines": {
     "node": ">=22"

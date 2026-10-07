@@ -62,6 +62,12 @@ producer_contract:
     - The specification/web gate invokes the repository's complete npm check as
       one fail-closed native command and explicitly rejects its nonzero exit.
       A later successful command must never mask a failed check.
+    - The complete npm check keeps the shipped-production dependency audit and
+      the full locked dependency audit as separate gates. The full-lock gate
+      explicitly includes development dependencies and fails on every reported
+      vulnerability; a zero production audit never grants a clean development
+      dependency claim. The audit reads lockfile authority without installing
+      packages or executing dependency lifecycle scripts.
     - GitHub-hosted runners remain the default. An explicit Windows-only
       ephemeral-self-hosted runner selection may use only the exact labels
       self-hosted, Windows, X64, ephemeral, uci-suite, and manager-release.
