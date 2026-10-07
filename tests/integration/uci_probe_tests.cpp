@@ -263,9 +263,10 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
         const auto registration =
             [&](const std::string& selected_candidate_id,
                 const json& selected_options,
-                const bool dry_run) {
-                return control_plane.submit(
-                {
+                const bool dry_run,
+                const fs::path& requested_executable = {},
+                arena::application::ControlPlane* requested_authority = nullptr) {
+                json request{
                     {"schema_version", 1},
                     {"request_id", arena::domain::uuid_v7()},
                     {"idempotency_key", arena::domain::uuid_v7()},
@@ -277,7 +278,8 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                     {"parameters",
                      {
                          {"display_name", "UCI Arena Engine"},
-                         {"executable", executable.string()},
+                         {"executable", requested_executable.empty()
+                             ? executable.string() : requested_executable.string()},
                          {"working_directory",
                           active_root.string()},
                          {"arguments", {"--allow-model-root"}},
@@ -292,8 +294,12 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                            {"display_name", "Forged"},
                            {"input_adapter_id", "forged"}}},
                      }},
-                    },
-                    "test");
+                };
+                if (selected_candidate_id.empty()) {
+                    request["parameters"].erase("candidate_id");
+                }
+                return (requested_authority ? *requested_authority : control_plane)
+                    .submit(request, "test");
             };
 
         const json registered =
@@ -324,6 +330,44 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
         REQUIRE(
             verified.at("runtime_model_identity")
                 .at("model_fingerprint") == "8104116015256418347");
+
+        const fs::path different_executable = root / executable.filename();
+        fs::copy_file(ARENA_MOCK_UCI_PATH, different_executable);
+        REQUIRE_FALSE(fs::equivalent(different_executable, executable));
+        auto raw_store = std::make_shared<arena::adapters::SqliteStore>(root / "raw.db");
+        arena::application::ControlPlane without_inventory(raw_store);
+        without_inventory.initialize();
+        const auto reject_selector = [&](const std::string& selector,
+                                         const fs::path& selected_executable,
+                                         arena::application::ControlPlane* authority,
+                                         const bool dry_run) {
+            try {
+                static_cast<void>(registration(selector, candidate_options, dry_run,
+                                               selected_executable, authority));
+                FAIL("an unresolved explicit selector must not become raw launch authority");
+            } catch (const arena::application::CommandFailure& error) {
+                REQUIRE(error.code() == "engine_candidate_unavailable");
+            }
+            REQUIRE(control_plane.list("engine").size() == 1);
+            REQUIRE(store->get_resource("engine", registered.at("id").get<std::string>())
+                        ->revision == registered.at("revision"));
+            REQUIRE(without_inventory.list("engine").empty());
+        };
+        for (const bool dry_run : {true, false}) {
+            reject_selector("engcand-stale", executable, nullptr, dry_run);
+            reject_selector(candidate_id, different_executable, nullptr, dry_run);
+            reject_selector(candidate_id, executable, &without_inventory, dry_run);
+        }
+        const json raw_preview = registration("", candidate_options, true, executable,
+                                              &without_inventory).at("resource").at("data");
+        REQUIRE_FALSE(raw_preview.contains("candidate_id"));
+        REQUIRE_FALSE(raw_preview.contains("component_id"));
+        REQUIRE(without_inventory.list("engine").empty());
+        const json raw_registered = registration("", candidate_options, false, executable,
+                                                 &without_inventory).at("resource").at("data");
+        REQUIRE_FALSE(raw_registered.contains("candidate_id"));
+        REQUIRE_FALSE(raw_registered.contains("component_id"));
+        REQUIRE(without_inventory.list("engine").size() == 1);
 
         json invalid_profile = launch_profile;
         invalid_profile["component"]["version"] = "9.9.9";

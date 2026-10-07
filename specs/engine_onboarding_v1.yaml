@@ -170,8 +170,11 @@ registration:
     - Discovery identity is never trusted across the probe or registration
       boundary. Registration persists the fingerprint produced by its own full
       process probe.
-    - An explicitly selected current candidate must be ready_to_probe before
-      registration or dry-run probing may use it. An unavailable candidate,
+    - A nonempty explicit candidate selector must resolve a current
+      ready_to_probe candidate with the same executable before registration or
+      dry-run probing may use it. A stale selector, unavailable inventory, or
+      mismatched executable never falls back to raw launch parameters. An
+      unavailable candidate,
       including an invalid declared managed launch profile, never falls back to
       raw launch parameters or acquires verified component metadata. A ready
       ordinary candidate without an optional launch profile retains its normal
