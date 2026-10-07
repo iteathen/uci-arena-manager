@@ -87,6 +87,7 @@ class ControlPlane final {
 
   private:
     void reconcile_installed_engine();
+    void require_engine_idle_for_refresh(const std::string& engine_id) const;
     [[nodiscard]] nlohmann::json register_engine(
         const nlohmann::json& request,
         const std::string& actor);

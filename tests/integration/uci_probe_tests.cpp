@@ -545,6 +545,13 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
 
         json replacement_receipt = json::parse(std::ifstream(
             data_root / "receipts" / "uci_arena.engine.json"));
+        // A busy Engine is preserved even while receipt replacement makes
+        // its next installed candidate temporarily unavailable.
+        fs::remove(data_root / "receipts" / "uci_arena.engine.json");
+        control_plane.reconcile_installed_services(data_root);
+        REQUIRE(control_plane.status()
+                    .at("installed_engine_reconciliation")
+                    .at("outcome") == "active_use_preserved");
         replacement_receipt["artifact_sha256"] = std::string(64, 'b');
         std::ofstream(data_root / "receipts" / "uci_arena.engine.json",
                       std::ios::trunc)

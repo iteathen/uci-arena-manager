@@ -1038,6 +1038,7 @@ void ControlPlane::reconcile_installed_engine() {
             return;
         }
 
+        require_engine_idle_for_refresh(resource.id);
         const json discovery = EngineOnboarding::discover(
             manager_data_root_, *component_registry_);
         std::vector<json> candidates;
@@ -1250,6 +1251,40 @@ json ControlPlane::submit(const json& raw_request, const std::string& actor) {
     throw CommandFailure("unknown_action", "unsupported action: " + action, 400);
 }
 
+void ControlPlane::require_engine_idle_for_refresh(const std::string& engine_id) const {
+    for (const auto* kind : {"match_plan", "tournament"}) {
+        for (const auto& competition : store_->list_resources(kind, 10'000, 0)) {
+            const json data = json::parse(competition.data_json);
+            const std::string lifecycle = data.value("lifecycle", "planned");
+            if (lifecycle != "running" && lifecycle != "paused") continue;
+            const json engine_ids = data.value("engine_ids", json::array());
+            if (engine_ids.is_array() && std::ranges::any_of(
+                    engine_ids, [&engine_id](const json& value) {
+                        return value.is_string() && value == engine_id;
+                    })) {
+                throw CommandFailure(
+                    "engine_refresh_in_use",
+                    "stop or cancel the active competition before refreshing this engine",
+                    409);
+            }
+        }
+    }
+    for (const auto& game : store_->list_resources("game", 10'000, 0)) {
+        const json data = json::parse(game.data_json);
+        if (data.value("lifecycle", "") != "running") continue;
+        const auto uses_engine = [&engine_id](const json& identity) {
+            return identity.is_object() && identity.value("id", "") == engine_id;
+        };
+        if (uses_engine(data.value("white_engine", json::object())) ||
+            uses_engine(data.value("black_engine", json::object()))) {
+            throw CommandFailure(
+                "engine_refresh_in_use",
+                "an active game still references this engine; wait for it to finish",
+                409);
+        }
+    }
+}
+
 json ControlPlane::register_engine(const json& request, const std::string& actor) {
     const bool refresh = request.at("action") == "engine.refresh";
     std::unique_lock authority_lock(engine_authority_mutex_, std::defer_lock);
@@ -1301,43 +1336,7 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
                 "only the receipt-managed UCI Arena Engine can be refreshed in place",
                 409);
         }
-        for (const auto* kind : {"match_plan", "tournament"}) {
-            for (const auto& competition :
-                 store_->list_resources(kind, 10'000, 0)) {
-                const json data = json::parse(competition.data_json);
-                const std::string lifecycle = data.value("lifecycle", "planned");
-                if (lifecycle != "running" && lifecycle != "paused") {
-                    continue;
-                }
-                const json engine_ids = data.value("engine_ids", json::array());
-                if (engine_ids.is_array() && std::ranges::any_of(
-                        engine_ids,
-                        [&engine_id](const json& value) {
-                            return value.is_string() && value == engine_id;
-                        })) {
-                    throw CommandFailure(
-                        "engine_refresh_in_use",
-                        "stop or cancel the active competition before refreshing this engine",
-                        409);
-                }
-            }
-        }
-        for (const auto& game : store_->list_resources("game", 10'000, 0)) {
-            const json data = json::parse(game.data_json);
-            if (data.value("lifecycle", "") != "running") {
-                continue;
-            }
-            const auto uses_engine = [&engine_id](const json& identity) {
-                return identity.is_object() && identity.value("id", "") == engine_id;
-            };
-            if (uses_engine(data.value("white_engine", json::object())) ||
-                uses_engine(data.value("black_engine", json::object()))) {
-                throw CommandFailure(
-                    "engine_refresh_in_use",
-                    "an active game still references this engine; wait for it to finish",
-                    409);
-            }
-        }
+        require_engine_idle_for_refresh(engine_id);
     }
     const json& parameters = request.at("parameters");
     const std::filesystem::path executable = required_string(parameters, "executable");
