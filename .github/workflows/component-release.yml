@@ -1,116 +1,44 @@
-name: Manager component candidate
+name: Manager Windows repair validation
 
+# Temporary diagnostic branch only. Never merge this workflow replacement.
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: Exact Manager component version
-        type: string
-        required: true
-      target:
-        description: Target platform
-        type: choice
-        required: true
-        options:
-          - windows-x86_64
-          - linux-x86_64
-      runner:
-        description: Release runner authority
-        type: choice
-        required: true
-        default: github-hosted
-        options:
-          - github-hosted
-          - ephemeral-self-hosted-windows
 
 permissions:
   contents: read
 
-concurrency:
-  group: manager-component-${{ inputs.version }}-${{ inputs.target }}-${{ github.sha }}
-  cancel-in-progress: false
-
 jobs:
-  build-sign-verify:
-    runs-on: ${{ inputs.runner == 'ephemeral-self-hosted-windows' && fromJSON('["self-hosted","Windows","X64","ephemeral","uci-suite","manager-release"]') || (inputs.target == 'windows-x86_64' && 'windows-2025' || 'ubuntu-24.04') }}
+  validate:
+    runs-on: windows-2025
     timeout-minutes: 75
-    permissions:
-      contents: write
-      id-token: write
     env:
-      RELEASE_VERSION: ${{ inputs.version }}
-      RELEASE_TARGET: ${{ inputs.target }}
-      RELEASE_WORKFLOW_IDENTITY: ${{ github.workflow_ref }}#${{ github.run_id }}.${{ github.run_attempt }}
+      VALIDATED_SOURCE_SHA: 7435b2e0f3f3cb7b5b567c303b14995c99806031
+      RELEASE_VERSION: '0.3.25'
+      RELEASE_TARGET: windows-x86_64
     steps:
-      - name: Validate ephemeral Windows workspace path budget
-        if: inputs.runner == 'ephemeral-self-hosted-windows'
-        shell: pwsh
-        run: |
-          $maximumWorkspaceCharacters = 64
-          $workspace = [System.IO.Path]::GetFullPath($env:GITHUB_WORKSPACE)
-          if ($workspace.Length -gt $maximumWorkspaceCharacters) {
-            throw "ephemeral release workspace exceeds the $maximumWorkspaceCharacters-character MSVC path budget ($($workspace.Length))"
-          }
       - if: runner.os == 'Windows'
         shell: pwsh
         run: git config --global core.longpaths true
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+          ref: 7435b2e0f3f3cb7b5b567c303b14995c99806031
+      - name: Verify frozen production source
+        shell: pwsh
+        run: |
+          $observed = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $observed -ne $env:VALIDATED_SOURCE_SHA) {
+            throw 'Diagnostic checkout does not match the frozen production source'
+          }
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24.15.0
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - name: Validate immutable inputs
-        shell: pwsh
-        run: |
-          if ($env:RELEASE_VERSION -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:[-.][A-Za-z0-9.-]+)?$') {
-            throw 'version must be immutable semver text'
-          }
-          if ($env:RELEASE_TARGET -notmatch '^(windows-x86_64|linux-x86_64)$') {
-            throw 'unsupported target'
-          }
-          if ('${{ inputs.runner }}' -eq 'ephemeral-self-hosted-windows' -and
-              $env:RELEASE_TARGET -ne 'windows-x86_64') {
-            throw 'ephemeral self-hosted release is Windows-only'
-          }
       - name: Install exact dashboard dependency closure
         run: npm ci
         working-directory: web
       - uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57
-        if: runner.os == 'Windows' && inputs.runner != 'ephemeral-self-hosted-windows'
-      - name: Validate ephemeral Windows release toolchain
-        if: inputs.runner == 'ephemeral-self-hosted-windows'
-        shell: pwsh
-        run: |
-          foreach ($command in @('cl.exe', 'gh.exe', 'git.exe', 'msbuild.exe')) {
-            if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
-              throw "ephemeral release runner is missing $command"
-            }
-          }
-      - name: Map exact ephemeral MSVC runtime directory
-        if: inputs.runner == 'ephemeral-self-hosted-windows'
-        shell: pwsh
-        run: |
-          if (-not (Test-Path -LiteralPath $env:VCToolsRedistDir -PathType Container)) {
-            throw 'ephemeral release runner did not expose VCToolsRedistDir'
-          }
-          $x64RedistRoot = Join-Path $env:VCToolsRedistDir 'x64'
-          $runtimeCandidates = @(
-            Get-ChildItem -LiteralPath $x64RedistRoot -Directory -Filter 'Microsoft.VC*.CRT'
-          )
-          if ($runtimeCandidates.Count -ne 1) {
-            throw "expected exactly one x64 MSVC CRT directory; found $($runtimeCandidates.Count)"
-          }
-          $runtimeDirectory = $runtimeCandidates[0].FullName
-          foreach ($runtimeFile in @('msvcp140.dll', 'vcruntime140.dll')) {
-            if (-not (Test-Path -LiteralPath (Join-Path $runtimeDirectory $runtimeFile) -PathType Leaf)) {
-              throw "ephemeral MSVC runtime is missing $runtimeFile"
-            }
-          }
-          Add-Content -LiteralPath $env:GITHUB_ENV `
-            -Value "ARENA_MANAGER_MSVC_RUNTIME_DIRECTORY=$runtimeDirectory"
       - name: Install pinned CMake build toolchain
         if: runner.os == 'Windows'
         shell: pwsh
@@ -127,43 +55,14 @@ jobs:
           Expand-Archive -LiteralPath $archive -DestinationPath $destination
           Add-Content -LiteralPath $env:GITHUB_PATH `
             -Value (Join-Path $destination "cmake-$version-windows-x86_64/bin")
-      - name: Install Linux native build prerequisites
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes acl autoconf autoconf-archive automake libtool ninja-build libwebkit2gtk-4.1-dev
       - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
         with:
           vcpkgGitCommitId: 9e593bb18ea69cc5095e012465dcd675a822ed0d
-      - name: Resolve exact ephemeral vcpkg cache key
-        if: inputs.runner == 'ephemeral-self-hosted-windows'
-        id: ephemeral-vcpkg-cache-key
-        shell: pwsh
-        run: |
-          $inventory = @(git ls-files --stage -- vcpkg.json vcpkg-configuration.json cmake/triplets)
-          if ($LASTEXITCODE -ne 0 -or $inventory.Count -lt 3) {
-            throw 'ephemeral vcpkg cache inventory is incomplete'
-          }
-          $inventoryPath = Join-Path $env:RUNNER_TEMP 'manager-vcpkg-cache-inventory.txt'
-          [System.IO.File]::WriteAllLines(
-            $inventoryPath,
-            $inventory,
-            [System.Text.UTF8Encoding]::new($false)
-          )
-          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $inventoryPath).Hash.ToLowerInvariant()
-          "hash=$hash" >> $env:GITHUB_OUTPUT
       - name: Restore exact hosted vcpkg binary cache
-        if: inputs.runner != 'ephemeral-self-hosted-windows'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ runner.temp }}/vcpkg-binary-cache
-          key: manager-vcpkg-v1-${{ runner.os }}-${{ inputs.target }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/triplets/**') }}
-      - name: Restore exact ephemeral vcpkg binary cache
-        if: inputs.runner == 'ephemeral-self-hosted-windows'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: ${{ runner.temp }}/vcpkg-binary-cache
-          key: manager-vcpkg-v1-${{ runner.os }}-${{ inputs.target }}-${{ steps.ephemeral-vcpkg-cache-key.outputs.hash }}
+          key: manager-vcpkg-v1-${{ runner.os }}-${{ env.RELEASE_TARGET }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/triplets/**') }}
       - name: Verify Manager specifications and web application
         timeout-minutes: 10
         shell: pwsh
@@ -193,122 +92,17 @@ jobs:
         timeout-minutes: 5
         shell: pwsh
         run: |
-          $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-component-release' } else { 'linux-component-release' }
-          if ('${{ inputs.runner }}' -eq 'ephemeral-self-hosted-windows') {
-            $ninja = 'C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe'
-            if (-not (Test-Path -LiteralPath $ninja -PathType Leaf)) {
-              throw "ephemeral release runner is missing bundled Ninja: $ninja"
-            }
-            if (-not (Test-Path -LiteralPath $env:ARENA_MANAGER_MSVC_RUNTIME_DIRECTORY -PathType Container)) {
-              throw 'ephemeral release runner is missing its explicit MSVC runtime directory'
-            }
-            cmake --preset $preset -G Ninja `
-              "-DCMAKE_MAKE_PROGRAM=$ninja" `
-              "-DARENA_MANAGER_MSVC_RUNTIME_DIRECTORY=$env:ARENA_MANAGER_MSVC_RUNTIME_DIRECTORY" `
-              "-DARENA_VERSION=$env:RELEASE_VERSION"
-          } else {
-            cmake --preset $preset "-DARENA_VERSION=$env:RELEASE_VERSION"
-          }
+          cmake --preset windows-component-release "-DARENA_VERSION=$env:RELEASE_VERSION"
           if ($LASTEXITCODE -ne 0) { throw 'Manager configure failed' }
       - name: Build exact Manager source
         timeout-minutes: 30
         shell: pwsh
         run: |
-          $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-component-release' } else { 'linux-component-release' }
-          $parallel = if ('${{ inputs.runner }}' -eq 'ephemeral-self-hosted-windows') { 1 } else { 4 }
-          cmake --build --preset $preset --clean-first --parallel $parallel
+          cmake --build --preset windows-component-release --clean-first --parallel 4
           if ($LASTEXITCODE -ne 0) { throw 'Manager build failed' }
       - name: Verify exact Manager native tests
         timeout-minutes: 10
         shell: pwsh
         run: |
-          $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-component-release' } else { 'linux-component-release' }
-          ctest --preset $preset --output-on-failure --timeout 300
+          ctest --preset windows-component-release --output-on-failure --timeout 300
           if ($LASTEXITCODE -ne 0) { throw 'Manager native tests failed' }
-      - name: Build deterministic Manager component
-        shell: pwsh
-        run: |
-          $preset = if ($env:RELEASE_TARGET -eq 'windows-x86_64') { 'windows-component-release' } else { 'linux-component-release' }
-          cmake --install "build/$preset" --config Release --prefix provider_stage/manager-install
-          if ($LASTEXITCODE -ne 0) { throw 'Manager install-tree staging failed' }
-          $epoch = git show -s --format=%ct HEAD
-          node tools/release/build-manager-component.mjs `
-            --install-tree provider_stage/manager-install `
-            --definition release/components/manager-core.json `
-            --version $env:RELEASE_VERSION `
-            --target $env:RELEASE_TARGET `
-            --output "dist/provider/manager.core-$env:RELEASE_VERSION-$env:RELEASE_TARGET.tar.gz" `
-            --source-date-epoch $epoch `
-            --workflow-identity $env:RELEASE_WORKFLOW_IDENTITY `
-            --passed-test manager_spec_web_release_checks `
-            --passed-test manager_native_tests `
-            --passed-test manager_component_install_tree
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
-        with:
-          cosign-release: v3.0.6
-      - name: Prepare exact provider statement
-        id: attestation
-        shell: pwsh
-        env:
-          STATEMENT_DIRECTORY: ${{ runner.temp }}/provider-attestation
-        run: |
-          $artifact = @(Get-ChildItem dist/provider -Filter '*.tar.gz')
-          $result = @(Get-ChildItem dist/provider -Filter '*.provider-result.json')
-          if ($artifact.Count -ne 1 -or $result.Count -ne 1) {
-            throw 'expected one Manager artifact and one provider result'
-          }
-          node tools/release/sigstore-provenance.mjs prepare-provider `
-            --artifact $artifact[0].FullName `
-            --result $result[0].FullName `
-            --statement-directory $env:STATEMENT_DIRECTORY `
-            --github-output $env:GITHUB_OUTPUT
-      - name: Sign and verify exact provenance
-        shell: pwsh
-        env:
-          ARTIFACT_PATH: ${{ steps.attestation.outputs.artifact_path }}
-          BUNDLE_PATH: ${{ steps.attestation.outputs.bundle_path }}
-          CERTIFICATE_IDENTITY: https://github.com/${{ github.workflow_ref }}
-          PREDICATE_TYPE: ${{ steps.attestation.outputs.predicate_type }}
-          STATEMENT_PATH: ${{ steps.attestation.outputs.statement_path }}
-        run: |
-          cosign attest-blob --yes `
-            --statement $env:STATEMENT_PATH `
-            --bundle $env:BUNDLE_PATH
-          if ($LASTEXITCODE -ne 0) { throw 'Sigstore attestation failed' }
-          cosign verify-blob-attestation `
-            --bundle $env:BUNDLE_PATH `
-            --certificate-identity $env:CERTIFICATE_IDENTITY `
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com `
-            --certificate-github-workflow-repository $env:GITHUB_REPOSITORY `
-            --certificate-github-workflow-sha $env:GITHUB_SHA `
-            --certificate-github-workflow-name $env:GITHUB_WORKFLOW `
-            --certificate-github-workflow-ref $env:GITHUB_REF `
-            --certificate-github-workflow-trigger $env:GITHUB_EVENT_NAME `
-            --type $env:PREDICATE_TYPE `
-            $env:ARTIFACT_PATH
-          if ($LASTEXITCODE -ne 0) { throw 'Sigstore verification failed' }
-          node tools/release/sigstore-provenance.mjs verify-bundle `
-            --bundle $env:BUNDLE_PATH `
-            --statement $env:STATEMENT_PATH
-      - name: Upload signed assets to pre-provisioned private candidate
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ inputs.version }}
-          RELEASE_TARGET: ${{ inputs.target }}
-        run: |
-          $assets = @(Get-ChildItem -LiteralPath dist/provider -File | Sort-Object Name)
-          if ($assets.Count -ne 3) { throw "Expected exactly three candidate assets, found $($assets.Count)" }
-          $tag = "component/manager-core/v$env:RELEASE_VERSION/$env:RELEASE_TARGET"
-          $release = gh release view $tag `
-            --repo $env:GITHUB_REPOSITORY `
-            --json assets,isDraft,isPrerelease,targetCommitish | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0) { throw 'Pre-provisioned private candidate was not found' }
-          if ($release.isDraft) { throw 'Pre-provisioned candidate must be a visible private prerelease' }
-          if (-not $release.isPrerelease) { throw 'Pre-provisioned candidate must remain a prerelease' }
-          if ($release.targetCommitish -ne $env:GITHUB_SHA) { throw 'Pre-provisioned candidate targets a different source commit' }
-          if (@($release.assets).Count -ne 0) { throw 'Pre-provisioned candidate must have no existing assets' }
-          $assetPaths = @($assets | ForEach-Object { $_.FullName })
-          gh release upload $tag @assetPaths --repo $env:GITHUB_REPOSITORY
-          if ($LASTEXITCODE -ne 0) { throw 'Private candidate asset upload failed' }
