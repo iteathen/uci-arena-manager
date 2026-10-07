@@ -113,6 +113,11 @@ probe:
       conservative or qualified_timing state. Manager never interprets timing,
       search, model, opening-book, or tablebase semantics to construct those
       options.
+    - Receipt-backed onboarding normalizes the admitted component root and
+      executable through its existing canonical path policy before comparing
+      launch-profile identity. Physically identical Windows case and 8.3 path
+      aliases preserve the complete packaged launch-profile metadata; a
+      different component root or executable remains an identity failure.
     - A malformed, stale, escaping, linked, identity-mismatched, or unbounded
       managed launch profile makes that receipt candidate unavailable.
       Retained profile bytes without a current receipt never create engine
@@ -165,6 +170,15 @@ registration:
     - Discovery identity is never trusted across the probe or registration
       boundary. Registration persists the fingerprint produced by its own full
       process probe.
+    - A nonempty explicit candidate selector must resolve a current
+      ready_to_probe candidate with the same executable before registration or
+      dry-run probing may use it. A stale selector, unavailable inventory, or
+      mismatched executable never falls back to raw launch parameters. An
+      unavailable candidate,
+      including an invalid declared managed launch profile, never falls back to
+      raw launch parameters or acquires verified component metadata. A ready
+      ordinary candidate without an optional launch profile retains its normal
+      UCI probe contract.
     - Existing raw launch-spec registration remains compatible for automation.
     - Dashboard registration repeats the probe at mutation time and retains
       verified installed-component provenance. The preview probe id correlates

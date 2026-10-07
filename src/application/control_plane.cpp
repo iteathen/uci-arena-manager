@@ -1366,10 +1366,10 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
     json expected_runtime = nullptr;
     json selected_candidate = nullptr;
     bool model_root_overridden = false;
-    if (parameters.contains("candidate_id") &&
+    const bool candidate_selected = parameters.contains("candidate_id") &&
         parameters.at("candidate_id").is_string() &&
-        !parameters.at("candidate_id").get_ref<const std::string&>().empty() &&
-        !manager_data_root_.empty()) {
+        !parameters.at("candidate_id").get_ref<const std::string&>().empty();
+    if (candidate_selected && !manager_data_root_.empty()) {
         const std::string requested_candidate_id =
             parameters.at("candidate_id").get<std::string>();
         const json discovery = EngineOnboarding::discover(
@@ -1388,6 +1388,12 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
                 error) {
                 continue;
             }
+            if (candidate.value("state", "") != "ready_to_probe") {
+                throw CommandFailure(
+                    "engine_candidate_unavailable",
+                    "the selected engine candidate is unavailable; repair its declared inputs and refresh discovery",
+                    409);
+            }
             selected_candidate = candidate;
             const json normalized_candidate_options =
                 engine_option_values_json(
@@ -1403,8 +1409,7 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
                         candidate.at("working_directory").get<std::string>(),
                         working_error) &&
                     !working_error;
-                if (candidate.value("state", "") != "ready_to_probe" ||
-                    json(arguments) != candidate.at("arguments") ||
+                if (json(arguments) != candidate.at("arguments") ||
                     (normalized_options != normalized_candidate_options &&
                      !model_root_overridden) ||
                     !same_working_directory) {
@@ -1421,6 +1426,12 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
             }
             break;
         }
+    }
+    if (candidate_selected && selected_candidate.is_null()) {
+        throw CommandFailure(
+            "engine_candidate_unavailable",
+            "the selected engine candidate no longer matches current discovery; refresh discovery before probing",
+            409);
     }
     if (refresh &&
         (selected_candidate.is_null() ||
