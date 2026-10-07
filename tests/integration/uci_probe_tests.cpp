@@ -6,10 +6,19 @@
 
 #include <catch2/catch_message.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
+#include <algorithm>
+#include <cwctype>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 #ifndef ARENA_MOCK_UCI_PATH
 #error ARENA_MOCK_UCI_PATH must name the mock UCI engine
@@ -189,6 +198,31 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
         {"diagnostics", json::array()},
     };
     std::ofstream(configuration) << launch_profile.dump(2);
+    fs::path receipt_active_root = active_root;
+#ifdef _WIN32
+    const std::string receipt_spelling = GENERATE("canonical", "case_alias", "short_alias");
+    INFO("receipt path spelling: " << receipt_spelling);
+    if (receipt_spelling == "case_alias") {
+        std::wstring alias = active_root.native();
+        std::transform(alias.begin(), alias.end(), alias.begin(), [](const wchar_t value) {
+            return static_cast<wchar_t>(std::towupper(value));
+        });
+        receipt_active_root = alias;
+    } else if (receipt_spelling == "short_alias") {
+        const DWORD required = GetShortPathNameW(active_root.c_str(), nullptr, 0);
+        REQUIRE(required > 0);
+        std::wstring alias(required, L'\0');
+        const DWORD written = GetShortPathNameW(active_root.c_str(), alias.data(), required);
+        REQUIRE(written > 0);
+        REQUIRE(written < required);
+        alias.resize(written);
+        receipt_active_root = alias;
+        if (receipt_active_root == active_root) {
+            WARN("8.3 aliases are unavailable; the case-alias run still covers equivalent spelling");
+        }
+    }
+    REQUIRE(fs::equivalent(receipt_active_root, active_root));
+#endif
     std::ofstream(data_root / "receipts" / "uci_arena.engine.json")
         << json{
                {"schema", "arena_install_receipt_v1"},
@@ -196,7 +230,7 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                {"component_id", "uci_arena.engine"},
                {"component_version", "1.2.3"},
                {"state", "installed_managed"},
-               {"active_root", active_root.string()},
+               {"active_root", receipt_active_root.string()},
                {"artifact_sha256", std::string(64, 'a')},
                {"data_paths", {workspace.string()}},
                {"configuration_path", configuration.string()},
@@ -290,6 +324,26 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
         REQUIRE(
             verified.at("runtime_model_identity")
                 .at("model_fingerprint") == "8104116015256418347");
+
+        json invalid_profile = launch_profile;
+        invalid_profile["component"]["version"] = "9.9.9";
+        std::ofstream(configuration, std::ios::trunc) << invalid_profile.dump(2);
+        const json unavailable = control_plane.engine_candidates().at("candidates").at(0);
+        REQUIRE(unavailable.at("candidate_id") == candidate_id);
+        REQUIRE(unavailable.at("state") == "unavailable");
+        REQUIRE_FALSE(unavailable.contains("launch_profile"));
+        for (const bool dry_run : {true, false}) {
+            try {
+                static_cast<void>(registration(candidate_id, candidate_options, dry_run));
+                FAIL("an invalid declared launch profile must not become raw launch authority");
+            } catch (const arena::application::CommandFailure& error) {
+                REQUIRE(error.code() == "engine_candidate_unavailable");
+            }
+            REQUIRE(control_plane.list("engine").size() == 1);
+            REQUIRE(store->get_resource("engine", registered.at("id").get<std::string>())
+                        ->revision == registered.at("revision"));
+        }
+        std::ofstream(configuration, std::ios::trunc) << launch_profile.dump(2);
 
         const fs::path alternate_model_root =
             root / "operator-models" / "operator-selected";

@@ -1388,6 +1388,12 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
                 error) {
                 continue;
             }
+            if (candidate.value("state", "") != "ready_to_probe") {
+                throw CommandFailure(
+                    "engine_candidate_unavailable",
+                    "the selected engine candidate is unavailable; repair its declared inputs and refresh discovery",
+                    409);
+            }
             selected_candidate = candidate;
             const json normalized_candidate_options =
                 engine_option_values_json(
@@ -1403,8 +1409,7 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
                         candidate.at("working_directory").get<std::string>(),
                         working_error) &&
                     !working_error;
-                if (candidate.value("state", "") != "ready_to_probe" ||
-                    json(arguments) != candidate.at("arguments") ||
+                if (json(arguments) != candidate.at("arguments") ||
                     (normalized_options != normalized_candidate_options &&
                      !model_root_overridden) ||
                     !same_working_directory) {

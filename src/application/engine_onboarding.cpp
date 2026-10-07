@@ -485,6 +485,8 @@ void append_admitted_component_candidate(
     const fs::path& executable,
     json& candidates,
     std::set<std::string>& seen) {
+    const fs::path canonical_root = normalized_absolute(active_root);
+    const fs::path canonical_executable = normalized_absolute(executable);
     const std::string component_id =
         receipt.at("component_id").get<std::string>();
     json metadata{
@@ -523,7 +525,7 @@ void append_admitted_component_candidate(
                 model.at("root").get<std::string>();
             if (safe_relative_path(relative_model_root)) {
                 const fs::path model_root = normalized_absolute(
-                    active_root / relative_model_root);
+                    canonical_root / relative_model_root);
                 if (platform::inspect_path_no_follow(model_root).kind ==
                     platform::PathEntryKind::directory) {
                     metadata["uci_options"] = {
@@ -537,8 +539,8 @@ void append_admitted_component_candidate(
         try {
             const json launch_profile = validated_managed_launch_profile(
                 receipt,
-                active_root,
-                normalized_absolute(executable));
+                canonical_root,
+                canonical_executable);
             if (launch_profile.is_null()) {
                 throw std::runtime_error(
                     "managed launch profile is not configured");
@@ -582,8 +584,8 @@ void append_admitted_component_candidate(
         candidates,
         seen,
         "install_receipt",
-        executable,
-        active_root,
+        canonical_executable,
+        canonical_root,
         component_id == "uci_arena.engine"
             ? "UCI Arena Engine"
             : manifest.value("display_name", display_name_for(executable)),
