@@ -459,8 +459,19 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
         REQUIRE_THROWS(
             registration(candidate_id, changed_profile_options, true));
 
+        for (const bool dry_run : {true, false}) {
+            try {
+                static_cast<void>(registration("engcand-forged", candidate_options, dry_run));
+                FAIL("a forged explicit selector must not become raw launch authority");
+            } catch (const arena::application::CommandFailure& error) {
+                REQUIRE(error.code() == "engine_candidate_unavailable");
+            }
+            REQUIRE(control_plane.list("engine").size() == 1);
+            REQUIRE(store->get_resource("engine", registered.at("id").get<std::string>())
+                        ->revision == registered.at("revision"));
+        }
         const json forged_resource =
-            registration("engcand-forged", candidate_options, false)
+            registration("", candidate_options, false)
                 .at("resource");
         const json forged = forged_resource.at("data");
         REQUIRE_FALSE(forged.contains("candidate_id"));
