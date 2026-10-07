@@ -1,5 +1,6 @@
 #include "arena/application/component_verification_registry.hpp"
 #include "arena/domain/uuid.hpp"
+#include "arena/ports/component_change_monitor.hpp"
 
 #include <sodium.h>
 
@@ -14,6 +15,11 @@
 #include <future>
 #include <nlohmann/json.hpp>
 #include <thread>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -265,3 +271,43 @@ TEST_CASE("aggregate verification includes substitutable receipt components") {
     registry.stop();
     fs::remove_all(fixture.root);
 }
+
+#ifdef _WIN32
+TEST_CASE("component monitoring captures changes before its worker first runs") {
+    Fixture fixture = make_fixture();
+    struct SchedulingScope {
+        DWORD_PTR affinity{};
+        int priority{GetThreadPriority(GetCurrentThread())};
+        ~SchedulingScope() {
+            SetThreadPriority(GetCurrentThread(), priority);
+            if (affinity != 0) SetProcessAffinityMask(GetCurrentProcess(), affinity);
+        }
+    } scheduling;
+    DWORD_PTR system_affinity = 0;
+    REQUIRE(GetProcessAffinityMask(GetCurrentProcess(), &scheduling.affinity,
+                                   &system_affinity));
+    const DWORD_PTR one_cpu = scheduling.affinity & (~scheduling.affinity + 1);
+    REQUIRE(SetProcessAffinityMask(GetCurrentProcess(), one_cpu));
+    REQUIRE(SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST));
+
+    std::promise<void> changed;
+    auto delivered = changed.get_future();
+    std::atomic_bool announced{false};
+    auto monitor = arena::ports::watch_component_tree(
+        fixture.active, [&](const arena::ports::ComponentChange& change) {
+            if (change.kind == arena::ports::ComponentChangeKind::changed &&
+                change.relative_path == fs::path("bin") / "engine.exe" &&
+                !announced.exchange(true)) {
+                changed.set_value();
+            }
+        });
+    REQUIRE(monitor != nullptr);
+    std::ofstream(fixture.payload, std::ios::binary | std::ios::trunc)
+        << "immediate changed payload";
+    const bool observed = delivered.wait_for(std::chrono::seconds(2)) ==
+                          std::future_status::ready;
+    monitor.reset();
+    fs::remove_all(fixture.root);
+    REQUIRE(observed);
+}
+#endif
