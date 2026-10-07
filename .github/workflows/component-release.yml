@@ -12,7 +12,7 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 75
     env:
-      VALIDATED_SOURCE_SHA: 7435b2e0f3f3cb7b5b567c303b14995c99806031
+      VALIDATED_SOURCE_SHA: 6290cbb7b2b6bb495ca2e20b7548dea07f7bd734
       RELEASE_VERSION: '0.3.25'
       RELEASE_TARGET: windows-x86_64
     steps:
@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
-          ref: 7435b2e0f3f3cb7b5b567c303b14995c99806031
+          ref: 6290cbb7b2b6bb495ca2e20b7548dea07f7bd734
       - name: Verify frozen production source
         shell: pwsh
         run: |
