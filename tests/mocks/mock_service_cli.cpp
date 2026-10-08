@@ -113,6 +113,10 @@ int main(int argc, char** argv) {
     }
     if (evidence && operation == "orchestration" && argc > 4 &&
         std::string(argv[4]) == "status") {
+        if (cli.find("evidence-neutral") != std::string::npos) {
+            std::cout << R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"uci_arena_evidence.service","component_version":"0.3.0","operation":"orchestration_status","ok":true,"payload":{"schema":"uci_arena_evidence_orchestration_v1","targets":[{"id":"123e4567-e89b-42d3-a456-426614174001","label":"Selected runtime","target_schema":"uci_arena_evidence_target_v2","engine_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","campaigns":[{"name":"example.diagnostic","workloads":["complete_game"],"parameters_schema":{"type":"object","additionalProperties":false,"required":[],"properties":{"samples":{"type":"integer","minimum":1,"maximum":10},"tag":{"type":"string","maxLength":4}}}}]}],"jobs":[]}})" << '\n';
+            return 0;
+        }
         std::cout
             << R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"uci_arena_evidence.service","component_version":"0.3.0","operation":"orchestration_status","ok":true,"payload":{"schema":"uci_arena_evidence_orchestration_v1","targets":[{"id":"123e4567-e89b-42d3-a456-426614174001","label":"Active model deployment","model_id":"model-package-1","model_fingerprint":"model-1","engine_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","provider":"directml","created_at":"2026-07-25T00:00:00Z"}],"jobs":[{"id":"123e4567-e89b-42d3-a456-426614174002","adapter":"timing_profile","state":"queued","priority":100,"target_id":"123e4567-e89b-42d3-a456-426614174001","shard_id":"deadline-provider-qualification","dataset_id":"123e4567-e89b-42d3-a456-426614174000","attempts":0,"wait_reason":"","last_error":"","created_at":"2026-07-25T00:00:00Z","updated_at":"2026-07-25T00:00:00Z"}]}})"
             << '\n';
@@ -120,6 +124,14 @@ int main(int argc, char** argv) {
     }
     if (evidence && operation == "campaign" && argc > 4 &&
         std::string(argv[4]) == "enqueue") {
+        if (cli.find("evidence-neutral") != std::string::npos) {
+            for (int index = 5; index + 1 < argc; ++index) {
+                if (std::string_view(argv[index]) != "--configuration-json") continue;
+                std::cout << R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"uci_arena_evidence.service","component_version":"0.3.0","operation":"campaign_enqueue","ok":true,"payload":{"schema":"uci_arena_evidence_campaign_enqueue_v1","campaign":"example.diagnostic","target_id":"123e4567-e89b-42d3-a456-426614174001","jobs":[],"received_configuration":)"
+                    << argv[index + 1] << "}}\n";
+                return 0;
+            }
+        }
         const bool explicit_target = has_argument_pair(
             argc,
             argv,
@@ -134,6 +146,17 @@ int main(int argc, char** argv) {
     }
     if (evidence && operation == "target" && argc > 4 &&
         std::string(argv[4]) == "register") {
+        for (int index = 5; index + 1 < argc; ++index) {
+            if (std::string_view(argv[index]) != "--target-json") continue;
+            const std::string_view descriptor = argv[index + 1];
+            if (descriptor.find("\"runtime_binding\":null") != std::string_view::npos) {
+                std::cout << R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"uci_arena_evidence.service","component_version":"0.3.0","operation":"target_register","ok":true,"payload":{"schema":"uci_arena_evidence_target_register_v1","status":"unsupported","code":"EVIDENCE_RUNTIME_UNSUPPORTED","reason":"selected engine has no optional runtime capability","created":false}})" << '\n';
+            } else {
+                std::cout << R"({"schema":"uci_arena_manager_service_api_v1","api_version":"1.0","component_id":"uci_arena_evidence.service","component_version":"0.3.0","operation":"target_register","ok":true,"payload":{"schema":"uci_arena_evidence_target_register_v1","status":"supported","created":true,"target":{"id":"123e4567-e89b-42d3-a456-426614174003","engine_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"received_target":)"
+                    << descriptor << "}}\n";
+            }
+            return 0;
+        }
         if (!has_model_root_option(argc, argv)) {
             return 4;
         }

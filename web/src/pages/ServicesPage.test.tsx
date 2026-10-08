@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import type { ManagedServiceData, Resource } from '../api/types'
+import type { EngineData, ManagedServiceData, Resource } from '../api/types'
 import {
   bookSnapshotActivationActions,
   canEnqueueEvidenceCampaign,
   evidenceCampaignBlocker,
   needsEvidenceTarget,
   selectPreferredService,
+  evidenceEligibleEngines,
+  evidenceCampaignChoices,
   serviceCardStates,
   serviceLifecycleActions,
   serviceLocatorMode,
@@ -38,6 +40,32 @@ function service(
 }
 
 describe('managed-service catalog selection', () => {
+  it('selects optional Evidence suppliers by capability and keeps their advertised campaigns', () => {
+    const engines = ['uci_arena.vector', 'example.alternate-engine'].map((componentId, index) => ({
+      ...service(`engine-${index}`, 'engine'),
+      kind: 'engine',
+      data: {
+        component_id: componentId, onboarding_source: 'install_receipt',
+        evidence_runtime: { available: true },
+      },
+    })) as unknown as Array<Resource<EngineData>>
+    expect(evidenceEligibleEngines(engines).map(engine => engine.id)).toEqual(['engine-0', 'engine-1'])
+    engines[1]!.data.evidence_runtime = { available: false, code: 'evidence_runtime_contract_unavailable' }
+    expect(evidenceEligibleEngines(engines).map(engine => engine.id)).toEqual(['engine-0'])
+    const evidence = service('evidence', 'uci_arena_evidence')
+    evidence.data.orchestration_projection = {
+      schema: 'uci_arena_evidence_orchestration_v1', jobs: [], targets: [{
+        id: 'target', label: 'Selected engine', target_schema: 'uci_arena_evidence_target_v2',
+        engine_sha256: 'sha256:fixture', created_at: '2026-01-01', campaigns: [{
+          name: 'engine.diagnostic', workloads: ['complete_game'],
+          parameters_schema: { type: 'object', required: [], properties: {}, additionalProperties: false },
+        }],
+      }],
+    }
+    expect(evidenceCampaignChoices(evidence.data, null)).toEqual([])
+    expect(evidenceCampaignChoices(evidence.data, 'target').map(campaign => campaign.name)).toEqual(['engine.diagnostic'])
+    expect(evidenceCampaignChoices(evidence.data, 'other-target')).toEqual([])
+  })
   it('keeps live-channel following separate from immutable snapshot pinning', () => {
     expect(bookSnapshotActivationActions({
       snapshot_id: 'integration-0123456789abcdefabcd',

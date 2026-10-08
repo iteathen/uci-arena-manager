@@ -33,6 +33,41 @@
     "component_id": {"type": "string"},
     "component_version": {"type": "string"},
     "recommended": {"type": "boolean"},
+    "evidence_runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available"],
+      "properties": {
+        "available": {"type": "boolean"},
+        "code": {"const": "evidence_runtime_contract_unavailable"},
+        "binding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schema", "component", "entrypoint"],
+          "properties": {
+            "schema": {"const": "uci_arena_evidence_runtime_binding_v2"},
+            "entrypoint": {"const": "evidence_runtime_contract"},
+            "component": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "version", "root", "manifest", "manifest_sha256"],
+              "properties": {
+                "id": {"type": "string", "minLength": 1},
+                "version": {"type": "string", "minLength": 1},
+                "root": {"type": "string", "minLength": 1},
+                "manifest": {"const": "arena-component.json"},
+                "manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+              }
+            }
+          }
+        }
+      },
+      "allOf": [{
+        "if": {"properties": {"available": {"const": true}}},
+        "then": {"required": ["binding"]},
+        "else": {"required": ["code"], "not": {"required": ["binding"]}}
+      }]
+    },
     "default_model": {
       "type": "object",
       "additionalProperties": false,

@@ -1,11 +1,16 @@
 #include "arena/adapters/sqlite_store.hpp"
 #include "arena/application/control_plane.hpp"
+#include "arena/application/engine_onboarding.hpp"
 #include "arena/application/service_catalog.hpp"
 #include "arena/domain/uuid.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_message.hpp>
+#include <catch2/generators/catch_generators.hpp>
+#include <sodium.h>
 
 #include <filesystem>
+#include <array>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -160,6 +165,112 @@ json register_installed_evidence_and_status(
 }
 
 }  // namespace
+
+TEST_CASE("Evidence forwards a freshly probed receipt-bound UCI launch without supplier inference") {
+    const std::string supplier = GENERATE("uci_arena.vector", "example.alternate-engine");
+    const bool capability = GENERATE(true, false);
+    const fs::path root = fs::temp_directory_path() / ("arena-evidence-neutral-" + arena::domain::uuid_v7());
+    const fs::path data_root = root / "data";
+    const fs::path active = root / "engine";
+    const fs::path executable = active / fs::path(ARENA_MOCK_UCI_PATH).filename();
+    fs::create_directories(active);
+    fs::create_directories(data_root / "receipts");
+    fs::copy_file(ARENA_MOCK_UCI_PATH, executable);
+    std::ofstream(active / "evidence-runtime.json") << R"({"schema":"uci_arena_evidence_runtime_v2"})";
+    const auto inventory = [](const fs::path& file, const fs::path& component_root) {
+        std::ifstream input(file, std::ios::binary);
+        const std::string bytes{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+        std::array<unsigned char, crypto_hash_sha256_BYTES> hash{};
+        crypto_hash_sha256(hash.data(), reinterpret_cast<const unsigned char*>(bytes.data()), bytes.size());
+        std::array<char, crypto_hash_sha256_BYTES * 2 + 1> encoded{};
+        sodium_bin2hex(encoded.data(), encoded.size(), hash.data(), hash.size());
+        return json{{"path", fs::relative(file, component_root).generic_string()},
+            {"sha256", encoded.data()}, {"size_bytes", fs::file_size(file)}};
+    };
+    const auto receipt = [&](const std::string& id, const fs::path& component_root, json manifest) {
+        manifest["schema"] = "arena_install_component_v1";
+        manifest["schema_version"] = 1;
+        manifest["component_id"] = id;
+        manifest["component_version"] = "0.3.0";
+        std::ofstream(component_root / "arena-component.json") << manifest.dump();
+        std::ofstream(data_root / "receipts" / (id + ".json")) << json{
+            {"schema", "arena_install_receipt_v1"}, {"schema_version", 1},
+            {"component_id", id}, {"component_version", "0.3.0"},
+            {"state", "installed_managed"}, {"active_root", component_root.string()},
+            {"artifact_sha256", std::string(64, 'a')}}.dump();
+    };
+    receipt(supplier, active, {
+        {"entrypoints", {{"uci", executable.filename().generic_string()}, {"evidence_runtime_contract", "evidence-runtime.json"}}},
+        {"discovery", json::array({{{"kind", "uci_engine"}, {"locator", {{"source", "entrypoint"}, {"entrypoint", "uci"}}}}})},
+        {"capabilities", capability ? json::array({"evidence_runtime_contract_v2"}) : json::array()},
+        {"files", {inventory(executable, active), inventory(active / "evidence-runtime.json", active)}}});
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(root / "arena.db");
+        arena::application::ControlPlane control(store);
+        control.initialize();
+        const fs::path service_root = root / "service";
+        fs::create_directories(service_root);
+        const json evidence = register_installed_evidence_and_status(control, store, service_root, "evidence-neutral.mjs");
+        receipt("uci_arena_evidence.service", service_root, {
+            {"entrypoints", {{"cli", "evidence-neutral.mjs"}}},
+            {"files", {inventory(service_root / "evidence-neutral.mjs", service_root)}}});
+        control.begin_installed_reconciliation(data_root);
+        // Reconciliation waits for the same complete registry verification used in production.
+        control.reconcile_installed_services(data_root);
+        const json found = control.engine_candidates();
+        json selected;
+        for (const auto& candidate : found.at("candidates")) {
+            if (candidate.value("component_id", "") == supplier) selected = candidate;
+        }
+        REQUIRE(selected.is_object());
+        const json arguments = json::array({"--delay-ms", "5"});
+        const json options = {{"Threads", 2}, {"Ponder", false}};
+        const json registered = control.submit(command("engine.register", {{"kind", "engine"}}, {
+            {"display_name", "Selected supplier"}, {"executable", executable.string()},
+            {"working_directory", active.string()}, {"arguments", arguments},
+            {"uci_options", options}, {"candidate_id", selected.at("candidate_id")}}), "test").at("resource");
+        const std::string service_id = evidence.at("resource").at("id");
+        const std::string engine_id = registered.at("id");
+        const auto submit_target = [&] {
+            return control.submit(command("service.evidence_target_register", {{"kind", "managed_service"}, {"id", service_id}},
+                {{"engine_id", engine_id}}), "test").at("resource").at("data").at("last_control_result");
+        };
+        const json result = submit_target();
+        REQUIRE(result.at("status") == (capability ? "supported" : "unsupported"));
+        const auto enqueue = [&](const std::string& name, const json& configuration, const std::string& target_id = "123e4567-e89b-42d3-a456-426614174001") {
+            return control.submit(command("service.evidence_campaign_enqueue", {{"kind", "managed_service"}, {"id", service_id}},
+                {{"target_id", target_id}, {"campaign", name}, {"configuration", configuration}}), "test")
+                .at("resource").at("data").at("last_control_result");
+        };
+        REQUIRE(enqueue("example.diagnostic", {{"samples", 4}, {"tag", "test"}}).at("received_configuration") == json{{"samples", 4}, {"tag", "test"}});
+        REQUIRE_THROWS_AS(enqueue("unadvertised", json::object()), arena::application::CommandFailure);
+        REQUIRE_THROWS_AS(enqueue("example.diagnostic", {{"path", "browser path"}}), arena::application::CommandFailure);
+        REQUIRE_THROWS_AS(enqueue("example.diagnostic", {{"samples", 11}}), arena::application::CommandFailure);
+        REQUIRE_THROWS_AS(enqueue("example.diagnostic", {{"tag", "too long"}}), arena::application::CommandFailure);
+        REQUIRE_THROWS_AS(enqueue("example.diagnostic", json::object(), "123e4567-e89b-42d3-a456-426614174009"), arena::application::CommandFailure);
+        if (capability) {
+            const json target = result.at("received_target");
+            REQUIRE(target.at("schema") == "uci_arena_evidence_target_v2");
+            REQUIRE(target.at("launch").at("executable") == registered.at("data").at("executable"));
+            REQUIRE(target.at("launch").at("arguments") == arguments);
+            REQUIRE(target.at("launch").at("working_directory") == registered.at("data").at("working_directory"));
+            REQUIRE(target.at("launch").at("uci_options") == registered.at("data").at("option_overrides"));
+            REQUIRE(target.at("runtime_binding").at("component").at("id") == supplier);
+            REQUIRE_FALSE(target.contains("model_id"));
+            REQUIRE_FALSE(target.contains("provider"));
+            // An immutable payload edit must reject the next operation rather than reuse saved capability data.
+            std::ofstream(active / "evidence-runtime.json", std::ios::trunc) << "changed";
+            REQUIRE_THROWS_AS(submit_target(), arena::application::CommandFailure);
+        } else {
+            REQUIRE(result.at("created") == false);
+            REQUIRE(result.at("code") == "EVIDENCE_RUNTIME_UNSUPPORTED");
+            REQUIRE_FALSE(result.contains("target"));
+        }
+        REQUIRE_THROWS_AS(control.submit(command("service.evidence_target_register", {{"kind", "managed_service"}, {"id", service_id}},
+            {{"engine_id", engine_id}, {"target_json", "browser path"}}), "test"), arena::application::CommandFailure);
+    }
+    fs::remove_all(root);
+}
 
 TEST_CASE("managed service profiles are cardinal and removal respects ownership") {
     const fs::path root =

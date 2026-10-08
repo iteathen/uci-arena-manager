@@ -58,6 +58,17 @@ export interface CommandEnvelope {
   parameters: Record<string, unknown>
 }
 
+export type EngineEvidenceRuntime =
+  | { available: false; code: 'evidence_runtime_contract_unavailable' }
+  | {
+      available: true
+      binding: {
+        schema: 'uci_arena_evidence_runtime_binding_v2'
+        component: { id: string; version: string; root: string; manifest: string; manifest_sha256: string }
+        entrypoint: 'evidence_runtime_contract'
+      }
+    }
+
 export interface EngineData extends Record<string, unknown> {
   display_name: string
   executable: string
@@ -93,6 +104,7 @@ export interface EngineData extends Record<string, unknown> {
     provider_numeric_fingerprint: string
   }
   launch_profile?: EngineCandidate['launch_profile']
+  evidence_runtime?: EngineEvidenceRuntime
   operational_timing_binding?: {
     schema: 'arena_operational_timing_binding_v1'
     schema_version: 1
@@ -120,6 +132,7 @@ export interface EngineCandidate {
   component_id?: string
   component_version?: string
   recommended?: boolean
+  evidence_runtime?: EngineEvidenceRuntime
   default_model?: {
     model_id: string
     display_name: string
@@ -346,11 +359,16 @@ export interface EvidenceOrchestrationProjection {
   targets: Array<{
     id: string
     label: string
-    model_id: string
-    model_fingerprint: string
+    model_id?: string
+    model_fingerprint?: string
     engine_sha256: string
-    provider: string
+    provider?: string
     created_at: string
+    target_schema?: 'uci_arena_evidence_target_v2'
+    component_id?: string
+    component_version?: string
+    runtime_identity_sha256?: string
+    campaigns?: Array<{ name: string; workloads: string[]; parameters_schema: Record<string, unknown> }>
   }>
   jobs: Array<{
     id: string

@@ -1,4 +1,16 @@
-import type { BookSnapshotProjection, ManagedServiceData, Resource } from '../api/types'
+import type { BookSnapshotProjection, EngineData, ManagedServiceData, Resource } from '../api/types'
+
+export function evidenceEligibleEngines(engines: Array<Resource<EngineData>>) {
+  return engines.filter(engine => engine.data.onboarding_source === 'install_receipt' && (
+    engine.data.evidence_runtime?.available === true ||
+    (!engine.data.evidence_runtime && engine.data.recommended === true && Boolean(engine.data.default_model?.root))
+  ))
+}
+
+export function evidenceCampaignChoices(service: ManagedServiceData, targetId: string | null) {
+  if (!targetId) return []
+  return service.orchestration_projection?.targets.find(target => target.id === targetId)?.campaigns ?? []
+}
 
 export interface BookSnapshotActivationAction {
   authorityMode: 'service_managed_live_channel' | 'immutable_pinned_snapshot'

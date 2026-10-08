@@ -495,6 +495,42 @@ void append_admitted_component_candidate(
         {"component_version", receipt.value("component_version", "")},
         {"recommended", component_id == "uci_arena.engine"},
     };
+    if (declares_capability(manifest, "evidence_runtime_contract_v2")) {
+        json evidence{{"available", false}};
+        try {
+            if (!manifest.contains("entrypoints") ||
+                !manifest.at("entrypoints").is_object() ||
+                !manifest.at("entrypoints").contains("evidence_runtime_contract") ||
+                !manifest.at("entrypoints").at("evidence_runtime_contract").is_string()) {
+                throw std::runtime_error("declared evidence runtime locator is missing");
+            }
+            const fs::path relative = manifest.at("entrypoints")
+                .at("evidence_runtime_contract").get<std::string>();
+            if (!safe_relative_path(relative)) {
+                throw std::runtime_error("declared evidence runtime path is unsafe");
+            }
+            const auto observation = platform::inspect_path_no_follow(canonical_root / relative);
+            if (observation.kind != platform::PathEntryKind::regular_file ||
+                observation.size_bytes > 1024U * 1024U ||
+                !verified_manifest_file(canonical_root, manifest, relative)) {
+                throw std::runtime_error("declared evidence runtime file is unverified");
+            }
+            const fs::path manifest_path = canonical_root / "arena-component.json";
+            if (read_json_bounded(manifest_path) != manifest) {
+                throw std::runtime_error("component manifest changed after verification");
+            }
+            evidence = {{"available", true}, {"binding", {
+                {"schema", "uci_arena_evidence_runtime_binding_v2"},
+                {"component", {{"id", component_id},
+                    {"version", receipt.value("component_version", "")},
+                    {"root", canonical_root.string()}, {"manifest", "arena-component.json"},
+                    {"manifest_sha256", sha256_file(manifest_path)}}},
+                {"entrypoint", "evidence_runtime_contract"}}}};
+        } catch (const std::exception&) {
+            evidence["code"] = "evidence_runtime_contract_unavailable";
+        }
+        metadata["evidence_runtime"] = std::move(evidence);
+    }
     const std::string artifact_sha256 =
         receipt.value("artifact_sha256", "");
     if (artifact_sha256.size() == crypto_hash_sha256_BYTES * 2U &&

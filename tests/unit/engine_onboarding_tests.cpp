@@ -2,6 +2,7 @@
 #include "arena/domain/uuid.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <sodium.h>
 
 #include <array>
@@ -184,6 +185,57 @@ TEST_CASE("installed engine receipts resolve provider-declared UCI entrypoints")
         fs::path(candidate.at("working_directory").get<std::string>()) ==
         fs::weakly_canonical(active_root));
 
+    fs::remove_all(root);
+}
+
+TEST_CASE("optional evidence capability binds the inventoried supplier without changing UCI admission") {
+    const std::string component_id = GENERATE("uci_arena.vector", "example.alternate-engine");
+    const fs::path root = fs::temp_directory_path() / ("arena-evidence-capability-" + arena::domain::uuid_v7());
+    const fs::path data_root = root / "data";
+    const fs::path active_root = root / "component";
+    const fs::path executable = executable_path(active_root / "bin", "engine");
+    const fs::path contract = active_root / "contracts" / "evidence-runtime.json";
+    write_executable(executable);
+    fs::create_directories(contract.parent_path());
+    fs::create_directories(data_root / "receipts");
+    std::ofstream(contract) << R"({"schema":"uci_arena_evidence_runtime_v2"})";
+    json manifest = {{"schema", "arena_install_component_v1"}, {"schema_version", 1},
+        {"component_id", component_id}, {"component_version", "1.0.0"},
+        {"entrypoints", {{"uci", fs::relative(executable, active_root).generic_string()},
+            {"evidence_runtime_contract", "contracts/evidence-runtime.json"}}},
+        {"discovery", uci_discovery("uci")},
+        {"capabilities", {"evidence_runtime_contract_v2"}},
+        {"files", {file_inventory_entry(active_root, executable), file_inventory_entry(active_root, contract)}}};
+    const fs::path manifest_path = active_root / "arena-component.json";
+    std::ofstream(manifest_path) << manifest.dump();
+    std::ofstream(data_root / "receipts" / (component_id + ".json"))
+        << json{{"schema", "arena_install_receipt_v1"}, {"schema_version", 1},
+            {"component_id", component_id}, {"component_version", "1.0.0"},
+            {"state", "installed_managed"}, {"active_root", active_root.string()}}.dump();
+    const auto candidate = [&] {
+        const json found = arena::application::EngineOnboarding::discover(data_root, {}, false);
+        REQUIRE(found.at("candidates").size() == 1);
+        return found.at("candidates").at(0);
+    };
+    const json admitted = candidate();
+    REQUIRE(admitted.at("state") == "ready_to_probe");
+    REQUIRE(admitted.contains("evidence_runtime"));
+    REQUIRE(admitted.at("evidence_runtime").at("available") == true);
+    const json binding = admitted.at("evidence_runtime").at("binding");
+    REQUIRE(binding.at("schema") == "uci_arena_evidence_runtime_binding_v2");
+    REQUIRE(binding.at("component").at("id") == component_id);
+    REQUIRE(binding.at("component").at("manifest_sha256") == sha256_file(manifest_path));
+    REQUIRE(binding.at("entrypoint") == "evidence_runtime_contract");
+    std::ofstream(contract, std::ios::trunc) << "changed";
+    const json changed = candidate();
+    REQUIRE(changed.at("state") == "ready_to_probe");
+    REQUIRE(changed.at("evidence_runtime").at("available") == false);
+    REQUIRE_FALSE(changed.at("evidence_runtime").contains("binding"));
+    manifest["capabilities"] = json::array();
+    std::ofstream(manifest_path, std::ios::trunc) << manifest.dump();
+    const json absent = candidate();
+    REQUIRE(absent.at("state") == "ready_to_probe");
+    REQUIRE_FALSE(absent.contains("evidence_runtime"));
     fs::remove_all(root);
 }
 

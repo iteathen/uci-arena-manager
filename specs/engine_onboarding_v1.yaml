@@ -283,6 +283,13 @@ acceptance:
     managed launch-profile schema and have every rendered option probed,
     registered, reused by tournaments, and forwarded to Evidence target
     registration without Manager source changes.
+  - Optional evidence_runtime_contract_v2 capability binds only the selected
+    supplier's inventoried evidence_runtime_contract entrypoint and current
+    component manifest hash. Missing or malformed optional capability never
+    invalidates generic UCI admission. Evidence registration repeats discovery
+    and the full UCI probe, preserves exact registered launch parameters,
+    rejects changed bindings, and never infers model or provider identity.
+    Unsupported capability returns a typed service result without a target.
   - Selecting a Book Forge snapshot or qualified Evidence timing profile
     through the desktop setup helper refreshes an existing managed Engine only
     after the Installer commits the locator and the repeated runtime probe
