@@ -89,16 +89,20 @@ TEST_CASE("UCI probe gives readiness and first search independent deadlines") {
     REQUIRE(result.elapsed_ms >= 150);
 }
 
-TEST_CASE("engine registration derives preferred metadata from the verified receipt") {
+TEST_CASE("receipt engine registration and explicit refresh preserve verified identity and options") {
     namespace fs = std::filesystem;
     using nlohmann::json;
+    const std::string component_id = GENERATE(
+        "uci_arena.engine", "uci_arena.vector", "example.alternate-engine");
+    INFO("registered component: " << component_id);
 
     const fs::path root =
         fs::temp_directory_path() /
         ("arena-engine-registration-" + arena::domain::uuid_v7());
     const fs::path data_root = root / "data";
     const fs::path active_root =
-        root / "components" / "uci_arena.engine" / "1.2.3";
+        root / "components" / component_id / "1.2.3";
+    const fs::path receipt_path = data_root / "receipts" / (component_id + ".json");
 #ifdef _WIN32
     const fs::path executable =
         active_root / "bin" / "uci_arena_engine.exe";
@@ -128,7 +132,7 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
         << json{
                {"schema", "arena_install_component_v1"},
                {"schema_version", 1},
-               {"component_id", "uci_arena.engine"},
+               {"component_id", component_id},
                {"component_version", "1.2.3"},
                {"display_name", "UCI Arena Engine"},
                {"entrypoints",
@@ -165,7 +169,7 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
         {"schema", "arena_uci_engine_launch_profile_v1"},
         {"schema_version", 1},
         {"component",
-         {{"id", "uci_arena.engine"},
+         {{"id", component_id},
           {"version", "1.2.3"},
           {"root", fs::weakly_canonical(active_root).string()}}},
         {"engine",
@@ -223,11 +227,11 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
     }
     REQUIRE(fs::equivalent(receipt_active_root, active_root));
 #endif
-    std::ofstream(data_root / "receipts" / "uci_arena.engine.json")
+    std::ofstream(receipt_path)
         << json{
                {"schema", "arena_install_receipt_v1"},
                {"schema_version", 1},
-               {"component_id", "uci_arena.engine"},
+               {"component_id", component_id},
                {"component_version", "1.2.3"},
                {"state", "installed_managed"},
                {"active_root", receipt_active_root.string()},
@@ -310,13 +314,13 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
             verified.at("onboarding_source") ==
             "install_receipt");
         REQUIRE(
-            verified.at("component_id") == "uci_arena.engine");
+            verified.at("component_id") == component_id);
         REQUIRE(verified.at("component_version") == "1.2.3");
         REQUIRE(verified.at("installed_artifact_sha256") ==
                 std::string(64, 'a'));
         REQUIRE(verified.at("model_selection_authority") ==
                 "packaged_launch_profile");
-        REQUIRE(verified.at("recommended") == true);
+        REQUIRE(verified.at("recommended") == (component_id == "uci_arena.engine"));
         REQUIRE(
             verified.at("default_model").at("display_name") ==
             "Example Model");
@@ -652,17 +656,19 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                 "test"),
             arena::application::CommandFailure);
 
-        json replacement_receipt = json::parse(std::ifstream(
-            data_root / "receipts" / "uci_arena.engine.json"));
+        // Automatic startup reconciliation remains the existing suite-default
+        // policy. Explicit receipt refresh above applies to every component.
+        if (component_id == "uci_arena.engine") {
+        json replacement_receipt = json::parse(std::ifstream(receipt_path));
         // A busy Engine is preserved even while receipt replacement makes
         // its next installed candidate temporarily unavailable.
-        fs::remove(data_root / "receipts" / "uci_arena.engine.json");
+        fs::remove(receipt_path);
         control_plane.reconcile_installed_services(data_root);
         REQUIRE(control_plane.status()
                     .at("installed_engine_reconciliation")
                     .at("outcome") == "active_use_preserved");
         replacement_receipt["artifact_sha256"] = std::string(64, 'b');
-        std::ofstream(data_root / "receipts" / "uci_arena.engine.json",
+        std::ofstream(receipt_path,
                       std::ios::trunc)
             << replacement_receipt.dump(2);
         control_plane.reconcile_installed_services(data_root);
@@ -748,7 +754,7 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                     .at("marginal_move_quality") == "unqualified");
 
         replacement_receipt["artifact_sha256"] = std::string(64, 'c');
-        std::ofstream(data_root / "receipts" / "uci_arena.engine.json",
+        std::ofstream(receipt_path,
                       std::ios::trunc)
             << replacement_receipt.dump(2);
         control_plane.reconcile_installed_services(data_root);
@@ -763,6 +769,7 @@ TEST_CASE("engine registration derives preferred metadata from the verified rece
                              .at("option_overrides")
                              .at("ModelRoot")
                              .get<std::string>()) == alternate_model_root);
+        }
     }
 
     fs::remove_all(root);

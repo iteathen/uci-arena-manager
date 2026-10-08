@@ -129,7 +129,7 @@ export function candidateRegistration(
     (engine) => samePath(engine.data.executable, candidate.executable),
   )
   const managedComponentMatches = candidate.source === 'install_receipt' &&
-      candidate.component_id === 'uci_arena.engine'
+      Boolean(candidate.component_id)
     ? engines.filter(
         (engine) => engine.data.onboarding_source === 'install_receipt' &&
           engine.data.component_id === candidate.component_id,

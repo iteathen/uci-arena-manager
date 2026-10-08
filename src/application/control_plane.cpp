@@ -1330,10 +1330,10 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
         }
         existing_engine_data = json::parse(existing_engine->data_json);
         if (existing_engine_data.value("onboarding_source", "") != "install_receipt" ||
-            existing_engine_data.value("component_id", "") != "uci_arena.engine") {
+            existing_engine_data.value("component_id", "").empty()) {
             throw CommandFailure(
                 "engine_refresh_not_managed",
-                "only the receipt-managed UCI Arena Engine can be refreshed in place",
+                "only a receipt-managed engine can be refreshed in place",
                 409);
         }
         require_engine_idle_for_refresh(engine_id);
@@ -1436,10 +1436,11 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
     if (refresh &&
         (selected_candidate.is_null() ||
          selected_candidate.value("source", "") != "install_receipt" ||
-         selected_candidate.value("component_id", "") != "uci_arena.engine")) {
+         selected_candidate.value("component_id", "") !=
+             existing_engine_data.value("component_id", ""))) {
         throw CommandFailure(
             "engine_refresh_candidate_changed",
-            "the registered managed Engine no longer matches the current verified candidate",
+            "the registered engine component no longer matches the current verified candidate",
             409);
     }
     const auto probe = adapters::UciProcess::probe(

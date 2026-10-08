@@ -106,6 +106,26 @@ describe('managed Engine registration state', () => {
     expect(candidateRegistration(candidate(), [registered(prior)]).state).toBe('refresh_required')
   })
 
+  it.each(['uci_arena.vector', 'example.alternate-engine'])(
+    'preserves the selected resource when %s moves to a new installed version',
+    (componentId) => {
+      const current = candidate()
+      current.candidate_id = 'engcand-current-other-root'
+      current.executable = 'C:\\engines\\other\\2.0.0\\node.exe'
+      current.working_directory = 'C:\\engines\\other\\2.0.0'
+      current.component_id = componentId
+      current.recommended = false
+      const prior = { ...current, candidate_id: 'engcand-prior-other-root',
+        component_version: '1.9.0', executable: 'C:\\engines\\other\\1.9.0\\node.exe',
+        working_directory: 'C:\\engines\\other\\1.9.0' }
+      const previous = registered(prior)
+      previous.id = 'selected-other-engine'
+      const result = candidateRegistration(current, [registered(), previous])
+      expect(result.state).toBe('refresh_required')
+      expect(result.engine?.id).toBe('selected-other-engine')
+    },
+  )
+
   it('does not let a manual registration hide a receipt-managed candidate', () => {
     const manual = registered()
     manual.data.candidate_id = undefined
