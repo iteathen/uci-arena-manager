@@ -274,6 +274,13 @@ profiles:
           the path as activation authority; Installer revalidates it before
           committing either service_managed_live_channel or
           immutable_pinned_snapshot authority and regenerating consumers.
+        - The dashboard selects an explicit receipt-managed engine resource
+          for output activation, or the sole such resource when unambiguous.
+          A regenerated candidate must advertise the requested output binding.
+          Refresh targets that exact resource UUID even when another resource
+          uses the same component. Activation is confirmed only after a fresh
+          resource read verifies the requested binding and current candidate;
+          an unsupported or unconfirmed binding remains saved, not active.
     safety:
       - Book Forge remains authority for its workspace, catalog, resource governor, and publication.
       - The manager invokes only its public CLI and reads only its machine-readable status.
@@ -387,8 +394,29 @@ profiles:
     orchestration_integration:
       operations: [orchestration_status, target_register, campaign_enqueue, job_control]
       rules:
+        - Runtime v2 is an additive optional engine-owned profile. A selected
+          receipt-managed engine declares evidence_runtime_contract_v2 and
+          names its inventoried evidence_runtime_contract entrypoint. Manager
+          binds the current manifest hash and supplier identity after inventory
+          verification, preserves that binding with the registered engine,
+          and repeats discovery plus the universal UCI probe before forwarding
+          the exact registered executable, arguments, working directory and
+          option overrides through a bounded 8192-byte target JSON descriptor.
+          Changed bindings require engine refresh. Absent capability yields
+          a typed unsupported result without affecting generic UCI admission.
+          No product identifier, default model or numeric provider identity
+          determines runtime v2 eligibility.
+        - Runtime v2 named campaigns require an explicit service-issued target
+          UUID and an unambiguous name advertised by that target's current
+          public projection. Manager checks configuration against the provider's
+          closed bounded structural parameter schema and forwards at most
+          8192 bytes through configuration-json. Evidence revalidates current
+          inventory and parameters and remains the scheduling authority.
+          The UI selects a target and advertised campaign; campaigns whose
+          schema accepts an empty object can run with provider defaults.
+          Historical target_id-only first-campaign requests retain v1 meaning.
         - Manager target registration accepts only a registered engine UUID,
-          repeats the universal UCI probe, and obtains paths, default-model
+          repeats the universal UCI probe, and for the historical v1 profile obtains paths, default-model
           metadata, runtime fingerprint, provider, provider numeric identity,
           and option overrides from that backend-authoritative resource and
           probe. None of those fields are caller supplied.

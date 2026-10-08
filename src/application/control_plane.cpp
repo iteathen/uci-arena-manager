@@ -120,6 +120,96 @@ std::string sha256_text(const std::string_view value) {
     return encoded.data();
 }
 
+// Public runtime v2 admits a closed, bounded structural JSON-schema subset.
+// Manager validates the advertised transport shape; the provider remains the
+// authority for campaign execution and revalidates its current inventory.
+void validate_evidence_campaign_parameters(const json& schema, const json& value) {
+    if (schema.dump().size() > 65536 || value.dump().size() > 8192) {
+        throw CommandFailure("invalid_evidence_campaign_configuration", "Evidence campaign schema or parameters exceed the public bound", 422);
+    }
+    const auto reject = [] {
+        throw CommandFailure("invalid_evidence_campaign_configuration", "Evidence campaign parameters do not match its bounded provider schema", 422);
+    };
+    const std::set<std::string> keywords{"$schema", "$id", "title", "description", "type", "properties", "required", "additionalProperties", "maxProperties", "items", "minItems", "maxItems", "minLength", "maxLength", "minimum", "maximum", "enum", "const"};
+    std::size_t schema_nodes = 0;
+    const auto inspect = [&](const auto& self, const json& s, const unsigned depth) -> void {
+        if (++schema_nodes > 10000 || depth > 16 || !s.is_object() || !s.contains("type")) reject();
+        for (const auto& [key, ignored] : s.items()) if (!keywords.contains(key)) reject();
+        const json types = s.at("type").is_array() ? s.at("type") : json::array({s.at("type")});
+        std::set<std::string> names;
+        if (types.empty()) reject();
+        for (const auto& type : types) {
+            if (!type.is_string()) reject();
+            const auto name = type.get<std::string>();
+            if (!std::set<std::string>{"object", "array", "string", "integer", "number", "boolean", "null"}.contains(name) || !names.insert(name).second) reject();
+        }
+        const auto bounded_integer = [&](const char* key, const std::int64_t maximum, const bool required) {
+            if (!s.contains(key)) { if (required) reject(); return; }
+            if (!s.at(key).is_number_integer() || s.at(key).get<double>() < 0 || s.at(key).get<double>() > maximum) reject();
+        };
+        if (names.contains("object")) {
+            if (!s.contains("properties") || !s.at("properties").is_object() || !s.contains("required") || !s.at("required").is_array() || !s.contains("additionalProperties") ||
+                !(s.at("additionalProperties") == false || s.at("additionalProperties").is_object())) reject();
+            bounded_integer("maxProperties", 128, false);
+            for (const auto& key : s.at("required")) if (!key.is_string() || !s.at("properties").contains(key.get<std::string>())) reject();
+            for (const auto& child : s.at("properties")) self(self, child, depth + 1);
+            if (s.at("additionalProperties").is_object()) self(self, s.at("additionalProperties"), depth + 1);
+        }
+        if (names.contains("array")) {
+            bounded_integer("maxItems", 4096, true); bounded_integer("minItems", 4096, false);
+            if (!s.contains("items") || !s.at("items").is_object() || s.value("minItems", 0) > s.at("maxItems").get<int>()) reject();
+            self(self, s.at("items"), depth + 1);
+        }
+        if (names.contains("string")) {
+            bounded_integer("maxLength", 65536, true); bounded_integer("minLength", 65536, false);
+            if (s.value("minLength", 0) > s.at("maxLength").get<int>()) reject();
+        }
+        if (names.contains("number") || names.contains("integer")) {
+            if (!s.contains("minimum") || !s.at("minimum").is_number() || !s.contains("maximum") || !s.at("maximum").is_number() ||
+                !std::isfinite(s.at("minimum").get<double>()) || !std::isfinite(s.at("maximum").get<double>()) || s.at("minimum").get<double>() > s.at("maximum").get<double>()) reject();
+        }
+        if (s.contains("enum") && (!s.at("enum").is_array() || s.at("enum").empty() || s.at("enum").size() > 128)) reject();
+    };
+    inspect(inspect, schema, 0);
+    std::size_t value_nodes = 0;
+    const auto validate = [&](const auto& self, const json& s, const json& v, const unsigned depth) -> void {
+        if (++value_nodes > 10000 || depth > 16) reject();
+        if (s.contains("const") && s.at("const") != v) reject();
+        if (s.contains("enum") && std::ranges::none_of(s.at("enum"), [&](const json& item) { return item == v; })) reject();
+        const json types = s.at("type").is_array() ? s.at("type") : json::array({s.at("type")});
+        const auto matches = [&](const json& t) {
+            const std::string name = t.get<std::string>();
+            if (name == "object") return v.is_object();
+            if (name == "array") return v.is_array();
+            if (name == "string") return v.is_string();
+            if (name == "boolean") return v.is_boolean();
+            if (name == "null") return v.is_null();
+            if (name == "integer") return v.is_number_integer() && std::abs(v.get<double>()) <= 9007199254740991.0;
+            return v.is_number() && std::isfinite(v.get<double>());
+        };
+        if (std::ranges::none_of(types, matches)) reject();
+        if (v.is_object()) {
+            if (v.size() > s.value("maxProperties", 128U)) reject();
+            for (const auto& key : s.at("required")) if (!v.contains(key.get<std::string>())) reject();
+            for (const auto& [key, child] : v.items()) {
+                if (key.size() > 256 || std::ranges::any_of(key, [](const unsigned char c) { return c < 32; })) reject();
+                if (s.at("properties").contains(key)) self(self, s.at("properties").at(key), child, depth + 1);
+                else if (s.at("additionalProperties").is_object()) self(self, s.at("additionalProperties"), child, depth + 1);
+                else reject();
+            }
+        } else if (v.is_array()) {
+            if (v.size() < s.value("minItems", 0U) || v.size() > s.at("maxItems").get<std::size_t>()) reject();
+            for (const auto& child : v) self(self, s.at("items"), child, depth + 1);
+        } else if (v.is_string()) {
+            const auto& text = v.get_ref<const std::string&>();
+            if (text.size() < s.value("minLength", 0U) || text.size() > s.at("maxLength").get<std::size_t>() || text.find('\0') != std::string::npos) reject();
+        } else if (v.is_number()) {
+            if (v.get<double>() < s.at("minimum").get<double>() || v.get<double>() > s.at("maximum").get<double>()) reject();
+        }
+    };
+    validate(validate, schema, value, 0);
+}
+
 const std::map<std::string, std::pair<std::string, std::string>, std::less<>>&
 report_format_contract() {
     static const std::map<std::string, std::pair<std::string, std::string>, std::less<>>
@@ -1330,10 +1420,10 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
         }
         existing_engine_data = json::parse(existing_engine->data_json);
         if (existing_engine_data.value("onboarding_source", "") != "install_receipt" ||
-            existing_engine_data.value("component_id", "") != "uci_arena.engine") {
+            existing_engine_data.value("component_id", "").empty()) {
             throw CommandFailure(
                 "engine_refresh_not_managed",
-                "only the receipt-managed UCI Arena Engine can be refreshed in place",
+                "only a receipt-managed engine can be refreshed in place",
                 409);
         }
         require_engine_idle_for_refresh(engine_id);
@@ -1436,10 +1526,11 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
     if (refresh &&
         (selected_candidate.is_null() ||
          selected_candidate.value("source", "") != "install_receipt" ||
-         selected_candidate.value("component_id", "") != "uci_arena.engine")) {
+         selected_candidate.value("component_id", "") !=
+             existing_engine_data.value("component_id", ""))) {
         throw CommandFailure(
             "engine_refresh_candidate_changed",
-            "the registered managed Engine no longer matches the current verified candidate",
+            "the registered engine component no longer matches the current verified candidate",
             409);
     }
     const auto probe = adapters::UciProcess::probe(
@@ -1523,6 +1614,9 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
                      .empty()) {
                 data[field] = selected_candidate.at(field);
             }
+        }
+        if (selected_candidate.contains("evidence_runtime")) {
+            data["evidence_runtime"] = selected_candidate.at("evidence_runtime");
         }
         if (selected_candidate.contains("installed_artifact_sha256") &&
             selected_candidate.at("installed_artifact_sha256").is_string()) {
@@ -2684,6 +2778,11 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
         action == "service.evidence_campaign_enqueue" ||
         action == "service.evidence_job_cancel" ||
         action == "service.evidence_job_retry") {
+        // Serialize the selected resource through the provider target commit
+        // with the same authority used by engine refresh and removal. A
+        // refresh cannot replace registered options during a slow UCI probe.
+        std::unique_lock evidence_engine_lock(engine_authority_mutex_, std::defer_lock);
+        if (action == "service.evidence_target_register") evidence_engine_lock.lock();
         if (!evidence_service) {
             throw CommandFailure(
                 "unsupported_service_action",
@@ -2724,7 +2823,65 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                     throw CommandFailure(failure.code(), failure.what(), 409);
                 }
             }
-            if (engine_data.value("component_id", "") != "uci_arena.engine" ||
+            // The historical runtime contract remains available to existing
+            // deployments. Optional v2 suppliers are selected by capability,
+            // never by their component's product identifier.
+            const bool legacy_runtime = !engine_data.contains("evidence_runtime") &&
+                engine_data.contains("default_model") &&
+                engine_data.at("default_model").is_object() &&
+                engine_data.value("recommended", false);
+            if (!legacy_runtime) {
+                const auto current_binding = [&]() -> json {
+                    if (!engine_data.contains("evidence_runtime")) return nullptr;
+                    const json saved = engine_data.at("evidence_runtime");
+                    if (!saved.is_object() || !saved.value("available", false) ||
+                        !saved.contains("binding") ||
+                        engine_data.value("onboarding_source", "") != "install_receipt" ||
+                        !component_registry_->started()) {
+                        throw CommandFailure("evidence_runtime_unavailable",
+                            "the selected engine's optional Evidence runtime is unavailable", 409);
+                    }
+                    const json discovered = EngineOnboarding::discover(
+                        manager_data_root_, *component_registry_, {}, false);
+                    for (const auto& candidate : discovered.at("candidates")) {
+                        if (candidate.value("candidate_id", "") != engine_data.value("candidate_id", "") ||
+                            candidate.value("component_id", "") != engine_data.value("component_id", "") ||
+                            candidate.value("component_version", "") != engine_data.value("component_version", "")) continue;
+                        if (candidate.value("state", "") == "ready_to_probe" &&
+                            candidate.value("evidence_runtime", json::object()) == saved) {
+                            return saved.at("binding");
+                        }
+                    }
+                    throw CommandFailure("evidence_runtime_changed",
+                        "the selected engine runtime changed; refresh the engine before registering a target", 409);
+                };
+                const json binding = current_binding();
+                const std::filesystem::path executable = required_string(engine_data, "executable");
+                const std::filesystem::path working_directory = required_string(engine_data, "working_directory");
+                const auto arguments = string_array(engine_data, "arguments");
+                const json options = engine_data.value("option_overrides", json::object());
+                const auto probe = adapters::UciProcess::probe(executable, working_directory,
+                    arguments, adapters::UciProbeTimeouts{}, uci_option_overrides(options));
+                if (!probe.ok) throw CommandFailure("uci_probe_failed", probe.error, 422);
+                if (probe.fingerprint != engine_data.value("fingerprint", "") ||
+                    current_binding() != binding) {
+                    throw CommandFailure("evidence_engine_changed",
+                        "the registered engine identity changed during target admission", 409);
+                }
+                std::string label = engine_data.value("display_name", "UCI engine");
+                if (label.size() > 240) label.resize(240);
+                const json descriptor = {
+                    {"schema", "uci_arena_evidence_target_v2"}, {"label", label},
+                    {"launch", {{"executable", executable.string()}, {"arguments", arguments},
+                        {"working_directory", working_directory.string()}, {"uci_options", options}}},
+                    {"runtime_binding", binding}};
+                const std::string wire = descriptor.dump();
+                if (wire.size() > 8192) throw CommandFailure("evidence_target_too_large",
+                    "the registered UCI launch exceeds the bounded Evidence target interface", 422);
+                operation_arguments = {"target", "register", "--target-json", wire};
+                operation = "target_register";
+            } else {
+            if (
                 engine_data.value("onboarding_source", "") != "install_receipt" ||
                 !engine_data.value("recommended", false) ||
                 !engine_data.contains("default_model") ||
@@ -2826,14 +2983,17 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                      probe.runtime_provider_fingerprint});
             }
             operation = "target_register";
+            }
         } else if (action == "service.evidence_campaign_enqueue") {
             operation_arguments = {"campaign", "enqueue"};
             operation = "campaign_enqueue";
-            if (parameters.size() > 1 ||
-                (parameters.size() == 1 && !parameters.contains("target_id"))) {
+            const bool named_campaign = parameters.contains("campaign");
+            if ((named_campaign && (parameters.size() != 3 || !parameters.contains("target_id") || !parameters.contains("configuration"))) ||
+                (!named_campaign && (parameters.size() > 1 ||
+                (parameters.size() == 1 && !parameters.contains("target_id"))))) {
                 throw CommandFailure(
                     "invalid_evidence_campaign_request",
-                    "Evidence campaign enqueue accepts only target_id",
+                    "Evidence campaign enqueue accepts target_id, or an explicit target_id, advertised campaign and bounded configuration",
                     400);
             }
             std::optional<std::string> selected_target;
@@ -2863,6 +3023,28 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
             if (selected_target.has_value()) {
                 operation_arguments.insert(
                     operation_arguments.end(), {"--target", *selected_target});
+            }
+            if (named_campaign) {
+                if (!selected_target) throw CommandFailure("invalid_evidence_campaign_request", "Named Evidence campaigns require an explicit service-issued target", 400);
+                const std::string name = required_string(parameters, "campaign");
+                const json* advertised = nullptr;
+                for (const auto& projected : projected_targets) {
+                    if (projected.value("id", "") != *selected_target) continue;
+                    if (!projected.contains("campaigns") || !projected.at("campaigns").is_array() || projected.at("campaigns").size() > 32) break;
+                    for (const auto& campaign : projected.at("campaigns")) {
+                        if (campaign.is_object() && campaign.value("name", "") == name) {
+                            if (advertised) throw CommandFailure("service_api_incompatible", "Evidence campaign advertisement is ambiguous", 409);
+                            advertised = &campaign;
+                        }
+                    }
+                }
+                if (!advertised || name.empty() || name.size() > 128 || !std::ranges::all_of(name, [](const unsigned char c) { return std::isalnum(c) || c == '_' || c == '-' || c == '.'; })) {
+                    throw CommandFailure("evidence_campaign_not_advertised", "The selected target does not advertise this Evidence campaign", 422);
+                }
+                if (!advertised->contains("parameters_schema")) throw CommandFailure("service_api_incompatible", "Evidence campaign has no bounded parameter schema", 409);
+                const json& configuration = parameters.at("configuration");
+                validate_evidence_campaign_parameters(advertised->at("parameters_schema"), configuration);
+                operation_arguments.insert(operation_arguments.end(), {"--campaign", name, "--configuration-json", configuration.dump()});
             }
         } else {
             const std::string job_id = required_string(parameters, "job_id");
@@ -2932,7 +3114,15 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                 operation,
                 expected_component_id,
                 expected_component_version);
-            if (operation == "target_register" &&
+            const bool unsupported_target = operation == "target_register" &&
+                operation_result.value("schema", "") == "uci_arena_evidence_target_register_v1" &&
+                operation_result.value("status", "") == "unsupported" &&
+                operation_result.value("code", "") == "EVIDENCE_RUNTIME_UNSUPPORTED" &&
+                operation_result.contains("created") && operation_result.at("created").is_boolean() &&
+                !operation_result.at("created").get<bool>() && !operation_result.contains("target") &&
+                operation_result.contains("reason") && operation_result.at("reason").is_string() &&
+                operation_result.at("reason").get_ref<const std::string&>().size() <= 1024;
+            if (operation == "target_register" && !unsupported_target &&
                 (operation_result.value("schema", "") !=
                      "uci_arena_evidence_target_register_v1" ||
                  !operation_result.contains("created") ||

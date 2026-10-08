@@ -18,6 +18,7 @@ import {
   Modal,
   Paper,
   ScrollArea,
+  Select,
   SimpleGrid,
   Stack,
   Table,
@@ -30,6 +31,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { api, makeCommand } from '../api/client'
 import type { EngineData, ManagedServiceData, Resource } from '../api/types'
+import type { ImportedEngineOutput } from './engineRegistration'
 import { PageHeader } from '../components/PageHeader'
 import { ComponentSetupButton } from '../components/ComponentSetupButton'
 import { LocalSetupImportButton } from '../components/LocalSetupImportButton'
@@ -41,6 +43,9 @@ import {
   evidenceCampaignBlocker,
   needsEvidenceTarget,
   selectPreferredService,
+  evidenceEligibleEngines,
+  evidenceCampaignChoices,
+  selectedManagedOutputEngine,
   serviceCardStates,
   serviceLifecycleActions,
   serviceLocatorMode,
@@ -50,6 +55,7 @@ import {
   activeEngineTimingIdentity,
   bookBindingState,
   candidateRegistration,
+  candidateRepresentsOutput,
   engineRegistrationParameters,
   timingBindingState,
 } from './engineRegistration'
@@ -116,6 +122,10 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
   const [evidenceNodePath, setEvidenceNodePath] = useState('')
   const [evidenceCliPath, setEvidenceCliPath] = useState('')
   const [evidenceWorkspace, setEvidenceWorkspace] = useState('')
+  const [evidenceEngineId, setEvidenceEngineId] = useState<string | null>(null)
+  const [outputEngineId, setOutputEngineId] = useState<string | null>(null)
+  const [evidenceTargetId, setEvidenceTargetId] = useState<string | null>(null)
+  const [evidenceCampaignName, setEvidenceCampaignName] = useState<string | null>(null)
   const [discoveryMessage, setDiscoveryMessage] = useState('')
   const [activationNotice, setActivationNotice] = useState<{
     serviceId: string
@@ -159,45 +169,47 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
   )
   const bookLocatorMode = serviceLocatorMode(bookService)
   const evidenceLocatorMode = serviceLocatorMode(evidenceService)
-  const preferredEvidenceEngine = (engines.data ?? []).find(
-    (engine) =>
-      engine.data.component_id === 'uci_arena.engine' &&
-      engine.data.onboarding_source === 'install_receipt' &&
-      engine.data.recommended === true &&
-      Boolean(engine.data.default_model?.root),
-  )
-  const activeManagedEngine = (engines.data ?? []).find(
-    (engine) =>
-      engine.data.component_id === 'uci_arena.engine' &&
-      engine.data.onboarding_source === 'install_receipt' &&
-      engine.data.recommended === true,
-  )
+  const eligibleEvidenceEngines = evidenceEligibleEngines(engines.data ?? [])
+  const preferredEvidenceEngine = eligibleEvidenceEngines.find(engine => engine.id === evidenceEngineId) ??
+    (eligibleEvidenceEngines.length === 1 ? eligibleEvidenceEngines[0] : undefined)
+  const selectedEvidenceCampaign = evidenceService && evidenceCampaignChoices(evidenceService.data, evidenceTargetId)
+    .find(campaign => campaign.name === evidenceCampaignName)
+  const managedOutputEngines = (engines.data ?? []).filter(engine => engine.data.onboarding_source === 'install_receipt' && Boolean(engine.data.component_id))
+  const activeManagedEngine = selectedManagedOutputEngine(engines.data ?? [], outputEngineId)
   const activeBookPath = activeEngineBookPath(activeManagedEngine)
   const activeTimingIdentity = activeEngineTimingIdentity(activeManagedEngine)
-  const activateImportedOutput = async (serviceId: string, label: string) => {
+  const activateImportedOutput = async (serviceId: string, label: string, output: ImportedEngineOutput) => {
     try {
+      if (!activeManagedEngine) {
+        setActivationNotice({ serviceId, color: 'yellow', detail: `${label} was saved. Select a registered engine to activate its regenerated profile.` })
+        return
+      }
       const [discovery, currentEngines] = await Promise.all([
         api.engineCandidates(''),
         api.resources<EngineData>('engine'),
       ])
       const candidate = discovery.candidates.find(
         (entry) => entry.source === 'install_receipt' &&
-          entry.component_id === 'uci_arena.engine' && entry.recommended === true,
+          entry.component_id === activeManagedEngine.data.component_id,
       )
       if (!candidate || candidate.state !== 'ready_to_probe') {
         setActivationNotice({
           serviceId,
           color: 'yellow',
-          detail: `${label} was saved, but the verified UCI Arena Engine candidate is unavailable. Repair the Engine package before activation.`,
+          detail: `${label} was saved, but the selected engine candidate is unavailable. Repair its package before activation.`,
         })
         return
       }
-      const registration = candidateRegistration(candidate, currentEngines)
+      if (!candidateRepresentsOutput(candidate, output)) {
+        setActivationNotice({ serviceId, color: 'yellow', detail: `${label} was saved, but the selected engine does not advertise that output binding.` })
+        return
+      }
+      const registration = candidateRegistration(candidate, currentEngines, activeManagedEngine.id)
       if (registration.state === 'unregistered' || !registration.engine) {
         setActivationNotice({
           serviceId,
           color: 'yellow',
-          detail: `${label} was saved. Register the recommended Engine to activate its regenerated profile.`,
+          detail: `${label} was saved. Register the selected engine to activate its regenerated profile.`,
         })
         return
       }
@@ -212,6 +224,16 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
             registration.engine.revision,
           ),
         )
+      }
+      const finalEngines = await api.resources<EngineData>('engine')
+      const finalRegistration = candidateRegistration(candidate, finalEngines, activeManagedEngine.id)
+      const outputActive = output.kind === 'book'
+        ? bookBindingState(finalRegistration.engine, output.path) === 'active'
+        : timingBindingState(finalRegistration.engine, output.identity) === 'active'
+      if (finalRegistration.state !== 'registered' || !outputActive) {
+        setActivationNotice({ serviceId, color: 'yellow', detail: `${label} was saved, but its binding is not confirmed in the selected Engine registration.` })
+        await queryClient.invalidateQueries({ queryKey: ['resources', 'engine'] })
+        return
       }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['resources', 'engine'] }),
@@ -339,11 +361,15 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
       action,
       jobId,
       engineId,
+      targetId,
+      campaign,
     }: {
       service: Resource<ManagedServiceData>
       action: 'target_register' | 'campaign_enqueue' | 'job_cancel' | 'job_retry'
       jobId?: string
       engineId?: string
+      targetId?: string
+      campaign?: string
     }) =>
       api.command(
         makeCommand(
@@ -353,7 +379,9 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
             ? { job_id: jobId }
             : engineId
               ? { engine_id: engineId }
-              : { target_id: null },
+              : campaign && targetId
+                ? { target_id: targetId, campaign, configuration: {} }
+                : { target_id: targetId ?? null },
           false,
           service.id,
           service.revision,
@@ -394,6 +422,9 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
         title="Managed services"
         description="Control external producers through explicit capability contracts and narrow adapters."
       />
+      {managedOutputEngines.length > 1 && <Select mb="md" label="Engine for book and timing outputs"
+        placeholder="Choose a registered engine" value={outputEngineId} onChange={setOutputEngineId}
+        data={managedOutputEngines.map(engine => ({ value: engine.id, label: engine.data.display_name }))} />}
       <SimpleGrid cols={{ base: 1, md: 2 }} mb="xl">
         <Paper withBorder className="service-profile profile-live">
           <Group justify="space-between" align="flex-start">
@@ -709,7 +740,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                                     path={action.path}
                                     authorityMode={action.authorityMode}
                                     label={action.label}
-                                    onCompleted={() => activateImportedOutput(service.id, 'Opening-book selection')}
+                                    onCompleted={() => activateImportedOutput(service.id, 'Opening-book selection', { kind: 'book', path: action.path })}
                                   />
                                 ))}
                               </Group>
@@ -764,7 +795,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                                 assetKind="timing_profile"
                                 path={profile.path}
                                 label={binding === 'active' ? 'Reapply to Engine' : 'Use in Engine'}
-                                onCompleted={() => activateImportedOutput(service.id, 'Timing profile')}
+                                onCompleted={() => activateImportedOutput(service.id, 'Timing profile', { kind: 'timing', identity: profile.identity_sha256 })}
                               />
                             </Group>
                           </Paper>
@@ -792,7 +823,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                         {service.data.orchestration_projection.jobs.length} job(s)
                       </Text>
                     </div>
-                    <Button
+                    {!service.data.orchestration_projection.targets.some(target => target.target_schema === 'uci_arena_evidence_target_v2') && <Button
                       size="xs"
                       color="violet"
                       loading={
@@ -813,14 +844,38 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                       }
                     >
                       Run first evidence campaign
-                    </Button>
+                    </Button>}
                   </Group>
-                  {needsEvidenceTarget(service.data) && (
+                  {service.data.orchestration_projection.targets.some(target => target.target_schema === 'uci_arena_evidence_target_v2') && (
+                    <Group mt="sm" align="flex-end">
+                      <Select label="Evidence target" placeholder="Choose an engine deployment" value={evidenceTargetId}
+                        data={service.data.orchestration_projection.targets.map(target => ({ value: target.id, label: target.label }))}
+                        onChange={value => { setEvidenceTargetId(value); setEvidenceCampaignName(null) }} />
+                      <Select label="Campaign" placeholder="Choose an advertised campaign" value={evidenceCampaignName}
+                        data={evidenceCampaignChoices(service.data, evidenceTargetId).map(campaign => ({ value: campaign.name, label: campaign.name }))}
+                        onChange={setEvidenceCampaignName} />
+                      {service.data.orchestration_projection.targets.some(target => target.id === evidenceTargetId && target.target_schema !== 'uci_arena_evidence_target_v2') ? (
+                        <Button size="xs" color="violet" loading={evidenceControl.isPending}
+                          onClick={() => { if (evidenceTargetId) evidenceControl.mutate({ service, action: 'campaign_enqueue', targetId: evidenceTargetId }) }}>
+                          Run first evidence campaign
+                        </Button>
+                      ) : <Button size="xs" color="violet" loading={evidenceControl.isPending}
+                        disabled={!evidenceTargetId || !selectedEvidenceCampaign || !Array.isArray(selectedEvidenceCampaign.parameters_schema.required) || selectedEvidenceCampaign.parameters_schema.required.length > 0}
+                        onClick={() => { if (evidenceTargetId && selectedEvidenceCampaign) evidenceControl.mutate({ service, action: 'campaign_enqueue', targetId: evidenceTargetId, campaign: selectedEvidenceCampaign.name }) }}>
+                        Run campaign
+                      </Button>}
+                    </Group>
+                  )}
+                  {(needsEvidenceTarget(service.data) || eligibleEvidenceEngines.length > 0) && (
                     <Alert color="yellow" mt="sm">
+                      {eligibleEvidenceEngines.length > 1 && <Select mb="sm" label="Engine for Evidence" placeholder="Choose a registered engine"
+                        value={evidenceEngineId} onChange={setEvidenceEngineId}
+                        data={eligibleEvidenceEngines.map(engine => ({ value: engine.id, label: engine.data.display_name }))} />}
                       <Group justify="space-between" align="center">
                         <Text size="sm">
-                          {service.data.status_projection?.collection?.reason ??
-                            'No exact compatible model deployment target is available yet.'}
+                          {needsEvidenceTarget(service.data)
+                            ? service.data.status_projection?.collection?.reason ?? 'No compatible engine deployment target is available yet.'
+                            : 'Add another registered engine deployment to Evidence.'}
                         </Text>
                         {engines.isLoading ? (
                           <Button size="xs" variant="default" loading disabled>
@@ -844,7 +899,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                               })
                             }
                           >
-                            Use UCI Arena Engine
+                            Use selected engine
                           </Button>
                         ) : (
                           <Button
@@ -852,7 +907,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                             href="#page=engines"
                             size="xs"
                             variant="default"
-                            title="Register the recommended UCI Arena Engine, then return here."
+                            title="Register a compatible engine, then return here."
                             onClick={() => navigate('engines')}
                           >
                             Register an engine

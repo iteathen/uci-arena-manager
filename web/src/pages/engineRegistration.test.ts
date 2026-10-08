@@ -5,10 +5,34 @@ import {
   activeEngineTimingIdentity,
   bookBindingState,
   candidateRegistration,
+  candidateRepresentsOutput,
   candidateWithModelRoot,
   engineRegistrationParameters,
   timingBindingState,
 } from './engineRegistration'
+
+describe('selected service output activation', () => {
+  it('refreshes only the selected resource when a component has duplicate registrations', () => {
+    const source = candidate()
+    const first = registered(source)
+    const second = { ...registered(source), id: 'second-resource' }
+    expect(candidateRegistration(source, [first, second], second.id).engine?.id).toBe(second.id)
+    expect(candidateRegistration(source, [first, second], 'absent').state).toBe('unregistered')
+  })
+  it('requires the requested output binding rather than ordinary registration equality', () => {
+    const source = candidate()
+    expect(candidateRepresentsOutput(source, { kind: 'book', path: 'E:/published/book' })).toBe(false)
+    expect(candidateRepresentsOutput(source, { kind: 'timing', identity: 'a'.repeat(64) })).toBe(false)
+    source.uci_options = { ...source.uci_options, OwnBook: true, BookFile: 'E:/published/book/strong_rare_v1.bin' }
+    expect(candidateRepresentsOutput(source, { kind: 'book', path: 'E:/published/book' })).toBe(true)
+    source.uci_options.OwnBook = false
+    expect(candidateRepresentsOutput(source, { kind: 'book', path: 'E:/published/book' })).toBe(false)
+    source.launch_profile = { schema: 'arena_uci_engine_launch_profile_v1', state: 'qualified_timing', timing_profile: { available: true, identity_sha256: 'a'.repeat(64) }, expected_runtime: null }
+    expect(candidateRepresentsOutput(source, { kind: 'timing', identity: 'a'.repeat(64) })).toBe(true)
+    source.launch_profile.timing_profile.available = false
+    expect(candidateRepresentsOutput(source, { kind: 'timing', identity: 'a'.repeat(64) })).toBe(false)
+  })
+})
 
 function candidate(): EngineCandidate {
   return {
@@ -58,6 +82,8 @@ function registered(source = candidate()): Resource<EngineData> {
       launch_profile: source.launch_profile,
       component_id: source.component_id,
       component_version: source.component_version,
+      evidence_runtime: source.evidence_runtime,
+      installed_artifact_sha256: source.installed_artifact_sha256,
       onboarding_source: 'install_receipt',
       recommended: true,
       engine_name: 'Mock',
@@ -70,6 +96,24 @@ function registered(source = candidate()): Resource<EngineData> {
 }
 
 describe('managed Engine registration state', () => {
+  it('requires refresh for a same-version runtime binding or installed payload change', () => {
+    const original = candidate()
+    original.installed_artifact_sha256 = 'a'.repeat(64)
+    original.evidence_runtime = { available: true, binding: {
+      schema: 'uci_arena_evidence_runtime_binding_v2',
+      component: { id: 'uci_arena.vector', version: '2.0.0', root: original.working_directory,
+        manifest: 'arena-component.json', manifest_sha256: 'b'.repeat(64) },
+      entrypoint: 'evidence_runtime_contract',
+    } }
+    const current = registered(original)
+    expect(candidateRegistration(original, [current]).state).toBe('registered')
+    const updated = structuredClone(original)
+    if (updated.evidence_runtime?.available) updated.evidence_runtime.binding.component.manifest_sha256 = 'c'.repeat(64)
+    expect(candidateRegistration(updated, [current]).state).toBe('refresh_required')
+    updated.evidence_runtime = original.evidence_runtime
+    updated.installed_artifact_sha256 = 'd'.repeat(64)
+    expect(candidateRegistration(updated, [current]).state).toBe('refresh_required')
+  })
   it('recognizes an exact managed launch profile', () => {
     expect(candidateRegistration(candidate(), [registered()]).state).toBe('registered')
   })
@@ -105,6 +149,26 @@ describe('managed Engine registration state', () => {
     prior.working_directory = 'C:\\Program Files\\UCI Arena\\components\\engine\\1.9.0'
     expect(candidateRegistration(candidate(), [registered(prior)]).state).toBe('refresh_required')
   })
+
+  it.each(['uci_arena.vector', 'example.alternate-engine'])(
+    'preserves the selected resource when %s moves to a new installed version',
+    (componentId) => {
+      const current = candidate()
+      current.candidate_id = 'engcand-current-other-root'
+      current.executable = 'C:\\engines\\other\\2.0.0\\node.exe'
+      current.working_directory = 'C:\\engines\\other\\2.0.0'
+      current.component_id = componentId
+      current.recommended = false
+      const prior = { ...current, candidate_id: 'engcand-prior-other-root',
+        component_version: '1.9.0', executable: 'C:\\engines\\other\\1.9.0\\node.exe',
+        working_directory: 'C:\\engines\\other\\1.9.0' }
+      const previous = registered(prior)
+      previous.id = 'selected-other-engine'
+      const result = candidateRegistration(current, [registered(), previous])
+      expect(result.state).toBe('refresh_required')
+      expect(result.engine?.id).toBe('selected-other-engine')
+    },
+  )
 
   it('does not let a manual registration hide a receipt-managed candidate', () => {
     const manual = registered()
