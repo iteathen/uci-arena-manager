@@ -2027,6 +2027,15 @@ const json& required_object(
 }
 
 bool bot_live_prerequisites_ready(const json& readiness) {
+    if (readiness.value("engine_qualification", "") == "startup_probe_required") {
+        // This provider-owned profile admits only one standard UCI slot. The
+        // startup operation still owns the fresh legal-move probe; discovery
+        // does not turn its availability into an engine qualification receipt.
+        return readiness.value("verified_adapter", "missing") == "ready" &&
+            readiness.value("adapter_runtime", "missing") == "ready" &&
+            readiness.value("token_reference", "missing") == "ready" &&
+            readiness.value("capacity_profile", "missing") == "bootstrap";
+    }
     static constexpr std::array required{
         "verified_adapter",
         "adapter_runtime",
@@ -3494,7 +3503,8 @@ static json discover_bot_with_runner_impl(
     }
     json& candidate = discovery.at("candidates").at(0);
     json& readiness = candidate.at("readiness");
-    if (readiness.value("capacity_profile", "missing") != "configured") {
+    if (readiness.value("verified_adapter", "missing") != "ready" ||
+        candidate.value("configuration_state", "missing") != "configured") {
         return discovery;
     }
 
@@ -3502,7 +3512,26 @@ static json discover_bot_with_runner_impl(
         const json options = bot_options_impl(
             manager_data_root, command_runner, component_registry);
         const json& evidence = options.at("capacity").at("evidence");
-        if (evidence.at("qualified").get<bool>()) {
+        if (evidence.value("status", "") == "standard_uci_startup_probe_required" &&
+            evidence.at("qualified").get<bool>() &&
+            evidence.at("maximum_concurrency") == 1 && options.at("capacity").at("total_slots") == 1) {
+            const std::set<std::string> legacy_dimensions{
+                "verified_uci_arena_engine", "active_model", "opening_book", "syzygy", "timing_profile", "single_game_profile"};
+            for (const auto& dimension : legacy_dimensions) readiness[dimension] = "not_applicable";
+            const std::set<std::string> legacy_issues{
+                "bot_engine_unavailable", "bot_model_unavailable", "bot_opening_book_unavailable", "bot_syzygy_unavailable",
+                "bot_timing_profile_unavailable", "bot_single_game_profile_unavailable", "bot_capacity_profile_unavailable"};
+            json retained = json::array();
+            for (const auto& issue : candidate.at("issues")) {
+                if (!legacy_issues.contains(issue.value("code", ""))) retained.push_back(issue);
+            }
+            candidate["issues"] = std::move(retained);
+            candidate.erase("default_model");
+            readiness["engine_qualification"] = "startup_probe_required";
+            readiness["capacity_profile"] = "bootstrap";
+            candidate["qualification_state"] = "unavailable";
+        } else if (readiness.value("capacity_profile", "missing") == "configured" &&
+            evidence.at("qualified").get<bool>() && evidence.value("status", "") != "standard_uci_startup_probe_required") {
             readiness["capacity_profile"] = "ready";
         } else {
             candidate.at("issues").push_back({

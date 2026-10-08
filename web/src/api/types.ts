@@ -91,6 +91,7 @@ export interface EngineData extends Record<string, unknown> {
   component_version?: string
   onboarding_source?: EngineCandidate['source']
   candidate_id?: string
+  installed_artifact_sha256?: string
   recommended?: boolean
   default_model?: {
     model_id: string
@@ -133,6 +134,7 @@ export interface EngineCandidate {
   component_version?: string
   recommended?: boolean
   evidence_runtime?: EngineEvidenceRuntime
+  installed_artifact_sha256?: string
   default_model?: {
     model_id: string
     display_name: string
@@ -487,7 +489,7 @@ export interface BotCandidate {
   }
   readiness: Record<
     string,
-    'ready' | 'configured' | 'bootstrap' | 'missing' | 'not_verified' | 'verified' | 'disabled' | 'enabled'
+    'ready' | 'configured' | 'bootstrap' | 'missing' | 'not_applicable' | 'startup_probe_required' | 'not_verified' | 'verified' | 'disabled' | 'enabled'
   >
   issues: Array<{ code: string; detail: string }>
 }

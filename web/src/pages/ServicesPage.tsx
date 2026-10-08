@@ -363,7 +363,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
               ? { engine_id: engineId }
               : campaign && targetId
                 ? { target_id: targetId, campaign, configuration: {} }
-                : { target_id: null },
+                : { target_id: targetId ?? null },
           false,
           service.id,
           service.revision,
@@ -828,27 +828,33 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                   {service.data.orchestration_projection.targets.some(target => target.target_schema === 'uci_arena_evidence_target_v2') && (
                     <Group mt="sm" align="flex-end">
                       <Select label="Evidence target" placeholder="Choose an engine deployment" value={evidenceTargetId}
-                        data={service.data.orchestration_projection.targets.filter(target => target.target_schema === 'uci_arena_evidence_target_v2').map(target => ({ value: target.id, label: target.label }))}
+                        data={service.data.orchestration_projection.targets.map(target => ({ value: target.id, label: target.label }))}
                         onChange={value => { setEvidenceTargetId(value); setEvidenceCampaignName(null) }} />
                       <Select label="Campaign" placeholder="Choose an advertised campaign" value={evidenceCampaignName}
                         data={evidenceCampaignChoices(service.data, evidenceTargetId).map(campaign => ({ value: campaign.name, label: campaign.name }))}
                         onChange={setEvidenceCampaignName} />
-                      <Button size="xs" color="violet" loading={evidenceControl.isPending}
+                      {service.data.orchestration_projection.targets.some(target => target.id === evidenceTargetId && target.target_schema !== 'uci_arena_evidence_target_v2') ? (
+                        <Button size="xs" color="violet" loading={evidenceControl.isPending}
+                          onClick={() => { if (evidenceTargetId) evidenceControl.mutate({ service, action: 'campaign_enqueue', targetId: evidenceTargetId }) }}>
+                          Run first evidence campaign
+                        </Button>
+                      ) : <Button size="xs" color="violet" loading={evidenceControl.isPending}
                         disabled={!evidenceTargetId || !selectedEvidenceCampaign || !Array.isArray(selectedEvidenceCampaign.parameters_schema.required) || selectedEvidenceCampaign.parameters_schema.required.length > 0}
                         onClick={() => { if (evidenceTargetId && selectedEvidenceCampaign) evidenceControl.mutate({ service, action: 'campaign_enqueue', targetId: evidenceTargetId, campaign: selectedEvidenceCampaign.name }) }}>
                         Run campaign
-                      </Button>
+                      </Button>}
                     </Group>
                   )}
-                  {needsEvidenceTarget(service.data) && (
+                  {(needsEvidenceTarget(service.data) || eligibleEvidenceEngines.length > 0) && (
                     <Alert color="yellow" mt="sm">
                       {eligibleEvidenceEngines.length > 1 && <Select mb="sm" label="Engine for Evidence" placeholder="Choose a registered engine"
                         value={evidenceEngineId} onChange={setEvidenceEngineId}
                         data={eligibleEvidenceEngines.map(engine => ({ value: engine.id, label: engine.data.display_name }))} />}
                       <Group justify="space-between" align="center">
                         <Text size="sm">
-                          {service.data.status_projection?.collection?.reason ??
-                            'No compatible engine deployment target is available yet.'}
+                          {needsEvidenceTarget(service.data)
+                            ? service.data.status_projection?.collection?.reason ?? 'No compatible engine deployment target is available yet.'
+                            : 'Add another registered engine deployment to Evidence.'}
                         </Text>
                         {engines.isLoading ? (
                           <Button size="xs" variant="default" loading disabled>

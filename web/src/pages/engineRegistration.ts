@@ -161,6 +161,8 @@ export function candidateRegistration(
       normalizedCandidateOptions(candidate.uci_options),
     ) &&
     sameValue(current.launch_profile ?? null, candidate.launch_profile ?? null) &&
+    sameValue(current.evidence_runtime ?? null, candidate.evidence_runtime ?? null) &&
+    sameValue(current.installed_artifact_sha256 ?? null, candidate.installed_artifact_sha256 ?? null) &&
     sameValue(current.default_model ?? null, candidate.default_model ?? null)
   return { state: currentMatches ? 'registered' : 'refresh_required', engine }
 }

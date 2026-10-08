@@ -2778,6 +2778,11 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
         action == "service.evidence_campaign_enqueue" ||
         action == "service.evidence_job_cancel" ||
         action == "service.evidence_job_retry") {
+        // Serialize the selected resource through the provider target commit
+        // with the same authority used by engine refresh and removal. A
+        // refresh cannot replace registered options during a slow UCI probe.
+        std::unique_lock evidence_engine_lock(engine_authority_mutex_, std::defer_lock);
+        if (action == "service.evidence_target_register") evidence_engine_lock.lock();
         if (!evidence_service) {
             throw CommandFailure(
                 "unsupported_service_action",

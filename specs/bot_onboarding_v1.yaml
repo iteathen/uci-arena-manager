@@ -211,6 +211,27 @@ options:
       the currently effective runtime.
 
 readiness:
+  provider_standard_uci_single_slot:
+    authority: verified_provider_options_projection
+    selector: capacity.evidence.status_standard_uci_startup_probe_required
+    rules:
+      - A verified provider may advertise standard_uci_startup_probe_required
+        with qualified true, maximum_concurrency one and total_slots one.
+        Manager then projects legacy engine, model, book, tablebase, timing and
+        single-game-profile prerequisites as not_applicable, capacity as
+        bootstrap and engine_qualification as startup_probe_required.
+      - This admission is availability to invoke provider startup, not completed
+        engine or clock qualification. The provider owns and enforces its fresh
+        legal-move startup probe against its exact configured UCI launch.
+        Manager reads only the bounded public options projection and never
+        infers this profile from configuration internals or a product name.
+      - The verified adapter and runtime, readable configuration and external
+        token reference remain required. Unknown status, rejected evidence or
+        concurrency above one cannot activate this profile. Existing extended
+        qualification and readiness keep their historical meaning.
+      - The legacy installed qualification workflow is unavailable under this
+        profile. No timing, strength or engine qualification artifact is
+        fabricated to satisfy its historical digest fields.
   required:
     - verified_adapter
     - verified_uci_arena_engine
@@ -224,7 +245,7 @@ readiness:
     - token_reference
     - bot_account_probe
   projection:
-    prerequisite_states: [ready, configured, bootstrap, missing]
+    prerequisite_states: [ready, configured, bootstrap, missing, not_applicable, startup_probe_required]
     account_probe_states: [not_verified, verified]
     startup_states: [disabled, enabled]
     startup_eligibility_states: [ready, blocked]

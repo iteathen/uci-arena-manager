@@ -58,6 +58,8 @@ function registered(source = candidate()): Resource<EngineData> {
       launch_profile: source.launch_profile,
       component_id: source.component_id,
       component_version: source.component_version,
+      evidence_runtime: source.evidence_runtime,
+      installed_artifact_sha256: source.installed_artifact_sha256,
       onboarding_source: 'install_receipt',
       recommended: true,
       engine_name: 'Mock',
@@ -70,6 +72,24 @@ function registered(source = candidate()): Resource<EngineData> {
 }
 
 describe('managed Engine registration state', () => {
+  it('requires refresh for a same-version runtime binding or installed payload change', () => {
+    const original = candidate()
+    original.installed_artifact_sha256 = 'a'.repeat(64)
+    original.evidence_runtime = { available: true, binding: {
+      schema: 'uci_arena_evidence_runtime_binding_v2',
+      component: { id: 'uci_arena.vector', version: '2.0.0', root: original.working_directory,
+        manifest: 'arena-component.json', manifest_sha256: 'b'.repeat(64) },
+      entrypoint: 'evidence_runtime_contract',
+    } }
+    const current = registered(original)
+    expect(candidateRegistration(original, [current]).state).toBe('registered')
+    const updated = structuredClone(original)
+    if (updated.evidence_runtime?.available) updated.evidence_runtime.binding.component.manifest_sha256 = 'c'.repeat(64)
+    expect(candidateRegistration(updated, [current]).state).toBe('refresh_required')
+    updated.evidence_runtime = original.evidence_runtime
+    updated.installed_artifact_sha256 = 'd'.repeat(64)
+    expect(candidateRegistration(updated, [current]).state).toBe('refresh_required')
+  })
   it('recognizes an exact managed launch profile', () => {
     expect(candidateRegistration(candidate(), [registered()]).state).toBe('registered')
   })
