@@ -5,10 +5,34 @@ import {
   activeEngineTimingIdentity,
   bookBindingState,
   candidateRegistration,
+  candidateRepresentsOutput,
   candidateWithModelRoot,
   engineRegistrationParameters,
   timingBindingState,
 } from './engineRegistration'
+
+describe('selected service output activation', () => {
+  it('refreshes only the selected resource when a component has duplicate registrations', () => {
+    const source = candidate()
+    const first = registered(source)
+    const second = { ...registered(source), id: 'second-resource' }
+    expect(candidateRegistration(source, [first, second], second.id).engine?.id).toBe(second.id)
+    expect(candidateRegistration(source, [first, second], 'absent').state).toBe('unregistered')
+  })
+  it('requires the requested output binding rather than ordinary registration equality', () => {
+    const source = candidate()
+    expect(candidateRepresentsOutput(source, { kind: 'book', path: 'E:/published/book' })).toBe(false)
+    expect(candidateRepresentsOutput(source, { kind: 'timing', identity: 'a'.repeat(64) })).toBe(false)
+    source.uci_options = { ...source.uci_options, OwnBook: true, BookFile: 'E:/published/book/strong_rare_v1.bin' }
+    expect(candidateRepresentsOutput(source, { kind: 'book', path: 'E:/published/book' })).toBe(true)
+    source.uci_options.OwnBook = false
+    expect(candidateRepresentsOutput(source, { kind: 'book', path: 'E:/published/book' })).toBe(false)
+    source.launch_profile = { schema: 'arena_uci_engine_launch_profile_v1', state: 'qualified_timing', timing_profile: { available: true, identity_sha256: 'a'.repeat(64) }, expected_runtime: null }
+    expect(candidateRepresentsOutput(source, { kind: 'timing', identity: 'a'.repeat(64) })).toBe(true)
+    source.launch_profile.timing_profile.available = false
+    expect(candidateRepresentsOutput(source, { kind: 'timing', identity: 'a'.repeat(64) })).toBe(false)
+  })
+})
 
 function candidate(): EngineCandidate {
   return {

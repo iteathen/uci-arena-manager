@@ -7,6 +7,11 @@ export function evidenceEligibleEngines(engines: Array<Resource<EngineData>>) {
   ))
 }
 
+export function selectedManagedOutputEngine(engines: Array<Resource<EngineData>>, selectedId: string | null) {
+  const managed = engines.filter(engine => engine.data.onboarding_source === 'install_receipt' && Boolean(engine.data.component_id))
+  return selectedId ? managed.find(engine => engine.id === selectedId) : managed.length === 1 ? managed[0] : undefined
+}
+
 export function evidenceCampaignChoices(service: ManagedServiceData, targetId: string | null) {
   if (!targetId) return []
   return service.orchestration_projection?.targets.find(target => target.id === targetId)?.campaigns ?? []

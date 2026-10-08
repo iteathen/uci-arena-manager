@@ -274,6 +274,13 @@ profiles:
           the path as activation authority; Installer revalidates it before
           committing either service_managed_live_channel or
           immutable_pinned_snapshot authority and regenerating consumers.
+        - The dashboard selects an explicit receipt-managed engine resource
+          for output activation, or the sole such resource when unambiguous.
+          A regenerated candidate must advertise the requested output binding.
+          Refresh targets that exact resource UUID even when another resource
+          uses the same component. Activation is confirmed only after a fresh
+          resource read verifies the requested binding and current candidate;
+          an unsupported or unconfirmed binding remains saved, not active.
     safety:
       - Book Forge remains authority for its workspace, catalog, resource governor, and publication.
       - The manager invokes only its public CLI and reads only its machine-readable status.

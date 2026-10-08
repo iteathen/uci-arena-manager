@@ -31,6 +31,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { api, makeCommand } from '../api/client'
 import type { EngineData, ManagedServiceData, Resource } from '../api/types'
+import type { ImportedEngineOutput } from './engineRegistration'
 import { PageHeader } from '../components/PageHeader'
 import { ComponentSetupButton } from '../components/ComponentSetupButton'
 import { LocalSetupImportButton } from '../components/LocalSetupImportButton'
@@ -44,6 +45,7 @@ import {
   selectPreferredService,
   evidenceEligibleEngines,
   evidenceCampaignChoices,
+  selectedManagedOutputEngine,
   serviceCardStates,
   serviceLifecycleActions,
   serviceLocatorMode,
@@ -53,6 +55,7 @@ import {
   activeEngineTimingIdentity,
   bookBindingState,
   candidateRegistration,
+  candidateRepresentsOutput,
   engineRegistrationParameters,
   timingBindingState,
 } from './engineRegistration'
@@ -120,6 +123,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
   const [evidenceCliPath, setEvidenceCliPath] = useState('')
   const [evidenceWorkspace, setEvidenceWorkspace] = useState('')
   const [evidenceEngineId, setEvidenceEngineId] = useState<string | null>(null)
+  const [outputEngineId, setOutputEngineId] = useState<string | null>(null)
   const [evidenceTargetId, setEvidenceTargetId] = useState<string | null>(null)
   const [evidenceCampaignName, setEvidenceCampaignName] = useState<string | null>(null)
   const [discoveryMessage, setDiscoveryMessage] = useState('')
@@ -170,38 +174,42 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
     (eligibleEvidenceEngines.length === 1 ? eligibleEvidenceEngines[0] : undefined)
   const selectedEvidenceCampaign = evidenceService && evidenceCampaignChoices(evidenceService.data, evidenceTargetId)
     .find(campaign => campaign.name === evidenceCampaignName)
-  const activeManagedEngine = (engines.data ?? []).find(
-    (engine) =>
-      engine.data.component_id === 'uci_arena.engine' &&
-      engine.data.onboarding_source === 'install_receipt' &&
-      engine.data.recommended === true,
-  )
+  const managedOutputEngines = (engines.data ?? []).filter(engine => engine.data.onboarding_source === 'install_receipt' && Boolean(engine.data.component_id))
+  const activeManagedEngine = selectedManagedOutputEngine(engines.data ?? [], outputEngineId)
   const activeBookPath = activeEngineBookPath(activeManagedEngine)
   const activeTimingIdentity = activeEngineTimingIdentity(activeManagedEngine)
-  const activateImportedOutput = async (serviceId: string, label: string) => {
+  const activateImportedOutput = async (serviceId: string, label: string, output: ImportedEngineOutput) => {
     try {
+      if (!activeManagedEngine) {
+        setActivationNotice({ serviceId, color: 'yellow', detail: `${label} was saved. Select a registered engine to activate its regenerated profile.` })
+        return
+      }
       const [discovery, currentEngines] = await Promise.all([
         api.engineCandidates(''),
         api.resources<EngineData>('engine'),
       ])
       const candidate = discovery.candidates.find(
         (entry) => entry.source === 'install_receipt' &&
-          entry.component_id === 'uci_arena.engine' && entry.recommended === true,
+          entry.component_id === activeManagedEngine.data.component_id,
       )
       if (!candidate || candidate.state !== 'ready_to_probe') {
         setActivationNotice({
           serviceId,
           color: 'yellow',
-          detail: `${label} was saved, but the verified UCI Arena Engine candidate is unavailable. Repair the Engine package before activation.`,
+          detail: `${label} was saved, but the selected engine candidate is unavailable. Repair its package before activation.`,
         })
         return
       }
-      const registration = candidateRegistration(candidate, currentEngines)
+      if (!candidateRepresentsOutput(candidate, output)) {
+        setActivationNotice({ serviceId, color: 'yellow', detail: `${label} was saved, but the selected engine does not advertise that output binding.` })
+        return
+      }
+      const registration = candidateRegistration(candidate, currentEngines, activeManagedEngine.id)
       if (registration.state === 'unregistered' || !registration.engine) {
         setActivationNotice({
           serviceId,
           color: 'yellow',
-          detail: `${label} was saved. Register the recommended Engine to activate its regenerated profile.`,
+          detail: `${label} was saved. Register the selected engine to activate its regenerated profile.`,
         })
         return
       }
@@ -216,6 +224,16 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
             registration.engine.revision,
           ),
         )
+      }
+      const finalEngines = await api.resources<EngineData>('engine')
+      const finalRegistration = candidateRegistration(candidate, finalEngines, activeManagedEngine.id)
+      const outputActive = output.kind === 'book'
+        ? bookBindingState(finalRegistration.engine, output.path) === 'active'
+        : timingBindingState(finalRegistration.engine, output.identity) === 'active'
+      if (finalRegistration.state !== 'registered' || !outputActive) {
+        setActivationNotice({ serviceId, color: 'yellow', detail: `${label} was saved, but its binding is not confirmed in the selected Engine registration.` })
+        await queryClient.invalidateQueries({ queryKey: ['resources', 'engine'] })
+        return
       }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['resources', 'engine'] }),
@@ -404,6 +422,9 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
         title="Managed services"
         description="Control external producers through explicit capability contracts and narrow adapters."
       />
+      {managedOutputEngines.length > 1 && <Select mb="md" label="Engine for book and timing outputs"
+        placeholder="Choose a registered engine" value={outputEngineId} onChange={setOutputEngineId}
+        data={managedOutputEngines.map(engine => ({ value: engine.id, label: engine.data.display_name }))} />}
       <SimpleGrid cols={{ base: 1, md: 2 }} mb="xl">
         <Paper withBorder className="service-profile profile-live">
           <Group justify="space-between" align="flex-start">
@@ -719,7 +740,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                                     path={action.path}
                                     authorityMode={action.authorityMode}
                                     label={action.label}
-                                    onCompleted={() => activateImportedOutput(service.id, 'Opening-book selection')}
+                                    onCompleted={() => activateImportedOutput(service.id, 'Opening-book selection', { kind: 'book', path: action.path })}
                                   />
                                 ))}
                               </Group>
@@ -774,7 +795,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                                 assetKind="timing_profile"
                                 path={profile.path}
                                 label={binding === 'active' ? 'Reapply to Engine' : 'Use in Engine'}
-                                onCompleted={() => activateImportedOutput(service.id, 'Timing profile')}
+                                onCompleted={() => activateImportedOutput(service.id, 'Timing profile', { kind: 'timing', identity: profile.identity_sha256 })}
                               />
                             </Group>
                           </Paper>

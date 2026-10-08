@@ -1,10 +1,11 @@
 import { MantineProvider } from '@mantine/core'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ServicesPage } from './ServicesPage'
 
 beforeEach(() => {
+  Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() })
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   Object.defineProperty(window, 'matchMedia', { configurable: true, value: vi.fn(() => ({
     matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn(),
@@ -38,13 +39,18 @@ it('can add another engine after a target exists and retains mixed-profile campa
   })
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   render(<MantineProvider><QueryClientProvider client={client}><ServicesPage navigate={vi.fn()} /></QueryClientProvider></MantineProvider>)
-  fireEvent.click(await screen.findByLabelText('Engine for Evidence', { selector: 'input' }))
-  fireEvent.click(await screen.findByText('Alternative engine', { selector: '[role="option"] span' }))
+  const selectOption = async (label: string, option: string) => {
+    const input = await screen.findByLabelText(label, { selector: 'input' })
+    fireEvent.click(input)
+    const listbox = document.querySelector(`[role="listbox"][aria-labelledby="${input.id}-label"]`)
+    expect(listbox).not.toBeNull()
+    fireEvent.click(within(listbox as HTMLElement).getByText(option))
+  }
+  await selectOption('Engine for Evidence', 'Alternative engine')
   fireEvent.click(screen.getByRole('button', { name: 'Use selected engine' }))
   await waitFor(() => expect(commands.some(command => command.action === 'service.evidence_target_register')).toBe(true))
   expect(commands.find(command => command.action === 'service.evidence_target_register')?.parameters).toEqual({ engine_id: 'engine-1' })
-  fireEvent.click(screen.getByLabelText('Evidence target', { selector: 'input' }))
-  fireEvent.click(await screen.findByText('Retained deployment', { selector: '[role="option"] span' }))
+  await selectOption('Evidence target', 'Retained deployment')
   fireEvent.click(screen.getByRole('button', { name: 'Run first evidence campaign' }))
   await waitFor(() => expect(commands.some(command => command.action === 'service.evidence_campaign_enqueue')).toBe(true))
   expect(commands.find(command => command.action === 'service.evidence_campaign_enqueue')?.parameters).toEqual({ target_id: 'retained-target' })

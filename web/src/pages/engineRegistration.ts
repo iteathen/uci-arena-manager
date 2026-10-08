@@ -47,6 +47,18 @@ function samePath(left: string | undefined, right: string | undefined) {
 }
 
 export type EngineBindingState = 'active' | 'available' | 'engine_unregistered'
+export type ImportedEngineOutput = { kind: 'book'; path: string } | { kind: 'timing'; identity: string }
+
+export function candidateRepresentsOutput(candidate: EngineCandidate, output: ImportedEngineOutput) {
+  if (output.kind === 'timing') {
+    return Boolean(output.identity) && candidate.launch_profile?.state === 'qualified_timing' &&
+      candidate.launch_profile.timing_profile.available === true && candidate.launch_profile.timing_profile.identity_sha256 === output.identity
+  }
+  const ownBook = candidate.uci_options.OwnBook
+  if (ownBook === false || (typeof ownBook === 'string' && ownBook.toLowerCase() === 'false')) return false
+  const bookFile = candidate.uci_options.BookFile
+  return typeof bookFile === 'string' && samePath(bookFile, `${output.path.replace(/[\\/]$/u, '')}/strong_rare_v1.bin`)
+}
 
 export function activeEngineBookPath(engine?: Resource<EngineData>) {
   const ownBook = engine?.data.option_overrides?.OwnBook
@@ -121,7 +133,9 @@ export type CandidateRegistration = {
 export function candidateRegistration(
   candidate: EngineCandidate,
   engines: Resource<EngineData>[],
+  selectedEngineId?: string,
 ): CandidateRegistration {
+  if (selectedEngineId !== undefined) engines = engines.filter(engine => engine.id === selectedEngineId)
   const exact = engines.filter(
     (engine) => engine.data.candidate_id === candidate.candidate_id,
   )

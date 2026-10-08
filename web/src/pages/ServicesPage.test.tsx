@@ -8,6 +8,7 @@ import {
   selectPreferredService,
   evidenceEligibleEngines,
   evidenceCampaignChoices,
+  selectedManagedOutputEngine,
   serviceCardStates,
   serviceLifecycleActions,
   serviceLocatorMode,
@@ -40,6 +41,16 @@ function service(
 }
 
 describe('managed-service catalog selection', () => {
+  it('uses the explicitly selected receipt-managed engine for book and timing outputs', () => {
+    const engines = ['uci_arena.vector', 'example.alternate-engine'].map((componentId, index) => ({
+      ...service(`engine-${index}`, 'engine'), kind: 'engine',
+      data: { display_name: componentId, component_id: componentId, onboarding_source: 'install_receipt' },
+    })) as unknown as Array<Resource<EngineData>>
+    expect(selectedManagedOutputEngine(engines, null)).toBeUndefined()
+    expect(selectedManagedOutputEngine(engines, 'engine-1')?.id).toBe('engine-1')
+    expect(selectedManagedOutputEngine(engines.slice(0, 1), null)?.id).toBe('engine-0')
+    expect(selectedManagedOutputEngine(engines, 'absent')).toBeUndefined()
+  })
   it('selects optional Evidence suppliers by capability and keeps their advertised campaigns', () => {
     const engines = ['uci_arena.vector', 'example.alternate-engine'].map((componentId, index) => ({
       ...service(`engine-${index}`, 'engine'),
