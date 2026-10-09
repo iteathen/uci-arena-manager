@@ -383,7 +383,7 @@ UciProbeResult UciProcess::probe(
         }
         process.write_line("ucinewgame");
         process.write_line("position startpos");
-        process.write_line("go depth 1");
+        process.write_line("go movetime 500");
         const std::string bestmove_line =
             await_token(
                 process,

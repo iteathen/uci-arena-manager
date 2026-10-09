@@ -70,6 +70,58 @@ TEST_CASE("UCI probe rejects an option the engine did not advertise") {
         std::string::npos);
 }
 
+TEST_CASE("timed-only UCI engine passes preview and fresh registration without depth evidence") {
+    namespace fs = std::filesystem;
+    using nlohmann::json;
+    const fs::path executable = ARENA_MOCK_UCI_PATH;
+    const auto result = arena::adapters::UciProcess::probe(
+        executable, executable.parent_path(), {"--publication-only"},
+        arena::adapters::UciProbeTimeouts{}, {{"Threads", "2"}});
+    INFO(result.error);
+    REQUIRE(result.ok);
+    REQUIRE(result.bestmove == "e2e4");
+    REQUIRE(result.options.size() == 3);
+
+    const fs::path root = fs::temp_directory_path() /
+        ("arena-timed-registration-" + arena::domain::uuid_v7());
+    fs::create_directories(root);
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(root / "arena.db");
+        arena::application::ControlPlane control(store);
+        control.initialize();
+        const auto register_engine = [&](bool dry_run, bool illegal_move = false) {
+            const json arguments = illegal_move
+                ? json::array({"--publication-only", "--illegal"})
+                : json::array({"--publication-only"});
+            return control.submit(
+                {{"schema_version", 1},
+                 {"request_id", arena::domain::uuid_v7()},
+                 {"idempotency_key", arena::domain::uuid_v7()},
+                 {"target", {{"kind", "engine"}, {"id", nullptr}}},
+                 {"action", "engine.register"},
+                 {"expected_revision", nullptr},
+                 {"dry_run", dry_run},
+                 {"parameters", {{"display_name", "Publication-only peer"},
+                                 {"executable", executable.string()},
+                                 {"working_directory", executable.parent_path().string()},
+                                 {"arguments", arguments},
+                                 {"uci_options", {{"Threads", 2}}}}}}, "test");
+        };
+        REQUIRE(control.list("engine").empty());
+        const json preview = register_engine(true);
+        REQUIRE(preview.at("dry_run") == true);
+        REQUIRE(control.list("engine").empty());
+        REQUIRE_THROWS_AS(register_engine(false, true), arena::application::CommandFailure);
+        REQUIRE(control.list("engine").empty());
+        const json registered = register_engine(false).at("resource");
+        REQUIRE(control.list("engine").size() == 1);
+        REQUIRE(registered.at("data").at("fingerprint") == result.fingerprint);
+        REQUIRE(registered.at("data").at("option_overrides").at("Threads") == "2");
+        REQUIRE(registered.at("data").at("arguments") == json::array({"--publication-only"}));
+    }
+    fs::remove_all(root);
+}
+
 TEST_CASE("UCI probe gives readiness and first search independent deadlines") {
     using namespace std::chrono_literals;
     const std::filesystem::path executable = ARENA_MOCK_UCI_PATH;

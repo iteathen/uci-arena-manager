@@ -16,6 +16,7 @@ int main(int argc, char** argv) {
     unsigned required_moves_to_go = 0;
     std::string required_model_root;
     bool allow_model_root = false;
+    bool publication_only = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
         if (argument == "--delay-ms" && index + 1 < argc) {
@@ -36,6 +37,8 @@ int main(int argc, char** argv) {
             required_model_root = argv[++index];
         } else if (argument == "--allow-model-root") {
             allow_model_root = true;
+        } else if (argument == "--publication-only") {
+            publication_only = true;
         }
     }
     std::string position;
@@ -89,6 +92,18 @@ int main(int argc, char** argv) {
         } else if (line.starts_with("position ")) {
             position = line;
         } else if (line.starts_with("go ")) {
+            if (publication_only) {
+                std::istringstream request(line);
+                std::string go, budget, extra;
+                unsigned milliseconds = 0;
+                if (!(request >> go >> budget >> milliseconds) ||
+                    go != "go" || budget != "movetime" || milliseconds == 0 ||
+                    milliseconds > 1000 || (request >> extra)) {
+                    std::cout << "info string unsupported publication budget\n"
+                              << std::flush;
+                    return 2;
+                }
+            }
             if (delay_ms > 0) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
             }
@@ -116,9 +131,10 @@ int main(int argc, char** argv) {
                     : move_count < scholar_mate.size()
                         ? scholar_mate[move_count]
                         : "0000";
-            std::cout << "info depth 1 score cp 12 nodes 20 pv " << move << "\n"
-                      << "bestmove " << move << "\n"
-                      << std::flush;
+            if (!publication_only) {
+                std::cout << "info depth 1 score cp 12 nodes 20 pv " << move << "\n";
+            }
+            std::cout << "bestmove " << move << "\n" << std::flush;
         } else if (line == "quit") {
             return 0;
         }

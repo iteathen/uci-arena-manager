@@ -606,7 +606,7 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
           />
           <PathPickerInput
             label="Executable"
-            description="The engine must pass uci, isready, option discovery, and a legal depth-one move."
+            description="The engine must pass uci, isready, option discovery, and a legal move from a bounded publication request."
             placeholder="C:\engines\uci-engine.exe"
             value={executable}
             onChange={(value) => {
