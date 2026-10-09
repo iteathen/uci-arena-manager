@@ -87,6 +87,10 @@ probe:
       same engine.register dry-run path used immediately before persistence.
     - A passing probe performs process launch, uciok, readyok, typed option
       discovery, and a legal start-position bestmove.
+    - The generic fresh-position probe requests `go movetime 500` for every
+      standard UCI engine, under the independent first-bestmove deadline.
+      This is a bounded publication request, not fixed-depth qualification;
+      no reported depth, node count, or search strength is required or inferred.
     - Each protocol phase owns an independent bounded deadline. Time spent in
       UCI discovery cannot consume the readiness, runtime-status, or first-move
       budget, and cold model/provider initialization after option application
@@ -255,6 +259,9 @@ acceptance:
     immutable manifest is rejected before probing.
   - Both candidates can be probed, explicitly registered, and recovered after
     a Manager service restart.
+  - A conforming timed-publication engine that rejects depth and node budgets
+    passes the same probe and explicit registration path without a product-name
+    branch; preview probing remains non-mutating and registration probes again.
   - A renamed UCI executable under an explicitly selected root is discoverable.
   - More than 4096 irrelevant entries cannot extend traversal or masquerade as
     a complete discovery result.
