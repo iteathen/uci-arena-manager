@@ -119,7 +119,19 @@ TEST_CASE("timed-only UCI engine passes preview and fresh registration without d
         REQUIRE(registered.at("data").at("option_overrides").at("Threads") == "2");
         REQUIRE(registered.at("data").at("arguments") == json::array({"--publication-only"}));
     }
-    fs::remove_all(root);
+    const fs::path temporary_parent = fs::canonical(fs::temp_directory_path());
+    const fs::path cleanup_target = fs::weakly_canonical(root);
+    REQUIRE(cleanup_target.is_absolute());
+    REQUIRE(cleanup_target.parent_path() == temporary_parent);
+    REQUIRE(cleanup_target.filename().string().starts_with("arena-timed-registration-"));
+    REQUIRE(cleanup_target.filename() == root.filename());
+    const auto original_status = fs::symlink_status(root);
+    REQUIRE(fs::is_directory(original_status));
+    REQUIRE_FALSE(fs::is_symlink(original_status));
+    const auto cleanup_status = fs::symlink_status(cleanup_target);
+    REQUIRE(fs::is_directory(cleanup_status));
+    REQUIRE_FALSE(fs::is_symlink(cleanup_status));
+    fs::remove_all(cleanup_target);
 }
 
 TEST_CASE("UCI probe gives readiness and first search independent deadlines") {
