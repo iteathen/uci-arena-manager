@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <optional>
+#include "arena/application/manager_installation_roots.hpp"
 
 namespace arena::cli {
 
@@ -16,6 +18,7 @@ void run_ui_picker(
     const std::string& dashboard_origin,
     const std::filesystem::path& manager_data_root,
     const std::filesystem::path& setup_executable,
-    bool allow_setup);
+    bool allow_setup,
+    const std::optional<arena::application::ManagerInstallationRoots>& installation_roots);
 
 }  // namespace arena::cli

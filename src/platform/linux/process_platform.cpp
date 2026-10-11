@@ -24,6 +24,7 @@ struct NativeProcess::Impl {
     static constexpr std::size_t max_queued_bytes = 8 * 1024 * 1024;
 
     pid_t process_id{-1};
+    std::optional<std::uint32_t> completed_exit;
     int stdin_fd{-1};
     int stdout_fd{-1};
     std::thread reader;
@@ -144,6 +145,7 @@ void NativeProcess::start(
     if (running()) {
         throw std::runtime_error("process is already running");
     }
+    impl_->completed_exit.reset();
     int stdin_pipe[2]{};
     int stdout_pipe[2]{};
     if (pipe2(stdin_pipe, O_CLOEXEC) != 0 || pipe2(stdout_pipe, O_CLOEXEC) != 0) {
@@ -235,9 +237,19 @@ bool NativeProcess::running() const {
     if (impl_->process_id <= 0) {
         return false;
     }
+    if (impl_->completed_exit) return false;
     int status = 0;
     const pid_t result = waitpid(impl_->process_id, &status, WNOHANG);
+    if (result == impl_->process_id) {
+        if (WIFEXITED(status)) impl_->completed_exit = static_cast<std::uint32_t>(WEXITSTATUS(status));
+        else if (WIFSIGNALED(status)) impl_->completed_exit = static_cast<std::uint32_t>(128 + WTERMSIG(status));
+    }
     return result == 0;
+}
+
+std::optional<std::uint32_t> NativeProcess::exit_code() const {
+    static_cast<void>(running());
+    return impl_->completed_exit;
 }
 
 std::uint64_t NativeProcess::pid() const {
@@ -276,6 +288,7 @@ void NativeProcess::stop(std::chrono::milliseconds graceful_timeout) {
     }
     impl_->close_descriptors();
     impl_->process_id = -1;
+    impl_->completed_exit.reset();
 }
 
 }  // namespace arena::ports

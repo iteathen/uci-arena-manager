@@ -267,9 +267,9 @@ SetupRequest parse_setup_request(const drogon::HttpRequestPtr& request) {
     return result;
 }
 
-std::filesystem::path create_setup_result_path() {
+std::filesystem::path create_setup_result_path(const std::filesystem::path& scratch_parent) {
     const auto result =
-        std::filesystem::temp_directory_path() /
+        scratch_parent /
         ("uci-arena-setup-" + make_ui_picker_token() + ".json");
 #ifdef _WIN32
     HANDLE file = CreateFileW(
@@ -299,9 +299,9 @@ std::filesystem::path create_setup_result_path() {
 
 class ScopedHelperScratch final {
   public:
-    ScopedHelperScratch()
+    explicit ScopedHelperScratch(const std::filesystem::path& scratch_parent)
         : path_(
-              std::filesystem::temp_directory_path() /
+              scratch_parent /
               ("uci-arena-manager-ui-" +
 #ifdef _WIN32
                std::to_string(GetCurrentProcessId())
@@ -420,15 +420,32 @@ json run_setup_elevated(
 }
 #endif
 
+void require_current_setup_roots(
+    const std::filesystem::path& setup_executable,
+    const arena::application::ManagerInstallationRoots& roots) {
+#ifdef _WIN32
+    const std::string scope = arena::platform::is_windows_per_user_install() ? "per-user" : "per-machine";
+#else
+    const std::string scope = "per-machine";
+#endif
+    static_cast<void>(arena::application::resolve_manager_installation_roots(roots,
+        [&]() { return arena::application::query_manager_package_layout(setup_executable, scope); }, scope));
+}
+
 json run_setup(
     const std::filesystem::path& setup_executable,
     const std::filesystem::path& manager_data_root,
+    const arena::application::ManagerInstallationRoots& fixed_setup_roots,
     const SetupRequest& request,
     const bool apply) {
     if (!std::filesystem::is_regular_file(setup_executable) ||
         std::filesystem::is_symlink(setup_executable)) {
         throw std::runtime_error(
             "The adjacent arena-setup executable is unavailable; repair UCI Arena Suite Setup");
+    }
+    require_current_setup_roots(setup_executable, fixed_setup_roots);
+    if (manager_data_root.lexically_normal() != fixed_setup_roots.data.lexically_normal()) {
+        throw std::runtime_error("Manager data root differs from Installer root authority");
     }
 #ifdef _WIN32
     const bool per_user_install =
@@ -468,7 +485,8 @@ json run_setup(
     }
 
     const std::filesystem::path result_path =
-        create_setup_result_path();
+        create_setup_result_path(arena::application::manager_helper_scratch_parent(fixed_setup_roots,
+            per_user_install, std::filesystem::temp_directory_path()));
     struct ResultFileGuard {
         std::filesystem::path path;
         ~ResultFileGuard() {
@@ -477,9 +495,8 @@ json run_setup(
         }
     } guard{result_path};
 
-    std::vector<std::string> arguments{
-        "--data-root",
-        manager_data_root.string(),
+    std::vector<std::string> arguments = arena::application::manager_setup_root_arguments(fixed_setup_roots);
+    arguments.insert(arguments.end(), {
 #ifdef _WIN32
         "--install-scope",
         per_user_install ? "per-user" : "per-machine",
@@ -487,7 +504,7 @@ json run_setup(
         "--json",
         "--result-file",
         result_path.string(),
-    };
+    });
     if (request.operation == "discover") {
         arguments.push_back("inventory");
         for (const auto& root : request.roots) {
@@ -619,7 +636,8 @@ bool valid_direct_lichess_token(const std::string_view value) {
 json materialize_lichess_credential(
     const std::string_view credential,
     const std::filesystem::path& manager_data_root,
-    const std::filesystem::path& setup_executable) {
+    const std::filesystem::path& setup_executable,
+    const arena::application::ManagerInstallationRoots& fixed_setup_roots) {
     if (!valid_direct_lichess_token(credential)) {
         throw std::invalid_argument(
             "the API key must be one bounded value without whitespace");
@@ -636,6 +654,7 @@ json materialize_lichess_credential(
     const std::filesystem::path destination =
         arena::platform::default_operator_credential_root() /
         "lichess-bot.token";
+    require_current_setup_roots(setup_executable, fixed_setup_roots);
     arena::platform::OperatorCredentialFileUpdate update(
         destination, credential);
     SetupRequest import;
@@ -643,7 +662,7 @@ json materialize_lichess_credential(
     import.asset_kind = "lichess_token_path";
     import.path = update.path();
     static_cast<void>(run_setup(
-        setup_executable, manager_data_root, import, true));
+        setup_executable, manager_data_root, fixed_setup_roots, import, true));
     update.commit();
     return {
         {"schema", "arena_ui_credential_result_v1"},
@@ -656,7 +675,9 @@ json materialize_lichess_credential(
 
 json qualify_and_import_lichess_profiles(
     const std::filesystem::path& manager_data_root,
-    const std::filesystem::path& setup_executable) {
+    const std::filesystem::path& setup_executable,
+    const arena::application::ManagerInstallationRoots& fixed_setup_roots) {
+    require_current_setup_roots(setup_executable, fixed_setup_roots);
     arena::application::ProcessSupervisor process;
     const json qualification =
         arena::application::ServiceCatalog::qualify_bot(
@@ -668,14 +689,14 @@ json qualify_and_import_lichess_profiles(
     single_game.path = qualification.at("single_game_profile").get<std::string>();
     single_game.managed_copy = true;
     static_cast<void>(run_setup(
-        setup_executable, manager_data_root, single_game, true));
+        setup_executable, manager_data_root, fixed_setup_roots, single_game, true));
 
     SetupRequest capacity;
     capacity.operation = "import";
     capacity.asset_kind = "lichess_capacity_profile";
     capacity.path = qualification.at("capacity_profile").get<std::string>();
     static_cast<void>(run_setup(
-        setup_executable, manager_data_root, capacity, true));
+        setup_executable, manager_data_root, fixed_setup_roots, capacity, true));
 
     return {
         {"schema", "arena_bot_qualification_result_v1"},
@@ -961,8 +982,18 @@ void run_ui_picker(
     const std::string& dashboard_origin,
     const std::filesystem::path& manager_data_root,
     const std::filesystem::path& setup_executable,
-    const bool allow_setup) {
-    ScopedHelperScratch scratch;
+    const bool allow_setup,
+    const std::optional<arena::application::ManagerInstallationRoots>& installation_roots) {
+    if (allow_setup && (!installation_roots || installation_roots->data.lexically_normal() != manager_data_root.lexically_normal())) {
+        throw std::runtime_error("Native setup requires admitted Installer root authority");
+    }
+#ifdef _WIN32
+    const bool per_user = arena::platform::is_windows_per_user_install();
+#else
+    const bool per_user = false;
+#endif
+    ScopedHelperScratch scratch(arena::application::manager_helper_scratch_parent(installation_roots,
+        per_user, std::filesystem::temp_directory_path()));
     auto& application = drogon::app();
     application.setUploadPath(scratch.path().string());
     application.registerHandler(
@@ -1320,11 +1351,13 @@ void run_ui_picker(
         },
         {drogon::Post, drogon::Options});
     if (allow_setup) {
+        const auto fixed_setup_roots = *installation_roots;
         application.registerHandler(
             "/v1/bot-qualification",
             [bearer_token,
              dashboard_origin,
              manager_data_root,
+             fixed_setup_roots,
              setup_executable](
                 const drogon::HttpRequestPtr& request,
                 std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
@@ -1369,7 +1402,7 @@ void run_ui_picker(
                     }
                     callback(json_response(
                         qualify_and_import_lichess_profiles(
-                            manager_data_root, setup_executable),
+                            manager_data_root, setup_executable, fixed_setup_roots),
                         drogon::k200OK,
                         dashboard_origin));
                 } catch (const std::invalid_argument&) {
@@ -1467,6 +1500,7 @@ void run_ui_picker(
             [bearer_token,
              dashboard_origin,
              manager_data_root,
+             fixed_setup_roots,
              setup_executable](
                 const drogon::HttpRequestPtr& request,
                 std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
@@ -1507,7 +1541,8 @@ void run_ui_picker(
                         materialize_lichess_credential(
                             request->body(),
                             manager_data_root,
-                            setup_executable),
+                            setup_executable,
+                            fixed_setup_roots),
                         drogon::k200OK,
                         dashboard_origin));
                 } catch (const std::invalid_argument&) {
@@ -1532,6 +1567,7 @@ void run_ui_picker(
              bearer_token,
              dashboard_origin,
              manager_data_root,
+             fixed_setup_roots,
              setup_executable](
                 const std::string& path,
                 const bool apply) {
@@ -1540,6 +1576,7 @@ void run_ui_picker(
                     [bearer_token,
                      dashboard_origin,
                      manager_data_root,
+                     fixed_setup_roots,
                      setup_executable,
                      apply](
                         const drogon::HttpRequestPtr& request,
@@ -1580,6 +1617,7 @@ void run_ui_picker(
                                 run_setup(
                                     setup_executable,
                                     manager_data_root,
+                                    fixed_setup_roots,
                                     parse_setup_request(request),
                                     apply),
                                 drogon::k200OK,

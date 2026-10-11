@@ -77,7 +77,8 @@ nlohmann::json ProcessSupervisor::run_json(
     const std::filesystem::path& working_directory,
     const std::vector<std::string>& arguments,
     std::chrono::milliseconds timeout,
-    const std::size_t maximum_output_bytes) const {
+    const std::size_t maximum_output_bytes,
+    const bool require_successful_exit) const {
     if (maximum_output_bytes == 0) {
         throw ProcessCommandFailure(
             ProcessCommandFailureKind::output_limit,
@@ -122,11 +123,17 @@ nlohmann::json ProcessSupervisor::run_json(
     while (const auto line = process.read_line(std::chrono::milliseconds(0))) {
         append_line(*line);
     }
+    const auto completed_exit = require_successful_exit ? process.exit_code() : std::nullopt;
     process.stop(std::chrono::milliseconds(0));
     if (process.dropped_observational_lines() != 0) {
         throw ProcessCommandFailure(
             ProcessCommandFailureKind::output_limit,
             "managed service output exceeded the bounded transport queue");
+    }
+    if (require_successful_exit && (!completed_exit || *completed_exit != 0)) {
+        throw ProcessCommandFailure(
+            ProcessCommandFailureKind::unsuccessful_exit,
+            "managed command did not complete successfully");
     }
     try {
         return nlohmann::json::parse(output);

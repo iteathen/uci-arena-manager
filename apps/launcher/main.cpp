@@ -1,6 +1,7 @@
 #include "webview/webview.h"
 
 #include "arena/application/manager_lifecycle.hpp"
+#include "arena/application/manager_installation_roots.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -12,12 +13,14 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
 
 #ifdef _WIN32
 #include "arena/platform/windows_install_scope.hpp"
 #define NOMINMAX
 #include <winsock2.h>
 #include <shlobj.h>
+#include <shellapi.h>
 #include <windows.h>
 
 #include <nlohmann/json.hpp>
@@ -118,16 +121,20 @@ std::filesystem::path executable_directory() {
     return std::filesystem::path(buffer).parent_path();
 }
 
-void configure_webview_user_data() {
+void configure_webview_user_data(const std::filesystem::path& data_root, const bool per_user) {
+    std::filesystem::path private_profile;
+    if (!per_user) {
     PWSTR raw_path = nullptr;
     const HRESULT result = SHGetKnownFolderPath(
         FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &raw_path);
     if (FAILED(result) || raw_path == nullptr) {
         throw std::runtime_error("cannot resolve the interactive user data directory");
     }
-    const std::filesystem::path root =
+    private_profile =
         std::filesystem::path(raw_path) / L"UCI Arena Manager" / L"WebView2";
     CoTaskMemFree(raw_path);
+    }
+    const auto root = arena::application::manager_browser_profile_root(data_root, per_user, private_profile);
     std::filesystem::create_directories(root);
     if (!SetEnvironmentVariableW(
             L"WEBVIEW2_USER_DATA_FOLDER", root.c_str())) {
@@ -197,10 +204,10 @@ bool manager_port_connectable() {
     return available;
 }
 
-std::filesystem::path per_user_data_directory() {
+std::filesystem::path legacy_manager_data_directory(const bool per_user) {
     PWSTR raw_path = nullptr;
     const HRESULT result = SHGetKnownFolderPath(
-        FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &raw_path);
+        per_user ? FOLDERID_LocalAppData : FOLDERID_ProgramData, KF_FLAG_CREATE, nullptr, &raw_path);
     if (FAILED(result) || raw_path == nullptr) {
         throw std::runtime_error(
             "cannot resolve the per-user Manager data directory");
@@ -214,7 +221,8 @@ std::filesystem::path per_user_data_directory() {
 class PerUserManagerProcess final {
 public:
     explicit PerUserManagerProcess(
-        const std::filesystem::path& executable_root) {
+        const std::filesystem::path& executable_root,
+        const std::filesystem::path& data_root) {
         if (manager_port_connectable()) {
             return;
         }
@@ -231,10 +239,10 @@ public:
         STARTUPINFOW startup{};
         startup.cb = sizeof(startup);
         PROCESS_INFORMATION process{};
-        std::wstring command =
-            quote(executable.wstring()) +
-            L" --data-dir " + quote(per_user_data_directory().wstring()) +
-            L" --web-root " + quote(web_root.wstring());
+        std::wstring command = quote(executable.wstring());
+        for (const auto& argument : arena::application::manager_service_arguments(data_root, web_root)) {
+            command += L" " + quote(std::filesystem::path(argument).wstring());
+        }
         const BOOL created = CreateProcessW(
             executable.c_str(),
             command.data(),
@@ -317,7 +325,9 @@ class UiHelper final {
 public:
     UiHelper(
         const std::filesystem::path& cli,
-        const std::uint16_t picker_port) {
+        const std::uint16_t picker_port,
+        const std::filesystem::path& data_root,
+        const std::optional<arena::application::ManagerInstallationRoots>& installation_roots) {
         SECURITY_ATTRIBUTES attributes{};
         attributes.nLength = sizeof(attributes);
         attributes.bInheritHandle = TRUE;
@@ -350,8 +360,11 @@ public:
         startup.hStdOutput = output_write;
         startup.hStdError = null_error;
         PROCESS_INFORMATION process{};
-        std::wstring command =
-            quote(cli.wstring()) +
+        std::wstring command = quote(cli.wstring());
+        const auto root_arguments = installation_roots ? arena::application::manager_root_arguments(*installation_roots) :
+            std::vector<std::string>{"--data-dir", data_root.string()};
+        for (const auto& argument : root_arguments) command += L" " + quote(std::filesystem::path(argument).wstring());
+        command +=
             L" ui --no-open --desktop-host --picker-port " +
             std::to_wstring(picker_port) +
             L" --startup-wait-ms " +
@@ -370,7 +383,8 @@ public:
         }
         process_ = process.hProcess;
         scratch_path_ =
-            std::filesystem::temp_directory_path() /
+            arena::application::manager_helper_scratch_parent(installation_roots,
+                arena::platform::is_windows_per_user_install(), std::filesystem::temp_directory_path()) /
             ("uci-arena-manager-ui-" +
              std::to_string(process.dwProcessId));
 
@@ -539,7 +553,21 @@ private:
     std::filesystem::path scratch_path_;
 };
 
-int run_desktop() {
+int run_desktop(const std::vector<std::string>& root_arguments) {
+    std::filesystem::path executable_root, data_root;
+    std::optional<arena::application::ManagerInstallationRoots> installation_roots;
+    try {
+        executable_root = executable_directory();
+        const auto scope = arena::platform::is_windows_per_user_install() ? "per-user" : "per-machine";
+        installation_roots = arena::application::resolve_manager_installation_roots(
+            arena::application::parse_desktop_manager_roots(root_arguments),
+            [&]() { return arena::application::query_manager_package_layout(executable_root / L"arena-setup.exe", scope); }, scope);
+        data_root = installation_roots ? installation_roots->data :
+            legacy_manager_data_directory(arena::platform::is_windows_per_user_install());
+    } catch (const std::exception& error) {
+        return show_startup_error(DesktopStartupError(
+            arena::application::DesktopStartupFailureCategory::service_launch, error.what()));
+    }
     HANDLE mutex =
         CreateMutexW(nullptr, FALSE, kLauncherMutex);
     if (mutex == nullptr) {
@@ -554,31 +582,22 @@ int run_desktop() {
     }
 
     try {
-        try {
-            configure_webview_user_data();
-        } catch (const std::exception& error) {
-            throw DesktopStartupError(
-                arena::application::DesktopStartupFailureCategory::webview_initialization,
-                error.what());
-        }
-
-        std::filesystem::path executable_root;
-        try {
-            executable_root = executable_directory();
-        } catch (const std::exception& error) {
-            throw DesktopStartupError(
-                arena::application::DesktopStartupFailureCategory::service_launch,
-                error.what());
-        }
         std::unique_ptr<PerUserManagerProcess> manager;
         try {
             if (arena::platform::is_windows_per_user_install()) {
                 manager = std::make_unique<PerUserManagerProcess>(
-                    executable_root);
+                    executable_root, data_root);
             }
         } catch (const std::exception& error) {
             throw DesktopStartupError(
                 arena::application::DesktopStartupFailureCategory::service_launch,
+                error.what());
+        }
+        try {
+            configure_webview_user_data(data_root, arena::platform::is_windows_per_user_install());
+        } catch (const std::exception& error) {
+            throw DesktopStartupError(
+                arena::application::DesktopStartupFailureCategory::webview_initialization,
                 error.what());
         }
         const auto cli = executable_root / L"arena.exe";
@@ -590,7 +609,7 @@ int run_desktop() {
         std::unique_ptr<UiHelper> helper;
         try {
             helper = std::make_unique<UiHelper>(
-                cli, find_available_picker_port());
+                cli, find_available_picker_port(), data_root, installation_roots);
         } catch (const std::exception& error) {
             throw DesktopStartupError(
                 arena::application::DesktopStartupFailureCategory::pair_helper,
@@ -640,7 +659,13 @@ int run_desktop() {
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
-    return run_desktop();
+    int count = 0;
+    auto** arguments = CommandLineToArgvW(GetCommandLineW(), &count);
+    if (arguments == nullptr) return show_error(L"Cannot parse Manager installation root arguments.");
+    std::vector<std::string> roots;
+    for (int i = 1; i < count; ++i) roots.push_back(std::filesystem::path(arguments[i]).string());
+    LocalFree(arguments);
+    return run_desktop(roots);
 }
 
 #else
