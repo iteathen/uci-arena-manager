@@ -12,6 +12,7 @@
 int main(int argc, char** argv) {
     unsigned delay_ms = 0;
     unsigned ready_delay_ms = 0;
+    unsigned uci_delay_ms = 0;
     bool illegal = false;
     std::size_t illegal_after_ply = static_cast<std::size_t>(-1);
     bool require_chess960 = false;
@@ -34,6 +35,8 @@ int main(int argc, char** argv) {
             delay_ms = static_cast<unsigned>(std::stoul(argv[++index]));
         } else if (argument == "--ready-delay-ms" && index + 1 < argc) {
             ready_delay_ms = static_cast<unsigned>(std::stoul(argv[++index]));
+        } else if (argument == "--uci-delay-ms" && index + 1 < argc) {
+            uci_delay_ms = static_cast<unsigned>(std::stoul(argv[++index]));
         } else if (argument == "--illegal") {
             illegal = true;
         } else if (argument == "--illegal-after-ply" && index + 1 < argc) {
@@ -76,6 +79,7 @@ int main(int argc, char** argv) {
     for (std::string line; std::getline(std::cin, line);) {
         if (!wire_log.empty()) std::ofstream(wire_log, std::ios::app) << line << '\n';
         if (line == "uci") {
+            if (uci_delay_ms > 0) std::this_thread::sleep_for(std::chrono::milliseconds(uci_delay_ms));
             std::cout << "id name Arena Mock Engine\n"
                       << "id author UCI Arena Manager\n"
                       << "option name Threads type spin default 1 min 1 max 16\n"

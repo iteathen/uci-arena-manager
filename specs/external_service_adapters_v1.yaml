@@ -415,8 +415,14 @@ profiles:
           The UI selects a target and advertised campaign; campaigns whose
           schema accepts an empty object can run with provider defaults.
           Historical target_id-only first-campaign requests retain v1 meaning.
-        - Manager target registration accepts only a registered engine UUID,
-          repeats the universal UCI probe, and for the historical v1 profile obtains paths, default-model
+        - Manager target registration accepts a registered engine UUID and optional
+          explicit diagnostic time_control. A declared clock binding requires that
+          local control before an engine child launches; stored probe clocks never
+          substitute. Runtime v2 targets preserve optional top-level clock_option_bindings
+          and baseline launch.uci_options exactly. Diagnostic control is never target
+          authority; Evidence binds each campaign's own original control. A legacy
+          runtime without the v2 declaration transport cannot admit declared clock slots.
+        - Manager repeats the universal UCI probe, and for the historical v1 profile obtains paths, default-model
           metadata, runtime fingerprint, provider, provider numeric identity,
           and option overrides from that backend-authoritative resource and
           probe. None of those fields are caller supplied.

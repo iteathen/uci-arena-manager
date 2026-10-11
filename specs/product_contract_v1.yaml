@@ -294,6 +294,11 @@ local_match_planner:
       identity. A persisted qualified managed profile also repeats its typed
       runtime-status identity comparison. Failure terminates the competition
       before creating a game.
+    - Every fresh or resumed game uses independent startup admission phases for
+      each actor, with the public probe policy's 10-second discovery and 60-second
+      ready-after-options defaults. Discovery never consumes the readiness window.
+      Admission is separate from chess clocks; only active go time debits remaining
+      time. Cancellation and phase exhaustion join the owned child before returning.
     - Competition-specific option overrides must name options advertised by
       the registered engine and satisfy their declared type and bounds before
       the plan is persisted.
@@ -439,10 +444,16 @@ managed_service_contract:
         target id is accepted only when it is present in the current bounded
         provider projection. Arbitrary adapter execution is outside the
         Manager contract.
-      - Evidence target registration accepts only a Manager-owned registered
-        engine UUID. Manager repeats the generic UCI probe, combines its typed
+      - Evidence target registration accepts a Manager-owned registered engine
+        UUID and optional explicit local diagnostic time_control. Declared clock
+        options require that control before the local engine child launches;
+        stored probe controls never substitute. Manager repeats the generic UCI probe, combines its typed
         runtime identity with receipt-derived default-model metadata, and
         invokes the provider's declared target_register operation.
+      - Optional top-level target clock_option_bindings is copied exactly from the
+        current engine-owned declaration; launch.uci_options retains profile baseline
+        values. No diagnostic time_control or probe_time_control enters the target.
+        Evidence owns subsequent campaign original-clock binding.
       - Browser input cannot provide target paths, fingerprints, providers,
         UCI options, commands, or argv. Evidence hashes and validates the
         resulting exact target and owns idempotent target identity.

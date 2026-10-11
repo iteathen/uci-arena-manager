@@ -9,10 +9,13 @@
 #include <catch2/generators/catch_generators.hpp>
 
 #include <algorithm>
+#include <condition_variable>
 #include <cwctype>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <mutex>
+#include <thread>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -495,6 +498,31 @@ TEST_CASE("receipt engine registration and explicit refresh preserve verified id
         control_plane.initialize();
         control_plane.reconcile_installed_services(data_root);
 
+        // The earlier selector comes from filesystem discovery. Establish the
+        // current asynchronous registry authority before expecting admission;
+        // never retry registration or replace that original selector.
+        std::stop_source verification_limit;
+        std::jthread verification_timer([&](const std::stop_token completed) {
+            std::condition_variable_any wake;
+            std::mutex mutex;
+            std::unique_lock lock(mutex);
+            static_cast<void>(wake.wait_for(lock, completed, std::chrono::seconds(5), [] { return false; }));
+            if (!completed.stop_requested()) verification_limit.request_stop();
+        });
+        control_plane.reconcile_installed_services(data_root, verification_limit.get_token());
+        verification_timer.request_stop();
+        REQUIRE_FALSE(verification_limit.stop_requested());
+        REQUIRE(control_plane.component_inventory().at("verification_state") == "verified");
+        const json verified_discovery = control_plane.engine_candidates();
+        const auto verified_candidate = std::find_if(verified_discovery.at("candidates").begin(),
+            verified_discovery.at("candidates").end(), [&](const json& entry) {
+                return entry.value("component_id", "") == component_id;
+            });
+        REQUIRE(verified_candidate != verified_discovery.at("candidates").end());
+        REQUIRE(verified_candidate->at("candidate_id") == candidate_id);
+        REQUIRE(verified_candidate->at("authority") == "verified_component_inventory");
+        REQUIRE(fs::equivalent(verified_candidate->at("executable").get<std::string>(), executable));
+
         const auto registration =
             [&](const std::string& selected_candidate_id,
                 const json& selected_options,
@@ -537,8 +565,18 @@ TEST_CASE("receipt engine registration and explicit refresh preserve verified id
                     .submit(request, "test");
             };
 
-        const json registered =
-            registration(candidate_id, candidate_options, false).at("resource");
+        json registered;
+        const json initial_inventory = control_plane.component_inventory();
+        try {
+            registered = registration(candidate_id, candidate_options, false).at("resource");
+        } catch (const arena::application::CommandFailure& error) {
+            INFO("initial fixture selector: " << candidate_id);
+            INFO("registry before initial registration: " << initial_inventory.dump());
+            INFO("registry after rejection: " << control_plane.component_inventory().dump());
+            INFO("fixture options: " << candidate_options.dump());
+            INFO("current fixture discovery: " << control_plane.engine_candidates().dump());
+            FAIL(error.what());
+        }
         const json verified = registered.at("data");
         REQUIRE(verified.at("candidate_id") == candidate_id);
         REQUIRE(

@@ -2852,10 +2852,11 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
         std::vector<std::string> operation_arguments;
         std::string operation;
         if (action == "service.evidence_target_register") {
-            if (parameters.size() != 1 || !parameters.contains("engine_id")) {
+            if (!parameters.is_object() || !parameters.contains("engine_id") ||
+                parameters.size() != (parameters.contains("time_control") ? 2U : 1U)) {
                 throw CommandFailure(
                     "invalid_evidence_target_request",
-                    "Evidence target registration accepts only engine_id",
+                    "Evidence target registration accepts only engine_id and optional explicit diagnostic time_control",
                     400);
             }
             const std::string engine_id = required_string(parameters, "engine_id");
@@ -2889,6 +2890,14 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                 engine_data.contains("default_model") &&
                 engine_data.at("default_model").is_object() &&
                 engine_data.value("recommended", false);
+            const json clock_declaration = engine_data.value("clock_option_bindings", json{});
+            const auto clock_bindings = clock_declaration.is_null() ? domain::ClockOptionBindings{} :
+                EngineOnboarding::clock_option_bindings(clock_declaration, engine_data.value("option_overrides", json::object()));
+            const auto actual_clock = probe_clock_control(parameters, !clock_bindings.empty());
+            if (legacy_runtime && !clock_bindings.empty()) {
+                throw CommandFailure("evidence_runtime_unavailable",
+                    "declared clock options require the engine-owned Evidence runtime v2 target contract", 409);
+            }
             if (!legacy_runtime) {
                 const auto current_binding = [&]() -> json {
                     if (!engine_data.contains("evidence_runtime")) return nullptr;
@@ -2907,7 +2916,8 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                             candidate.value("component_id", "") != engine_data.value("component_id", "") ||
                             candidate.value("component_version", "") != engine_data.value("component_version", "")) continue;
                         if (candidate.value("state", "") == "ready_to_probe" &&
-                            candidate.value("evidence_runtime", json::object()) == saved) {
+                            candidate.value("evidence_runtime", json::object()) == saved &&
+                            candidate.value("clock_option_bindings", json{}) == engine_data.value("clock_option_bindings", json{})) {
                             return saved.at("binding");
                         }
                     }
@@ -2920,7 +2930,7 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                 const auto arguments = string_array(engine_data, "arguments");
                 const json options = engine_data.value("option_overrides", json::object());
                 const auto probe = adapters::UciProcess::probe(executable, working_directory,
-                    arguments, adapters::UciProbeTimeouts{}, uci_option_overrides(options));
+                    arguments, adapters::UciProbeTimeouts{}, uci_option_overrides(options), false, actual_clock, clock_bindings);
                 if (!probe.ok) throw CommandFailure("uci_probe_failed", probe.error, 422);
                 if (probe.fingerprint != engine_data.value("fingerprint", "") ||
                     current_binding() != binding) {
@@ -2929,11 +2939,12 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                 }
                 std::string label = engine_data.value("display_name", "UCI engine");
                 if (label.size() > 240) label.resize(240);
-                const json descriptor = {
+                json descriptor = {
                     {"schema", "uci_arena_evidence_target_v2"}, {"label", label},
                     {"launch", {{"executable", executable.string()}, {"arguments", arguments},
                         {"working_directory", working_directory.string()}, {"uci_options", options}}},
                     {"runtime_binding", binding}};
+                if (!clock_declaration.is_null()) descriptor["clock_option_bindings"] = clock_declaration;
                 const std::string wire = descriptor.dump();
                 if (wire.size() > 8192) throw CommandFailure("evidence_target_too_large",
                     "the registered UCI launch exceeds the bounded Evidence target interface", 422);
@@ -3007,7 +3018,7 @@ json ControlPlane::manage_service(const json& request, const std::string& actor)
                 working_directory,
                 string_array(engine_data, "arguments"),
                 adapters::UciProbeTimeouts{},
-                typed_options);
+                typed_options, false, actual_clock, clock_bindings);
             if (!probe.ok) {
                 throw CommandFailure("uci_probe_failed", probe.error, 422);
             }

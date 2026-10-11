@@ -169,14 +169,32 @@ json register_installed_evidence_and_status(
 TEST_CASE("Evidence forwards a freshly probed receipt-bound UCI launch without supplier inference") {
     const std::string supplier = GENERATE("uci_arena.vector", "example.alternate-engine");
     const bool capability = GENERATE(true, false);
+    const bool clock_bound = GENERATE(true, false);
     const fs::path root = fs::temp_directory_path() / ("arena-evidence-neutral-" + arena::domain::uuid_v7());
     const fs::path data_root = root / "data";
     const fs::path active = root / "engine";
     const fs::path executable = active / fs::path(ARENA_MOCK_UCI_PATH).filename();
+    const fs::path workspace = root / "workspace", profile_path = workspace / "profile.json", wire = root / "target-engine.log";
+    fs::create_directories(workspace);
     fs::create_directories(active);
     fs::create_directories(data_root / "receipts");
     fs::copy_file(ARENA_MOCK_UCI_PATH, executable);
     std::ofstream(active / "evidence-runtime.json") << R"({"schema":"uci_arena_evidence_runtime_v2"})";
+    const json clock_declaration = {{"schema", "arena_uci_clock_option_bindings_v1"}, {"schema_version", 1},
+        {"bindings", {{"TargetInitialMs", "initial_ms"}}}};
+    json arguments = json::array({"--delay-ms", "5"}), options = {{"Threads", 2}, {"Ponder", false}};
+    if (clock_bound) {
+        arguments.insert(arguments.end(), {"--clock-option", "TargetInitialMs", "--expected-initial-ms", "180000",
+            "--expected-increment-ms", "0", "--wire-log", wire.string()});
+        options["TargetInitialMs"] = 0;
+        std::ofstream(profile_path) << json{
+            {"schema", "arena_uci_engine_launch_profile_v1"}, {"schema_version", 1},
+            {"component", {{"id", supplier}, {"version", "0.3.0"}, {"root", fs::weakly_canonical(active).string()}}},
+            {"engine", {{"executable", fs::weakly_canonical(executable).string()}, {"working_directory", fs::weakly_canonical(active).string()}, {"arguments", arguments}}},
+            {"state", "conservative"}, {"enabled", true}, {"uci_options", options}, {"clock_option_bindings", clock_declaration},
+            {"expected_runtime", nullptr}, {"evidence", json::object()}, {"knowledge", json::object()}, {"diagnostics", json::array()},
+        }.dump();
+    }
     const auto inventory = [](const fs::path& file, const fs::path& component_root) {
         std::ifstream input(file, std::ios::binary);
         const std::string bytes{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
@@ -193,16 +211,22 @@ TEST_CASE("Evidence forwards a freshly probed receipt-bound UCI launch without s
         manifest["component_id"] = id;
         manifest["component_version"] = "0.3.0";
         std::ofstream(component_root / "arena-component.json") << manifest.dump();
-        std::ofstream(data_root / "receipts" / (id + ".json")) << json{
+        json saved_receipt = {
             {"schema", "arena_install_receipt_v1"}, {"schema_version", 1},
             {"component_id", id}, {"component_version", "0.3.0"},
             {"state", "installed_managed"}, {"active_root", component_root.string()},
-            {"artifact_sha256", std::string(64, 'a')}}.dump();
+            {"artifact_sha256", std::string(64, 'a')}};
+        if (clock_bound && id == supplier) {
+            saved_receipt["configuration_path"] = profile_path.string();
+            saved_receipt["data_paths"] = {workspace.string()};
+        }
+        std::ofstream(data_root / "receipts" / (id + ".json")) << saved_receipt.dump();
     };
     receipt(supplier, active, {
         {"entrypoints", {{"uci", executable.filename().generic_string()}, {"evidence_runtime_contract", "evidence-runtime.json"}}},
         {"discovery", json::array({{{"kind", "uci_engine"}, {"locator", {{"source", "entrypoint"}, {"entrypoint", "uci"}}}}})},
-        {"capabilities", capability ? json::array({"evidence_runtime_contract_v2"}) : json::array()},
+        {"capabilities", [&] { json values = capability ? json::array({"evidence_runtime_contract_v2"}) : json::array();
+            if (clock_bound) values.push_back("uci_engine_launch_profile_v1"); return values; }()},
         {"files", {inventory(executable, active), inventory(active / "evidence-runtime.json", active)}}});
     {
         auto store = std::make_shared<arena::adapters::SqliteStore>(root / "arena.db");
@@ -223,17 +247,34 @@ TEST_CASE("Evidence forwards a freshly probed receipt-bound UCI launch without s
             if (candidate.value("component_id", "") == supplier) selected = candidate;
         }
         REQUIRE(selected.is_object());
-        const json arguments = json::array({"--delay-ms", "5"});
-        const json options = {{"Threads", 2}, {"Ponder", false}};
-        const json registered = control.submit(command("engine.register", {{"kind", "engine"}}, {
+        json registration_parameters = {
             {"display_name", "Selected supplier"}, {"executable", executable.string()},
             {"working_directory", active.string()}, {"arguments", arguments},
-            {"uci_options", options}, {"candidate_id", selected.at("candidate_id")}}), "test").at("resource");
+            {"uci_options", options}, {"candidate_id", selected.at("candidate_id")}};
+        if (clock_bound) registration_parameters["time_control"] = {{"initial_ms", 180000}, {"increment_ms", 0}};
+        const json registered = control.submit(command("engine.register", {{"kind", "engine"}}, registration_parameters), "test").at("resource");
         const std::string service_id = evidence.at("resource").at("id");
         const std::string engine_id = registered.at("id");
+        if (clock_bound) {
+            fs::remove(wire);
+            try {
+                static_cast<void>(control.submit(command("service.evidence_target_register", {{"kind", "managed_service"}, {"id", service_id}},
+                    {{"engine_id", engine_id}}), "test"));
+                FAIL("missing explicit target diagnostic clock was admitted");
+            } catch (const arena::application::CommandFailure& error) { REQUIRE(error.code() == "engine_clock_required"); }
+            REQUIRE_FALSE(fs::exists(wire));
+            try {
+                static_cast<void>(control.submit(command("service.evidence_target_register", {{"kind", "managed_service"}, {"id", service_id}},
+                    {{"engine_id", engine_id}, {"time_control", {{"initial_ms", 0}, {"increment_ms", 0}}}}), "test"));
+                FAIL("unknown target diagnostic clock was admitted");
+            } catch (const arena::application::CommandFailure& error) { REQUIRE(error.code() == "engine_clock_invalid"); }
+            REQUIRE_FALSE(fs::exists(wire));
+        }
         const auto submit_target = [&] {
+            json parameters = {{"engine_id", engine_id}};
+            if (clock_bound) parameters["time_control"] = {{"initial_ms", 180000}, {"increment_ms", 0}};
             return control.submit(command("service.evidence_target_register", {{"kind", "managed_service"}, {"id", service_id}},
-                {{"engine_id", engine_id}}), "test").at("resource").at("data").at("last_control_result");
+                parameters), "test").at("resource").at("data").at("last_control_result");
         };
         const json result = submit_target();
         REQUIRE(result.at("status") == (capability ? "supported" : "unsupported"));
@@ -258,6 +299,24 @@ TEST_CASE("Evidence forwards a freshly probed receipt-bound UCI launch without s
             REQUIRE(target.at("runtime_binding").at("component").at("id") == supplier);
             REQUIRE_FALSE(target.contains("model_id"));
             REQUIRE_FALSE(target.contains("provider"));
+            REQUIRE_FALSE(target.contains("time_control"));
+            REQUIRE_FALSE(target.contains("probe_time_control"));
+            if (clock_bound) {
+                REQUIRE(target.at("clock_option_bindings") == clock_declaration);
+                REQUIRE(target.at("launch").at("uci_options").at("TargetInitialMs") == "0");
+                const std::string transcript{std::istreambuf_iterator<char>(std::ifstream(wire).rdbuf()), {}};
+                REQUIRE(transcript.find("setoption name TargetInitialMs value 180000\n") < transcript.find("isready\n"));
+                REQUIRE(transcript.ends_with("quit\nowned-child-exit\n"));
+            } else REQUIRE_FALSE(target.contains("clock_option_bindings"));
+            if (clock_bound) {
+                fs::remove(wire);
+                json replacement = json::parse(std::ifstream(profile_path));
+                replacement["clock_option_bindings"]["bindings"]["TargetInitialMs"] = "increment_ms";
+                std::ofstream(profile_path, std::ios::trunc) << replacement.dump();
+                try { static_cast<void>(submit_target()); FAIL("changed declaration was reused for target admission"); }
+                catch (const arena::application::CommandFailure& error) { REQUIRE(error.code() == "evidence_runtime_changed"); }
+                REQUIRE_FALSE(fs::exists(wire));
+            }
             // An immutable payload edit must reject the next operation rather than reuse saved capability data.
             std::ofstream(active / "evidence-runtime.json", std::ios::trunc) << "changed";
             REQUIRE_THROWS_AS(submit_target(), arena::application::CommandFailure);
@@ -265,6 +324,22 @@ TEST_CASE("Evidence forwards a freshly probed receipt-bound UCI launch without s
             REQUIRE(result.at("created") == false);
             REQUIRE(result.at("code") == "EVIDENCE_RUNTIME_UNSUPPORTED");
             REQUIRE_FALSE(result.contains("target"));
+            if (clock_bound) {
+                auto legacy = store->get_resource("engine", engine_id).value();
+                json retained = json::parse(legacy.data_json);
+                retained["recommended"] = true;
+                retained["default_model"] = {{"model_id", "fixture"}, {"root", "fixture-model"}};
+                legacy.data_json = retained.dump();
+                const auto previous_revision = legacy.revision++;
+                const std::string now = arena::domain::utc_now(), command_id = arena::domain::uuid_v7();
+                store->update_resource(legacy, previous_revision,
+                    {command_id, arena::domain::uuid_v7(), arena::domain::uuid_v7(), "test.retained-legacy-clock-slot", "completed", "{}", now},
+                    {0, arena::domain::uuid_v7(), now, "state", "engine.retained", "engine", engine_id, legacy.revision, command_id, "{}"});
+                fs::remove(wire);
+                try { static_cast<void>(submit_target()); FAIL("legacy target transport dropped the declaration"); }
+                catch (const arena::application::CommandFailure& error) { REQUIRE(error.code() == "evidence_runtime_unavailable"); }
+                REQUIRE_FALSE(fs::exists(wire));
+            }
         }
         REQUIRE_THROWS_AS(control.submit(command("service.evidence_target_register", {{"kind", "managed_service"}, {"id", service_id}},
             {{"engine_id", engine_id}, {"target_json", "browser path"}}), "test"), arena::application::CommandFailure);

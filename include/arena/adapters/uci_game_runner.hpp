@@ -1,5 +1,6 @@
 #pragma once
 #include "arena/domain/clock_option_bindings.hpp"
+#include "arena/adapters/uci_process.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -65,7 +66,8 @@ class UciGameRunner final {
     [[nodiscard]] static UciGameResult play(
         const UciGameRequest& request,
         const CancellationProbe& cancelled,
-        const PlyCommit& commit_ply);
+        const PlyCommit& commit_ply,
+        const UciProbeTimeouts& startup_timeouts = {});
 };
 
 }  // namespace arena::adapters

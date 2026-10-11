@@ -165,6 +165,113 @@ void seed_engine(
 
 }  // namespace
 
+TEST_CASE("game admission permits cold readiness beyond the prior shared fifteen seconds") {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / ("arena-cold-game-admission-" + arena::domain::uuid_v7());
+    fs::create_directories(root);
+    const fs::path executable = ARENA_MOCK_UCI_PATH;
+    arena::adapters::UciGameRequest request;
+    request.initial_time_ms = 1234;
+    request.increment_ms = 0;
+    request.max_plies = 2;
+    const auto actor = [&](const std::string& side) {
+        arena::adapters::UciGameEngine value;
+        value.executable = executable;
+        value.working_directory = executable.parent_path();
+        value.arguments = {"--ready-delay-ms", "15150", "--wire-log", (root / (side + ".log")).string()};
+        return value;
+    };
+    request.white = actor("white");
+    request.black = actor("black");
+    const auto result = arena::adapters::UciGameRunner::play(request, [] { return false; }, [](const auto&) {});
+    INFO(result.detail);
+    REQUIRE(result.lifecycle == "completed");
+    REQUIRE(result.state.uci_moves.size() == 2);
+    const std::string white_wire{std::istreambuf_iterator<char>(std::ifstream(root / "white.log").rdbuf()), {}};
+    REQUIRE(white_wire.find("go wtime 1234 btime 1234 winc 0 binc 0") != std::string::npos);
+    for (const auto& side : {"white", "black"}) {
+        const std::string transcript{std::istreambuf_iterator<char>(std::ifstream(root / (std::string(side) + ".log")).rdbuf()), {}};
+        REQUIRE(transcript.find("isready\n") != std::string::npos);
+        REQUIRE(transcript.ends_with("quit\nowned-child-exit\n"));
+    }
+    REQUIRE(result.state.white_time_ms <= request.initial_time_ms);
+    REQUIRE(result.state.black_time_ms <= request.initial_time_ms);
+    fs::remove_all(root);
+}
+
+TEST_CASE("game admission gives discovery and readiness separate windows and joins failures") {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / ("arena-game-phase-admission-" + arena::domain::uuid_v7());
+    fs::create_directories(root);
+    const fs::path executable = ARENA_MOCK_UCI_PATH;
+    arena::adapters::UciGameRequest request;
+    request.initial_time_ms = 1234;
+    request.increment_ms = 0;
+    request.max_plies = 2;
+    const auto actor = [&](const std::string& side, unsigned uci_delay, unsigned ready_delay) {
+        arena::adapters::UciGameEngine value;
+        value.executable = executable;
+        value.working_directory = executable.parent_path();
+        value.arguments = {"--uci-delay-ms", std::to_string(uci_delay), "--ready-delay-ms", std::to_string(ready_delay),
+            "--wire-log", (root / (side + ".log")).string()};
+        return value;
+    };
+    arena::adapters::UciProbeTimeouts timeouts;
+    timeouts.uci_discovery = std::chrono::milliseconds(1600);
+    timeouts.ready_after_options = std::chrono::milliseconds(1200);
+    request.white = actor("white", 900, 800);
+    request.black = actor("black", 900, 800);
+    std::string expected_lifecycle = "completed", expected_error;
+    bool readiness_started = true, cancelled_case = false;
+    SECTION("full independent windows preserve the original chess clock") {}
+    SECTION("discovery exhaustion joins without starting readiness") {
+        timeouts.uci_discovery = std::chrono::milliseconds(100);
+        request.white = actor("white", 300, 0);
+        expected_lifecycle = "failed";
+        expected_error = "uciok";
+        readiness_started = false;
+    }
+    SECTION("readiness exhaustion joins without go") {
+        timeouts.ready_after_options = std::chrono::milliseconds(100);
+        request.white = actor("white", 0, 300);
+        expected_lifecycle = "failed";
+        expected_error = "readyok";
+    }
+    SECTION("cancellation during readiness preserves remaining clocks and joins") {
+        request.white = actor("white", 0, 300);
+        request.resume.white_time_ms = 523;
+        request.resume.black_time_ms = 412;
+        expected_lifecycle = "cancelled";
+        cancelled_case = true;
+    }
+    const auto cancelled = [&] {
+        if (!cancelled_case) return false;
+        const std::string wire{std::istreambuf_iterator<char>(std::ifstream(root / "white.log").rdbuf()), {}};
+        return wire.find("isready\n") != std::string::npos;
+    };
+    const auto result = arena::adapters::UciGameRunner::play(request, cancelled, [](const auto&) {}, timeouts);
+    INFO(result.detail);
+    REQUIRE(result.lifecycle == expected_lifecycle);
+    const std::string wire{std::istreambuf_iterator<char>(std::ifstream(root / "white.log").rdbuf()), {}};
+    REQUIRE(wire.ends_with("quit\nowned-child-exit\n"));
+    REQUIRE((wire.find("isready\n") != std::string::npos) == readiness_started);
+    if (expected_lifecycle == "completed") {
+        REQUIRE(result.state.uci_moves.size() == 2);
+        REQUIRE(wire.find("go wtime 1234 btime 1234 winc 0 binc 0") != std::string::npos);
+        const std::string black_wire{std::istreambuf_iterator<char>(std::ifstream(root / "black.log").rdbuf()), {}};
+        REQUIRE(black_wire.ends_with("quit\nowned-child-exit\n"));
+    } else {
+        REQUIRE(wire.find("go ") == std::string::npos);
+        REQUIRE_FALSE(fs::exists(root / "black.log"));
+        if (!expected_error.empty()) REQUIRE(result.detail.find(expected_error) != std::string::npos);
+        if (cancelled_case) {
+            REQUIRE(result.state.white_time_ms == 523);
+            REQUIRE(result.state.black_time_ms == 412);
+        }
+    }
+    fs::remove_all(root);
+}
+
 TEST_CASE("resumed game binds original clock while go retains remaining clocks") {
     namespace fs = std::filesystem;
     const fs::path root = fs::temp_directory_path() / ("arena-resumed-clock-" + arena::domain::uuid_v7());

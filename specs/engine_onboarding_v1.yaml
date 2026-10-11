@@ -189,6 +189,10 @@ actual_clock_option_binding:
       under the existing independent receive deadline. Never mix movetime and
       clock budgets, infer an allocation strategy or wait the whole game clock.
     - Ordinary probes without explicit clock control retain go movetime 500.
+    - Fresh/resumed game actors reuse the probe policy's independent 10-second
+      UCI discovery and 60-second ready-after-options admission bounds. A new
+      readiness window starts after option application for each actor; model/provider
+      initialization is not active go time and cannot debit chess clocks.
     - Dashboard Test/Register, output-activation refresh, and CLI probe/add/set-model
       carry that same explicit control. CLI candidate-id selects the current verified
       candidate and retains its exact arguments/options; bare executable probing

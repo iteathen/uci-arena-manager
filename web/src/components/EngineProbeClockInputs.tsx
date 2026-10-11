@@ -11,7 +11,7 @@ export function EngineProbeClockInputs({ onChange }: { onChange: (clock?: ProbeT
       ? { initial_ms, increment_ms } : undefined)
   }
   return <Stack gap="xs" mb="md">
-    <Text size="sm">Engine refresh test clock, required for engines that bind original clocks. This local diagnostic stops after at most 500 ms.</Text>
+    <Text size="sm">Local engine test clock for refresh and Evidence target admission, required for engines that bind original clocks. This diagnostic stops after at most 500 ms.</Text>
     <Group grow>
       <NumberInput label="Test initial time (ms)" min={1} max={Number.MAX_SAFE_INTEGER} allowDecimal={false} value={initial}
         onChange={value => { setInitial(value); publish(value, increment) }} />
