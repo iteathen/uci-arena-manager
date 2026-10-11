@@ -1,5 +1,6 @@
 #include "arena/adapters/sqlite_store.hpp"
 #include "arena/adapters/uci_process.hpp"
+#include "arena/adapters/uci_game_runner.hpp"
 #include "arena/application/control_plane.hpp"
 #include "arena/domain/uuid.hpp"
 
@@ -163,6 +164,158 @@ void seed_engine(
 }
 
 }  // namespace
+
+TEST_CASE("resumed game binds original clock while go retains remaining clocks") {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / ("arena-resumed-clock-" + arena::domain::uuid_v7());
+    fs::create_directories(root);
+    arena::adapters::UciGameRequest request;
+    request.initial_time_ms = 180000;
+    request.increment_ms = 0;
+    request.resume.white_time_ms = 5234;
+    request.resume.black_time_ms = 4123;
+    request.max_plies = 2;
+    const fs::path executable = ARENA_MOCK_UCI_PATH;
+    const auto actor = [&](const std::string& side) {
+        arena::adapters::UciGameEngine value;
+        value.executable = executable;
+        value.working_directory = executable.parent_path();
+        value.arguments = {"--clock-option", "ResumeClockMs", "--expected-initial-ms", "180000",
+            "--expected-increment-ms", "0", "--accept-remaining-clocks", "--wire-log", (root / (side + ".log")).string()};
+        value.options = {{"ResumeClockMs", "0"}};
+        value.clock_bindings = {{"ResumeClockMs", arena::domain::ClockOptionField::initial_ms}};
+        return value;
+    };
+    request.white = actor("white");
+    request.black = actor("black");
+    SECTION("original and remaining controls have distinct protocol roles") {
+        const auto result = arena::adapters::UciGameRunner::play(request, [] { return false; }, [](const auto&) {});
+        REQUIRE(result.lifecycle == "completed");
+        REQUIRE(result.state.uci_moves.size() == 2);
+        for (const auto& side : {"white", "black"}) {
+            const std::string transcript{std::istreambuf_iterator<char>(std::ifstream(root / (std::string(side) + ".log")).rdbuf()), {}};
+            REQUIRE(transcript.find("ucinewgame\n") < transcript.find("setoption name ResumeClockMs value 180000\n"));
+            REQUIRE(transcript.find("setoption name ResumeClockMs value 180000\n") < transcript.find("isready\n"));
+            REQUIRE(transcript.ends_with("quit\nowned-child-exit\n"));
+        }
+        const std::string white_wire{std::istreambuf_iterator<char>(std::ifstream(root / "white.log").rdbuf()), {}};
+        REQUIRE(white_wire.find("go wtime 5234 btime 4123 winc 0 binc 0") != std::string::npos);
+        REQUIRE(request.white.options.at("ResumeClockMs") == "0");
+    }
+    SECTION("unknown original control fails before either child") {
+        request.initial_time_ms = 0;
+        const auto result = arena::adapters::UciGameRunner::play(request, [] { return false; }, [](const auto&) {});
+        REQUIRE(result.lifecycle == "failed");
+        REQUIRE_FALSE(fs::exists(root / "white.log"));
+        REQUIRE_FALSE(fs::exists(root / "black.log"));
+    }
+    SECTION("cancellation during new-game readiness joins both actors") {
+        const auto cancelled = [&] {
+            for (const auto& side : {"white", "black"}) {
+                const fs::path log = root / (std::string(side) + ".log");
+                if (!fs::exists(log)) return false;
+                const std::string text{std::istreambuf_iterator<char>(std::ifstream(log).rdbuf()), {}};
+                if (text.find("isready\n") == std::string::npos) return false;
+            }
+            return true;
+        };
+        const auto result = arena::adapters::UciGameRunner::play(request, cancelled, [](const auto&) {});
+        REQUIRE(result.lifecycle == "cancelled");
+        for (const auto& side : {"white", "black"}) {
+            const std::string transcript{std::istreambuf_iterator<char>(std::ifstream(root / (std::string(side) + ".log")).rdbuf()), {}};
+            REQUIRE(transcript.ends_with("quit\nowned-child-exit\n"));
+        }
+    }
+    fs::remove_all(root);
+}
+
+TEST_CASE("competition clock binding ignores registered probe control and binds each game original") {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / ("arena-game-clock-" + arena::domain::uuid_v7());
+    fs::create_directories(root);
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(root / "arena.db");
+        arena::application::ControlPlane control(store);
+        control.initialize();
+        const fs::path executable = ARENA_MOCK_UCI_PATH;
+        const auto fingerprint = arena::adapters::UciProcess::probe(executable, executable.parent_path(), {}).fingerprint;
+        const json binding = {{"schema", "arena_uci_clock_option_bindings_v1"}, {"schema_version", 1},
+                              {"bindings", {{"OriginalClockMs", "initial_ms"}}}};
+        const auto engine_data = [&] (const std::string& name) {
+            return json{{"display_name", name}, {"executable", executable.string()},
+                {"working_directory", executable.parent_path().string()}, {"fingerprint", fingerprint},
+                {"arguments", {"--clock-option", "OriginalClockMs", "--expected-initial-ms", "180000",
+                               "--expected-increment-ms", "0", "--accept-remaining-clocks"}},
+                {"option_overrides", {{"OriginalClockMs", "0"}}}, {"clock_option_bindings", binding},
+                {"probe_time_control", {{"initial_ms", 60000}, {"increment_ms", 600}}},
+                {"discovered_options", json::array({{{"name", "OriginalClockMs"}, {"type", "spin"}, {"minimum", 0}, {"maximum", 3600000}}})}};
+        };
+        const std::string clock_a = arena::domain::uuid_v7(), clock_b = arena::domain::uuid_v7();
+        seed_engine(store, clock_a, engine_data("Clock A"));
+        seed_engine(store, clock_b, engine_data("Clock B"));
+        const auto planned = create_competition(control, "match.plan", "match_plan", {clock_a, clock_b}, 2,
+            {{"time_control", {{"initial_ms", 180000}, {"increment_ms", 0}}}, {"adjudication", {{"max_plies", 2}}}});
+        const auto id = planned.at("resource").at("id").get<std::string>();
+        static_cast<void>(control.submit(command("match.start", "match_plan", id), "test"));
+        const auto completed = wait_for_lifecycle(control, "match_plan", id, "completed");
+        INFO(completed.dump());
+        REQUIRE(completed.at("data").at("lifecycle") == "completed");
+        const auto games = control.list("game");
+        REQUIRE(games.size() == 2);
+        for (const auto& game : games) {
+            const auto& data = game.at("data");
+            REQUIRE(data.at("white_engine").at("options").at("OriginalClockMs") == "180000");
+            REQUIRE(data.at("black_engine").at("options").at("OriginalClockMs") == "180000");
+        }
+        REQUIRE(json::parse(store->get_resource("engine", clock_a)->data_json).at("option_overrides").at("OriginalClockMs") == "0");
+    }
+    fs::remove_all(root);
+}
+
+TEST_CASE("retained competition with unknown original clock rejects before any participant launch") {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / ("arena-unknown-competition-clock-" + arena::domain::uuid_v7());
+    fs::create_directories(root);
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(root / "arena.db");
+        arena::application::ControlPlane control(store);
+        control.initialize();
+        const fs::path executable = ARENA_MOCK_UCI_PATH, wire = root / "normal-wire.log";
+        const auto fingerprint = arena::adapters::UciProcess::probe(executable, executable.parent_path(), {}).fingerprint;
+        std::string normal_id = arena::domain::uuid_v7(), bound_id = arena::domain::uuid_v7();
+        if (normal_id > bound_id) std::swap(normal_id, bound_id);
+        json normal = {{"display_name", "Normal peer"}, {"executable", executable.string()},
+            {"working_directory", executable.parent_path().string()}, {"fingerprint", fingerprint},
+            {"arguments", {"--wire-log", wire.string()}}, {"option_overrides", json::object()},
+            {"discovered_options", json::array()}};
+        seed_engine(store, normal_id, normal);
+        json bound = normal;
+        bound["arguments"] = {"--clock-option", "OriginalMs", "--wire-log", (root / "bound-wire.log").string()};
+        bound["option_overrides"] = {{"OriginalMs", "0"}};
+        bound["clock_option_bindings"] = {{"schema", "arena_uci_clock_option_bindings_v1"}, {"schema_version", 1},
+            {"bindings", {{"OriginalMs", "initial_ms"}}}};
+        bound["discovered_options"] = json::array({{{"name", "OriginalMs"}, {"type", "spin"}, {"minimum", 0}, {"maximum", 3600000}}});
+        seed_engine(store, bound_id, bound);
+        const auto planned = create_competition(control, "match.plan", "match_plan", {normal_id, bound_id}, 1);
+        const std::string id = planned.at("resource").at("id");
+        auto retained = store->get_resource("match_plan", id).value();
+        auto data = json::parse(retained.data_json);
+        data["time_control"].erase("initial_ms");
+        retained.data_json = data.dump();
+        retained.revision += 1;
+        const std::string now = arena::domain::utc_now(), command_id = arena::domain::uuid_v7();
+        store->update_resource(retained, 1,
+            {command_id, arena::domain::uuid_v7(), arena::domain::uuid_v7(), "test.retain-unknown-clock", "completed", "{}", now},
+            {0, arena::domain::uuid_v7(), now, "state", "match_plan.retained", "match_plan", id, retained.revision, command_id, "{}"});
+        static_cast<void>(control.submit(command("match.start", "match_plan", id), "test"));
+        const auto failed = wait_for_lifecycle(control, "match_plan", id, "failed");
+        REQUIRE(failed.at("data").at("lifecycle") == "failed");
+        REQUIRE_FALSE(fs::exists(wire));
+        REQUIRE_FALSE(fs::exists(root / "bound-wire.log"));
+        REQUIRE(control.list("game").empty());
+    }
+    fs::remove_all(root);
+}
 
 TEST_CASE("legacy receipt engines launch tournaments with their packaged default model") {
     namespace fs = std::filesystem;

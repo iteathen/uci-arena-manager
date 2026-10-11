@@ -24,6 +24,173 @@
 #error ARENA_MOCK_UCI_PATH must name the mock UCI engine
 #endif
 
+TEST_CASE("receipt clock binding uses actual local probe control before readiness") {
+    namespace fs = std::filesystem;
+    using nlohmann::json;
+    const fs::path root = fs::temp_directory_path() / ("arena-clock-probe-" + arena::domain::uuid_v7());
+    const fs::path data = root / "data", active = root / "component", workspace = root / "workspace";
+    const fs::path executable = active / fs::path(ARENA_MOCK_UCI_PATH).filename();
+    const fs::path configuration = workspace / "profile.json", wire = root / "wire.log";
+    fs::create_directories(active);
+    fs::create_directories(data / "receipts");
+    fs::create_directories(workspace);
+    fs::copy_file(ARENA_MOCK_UCI_PATH, executable);
+    const auto fingerprint = arena::adapters::UciProcess::probe(executable, active, {}).fingerprint;
+    const json binding = {{"schema", "arena_uci_clock_option_bindings_v1"}, {"schema_version", 1},
+                          {"bindings", {{"InitialBudgetMs", "initial_ms"}}}};
+    const json arguments = {"--clock-option", "InitialBudgetMs", "--expected-initial-ms", "180000",
+                            "--expected-increment-ms", "0", "--wait-for-stop", "--wire-log", wire.string()};
+    const json options = {{"Threads", 2}, {"InitialBudgetMs", 0}};
+    const json profile = {
+        {"schema", "arena_uci_engine_launch_profile_v1"}, {"schema_version", 1},
+        {"component", {{"id", "uci_arena.engine"}, {"version", "1.0.0"}, {"root", fs::weakly_canonical(active).string()}}},
+        {"engine", {{"executable", fs::weakly_canonical(executable).string()}, {"working_directory", fs::weakly_canonical(active).string()}, {"arguments", arguments}}},
+        {"state", "conservative"}, {"enabled", true}, {"uci_options", options},
+        {"clock_option_bindings", binding}, {"expected_runtime", nullptr}, {"evidence", json::object()},
+        {"knowledge", json::object()}, {"diagnostics", json::array()},
+    };
+    std::ofstream(configuration) << profile.dump();
+    std::ofstream(active / "arena-component.json") << json{
+        {"schema", "arena_install_component_v1"}, {"schema_version", 1},
+        {"component_id", "uci_arena.engine"}, {"component_version", "1.0.0"},
+        {"entrypoints", {{"uci", executable.filename().string()}}},
+        {"discovery", json::array({{{"kind", "uci_engine"}, {"locator", {{"source", "entrypoint"}, {"entrypoint", "uci"}}}}})},
+        {"capabilities", {"uci_engine_launch_profile_v1"}},
+        {"files", json::array({{{"path", executable.filename().string()}, {"sha256", fingerprint}, {"size_bytes", fs::file_size(executable)}}})},
+    }.dump();
+    std::ofstream(data / "receipts" / "uci_arena.engine.json") << json{
+        {"schema", "arena_install_receipt_v1"}, {"schema_version", 1}, {"component_id", "uci_arena.engine"},
+        {"component_version", "1.0.0"}, {"state", "installed_managed"}, {"active_root", active.string()},
+        {"artifact_sha256", std::string(64, 'a')}, {"data_paths", {workspace.string()}}, {"configuration_path", configuration.string()},
+    }.dump();
+    {
+        auto store = std::make_shared<arena::adapters::SqliteStore>(root / "arena.db");
+        arena::application::ControlPlane control(store);
+        control.initialize();
+        control.reconcile_installed_services(data);
+        const auto candidate = control.engine_candidates().at("candidates").at(0);
+        REQUIRE(candidate.at("state") == "ready_to_probe");
+        json parameters = {{"display_name", "Clock peer"}, {"executable", executable.string()},
+                           {"working_directory", active.string()}, {"arguments", arguments},
+                           {"uci_options", options}, {"candidate_id", candidate.at("candidate_id")},
+                           {"time_control", {{"initial_ms", 180000}, {"increment_ms", 0}}}};
+        const auto submit = [&] (bool dry_run) {
+            return control.submit({{"schema_version", 1}, {"request_id", arena::domain::uuid_v7()},
+                {"idempotency_key", arena::domain::uuid_v7()}, {"target", {{"kind", "engine"}, {"id", nullptr}}},
+                {"action", "engine.register"}, {"expected_revision", nullptr}, {"dry_run", dry_run},
+                {"parameters", parameters}}, "test");
+        };
+        SECTION("actual clock binds declared names and stop consumes the completed move") {
+            const auto preview = submit(true).at("resource").at("data");
+            REQUIRE(control.list("engine").empty());
+            REQUIRE(preview.at("option_overrides").at("InitialBudgetMs") == "0");
+            REQUIRE(preview.at("clock_option_bindings") == binding);
+            REQUIRE(preview.at("probe_time_control") == parameters.at("time_control"));
+            REQUIRE(preview.at("probe_bestmove") == "e2e4");
+            const auto registered = submit(false).at("resource").at("data");
+            REQUIRE(registered.at("probe_time_control") == parameters.at("time_control"));
+            const std::string transcript{std::istreambuf_iterator<char>(std::ifstream(wire).rdbuf()), {}};
+            const auto new_game = transcript.find("ucinewgame\n");
+            const auto binding_line = transcript.find("setoption name InitialBudgetMs value 180000\n");
+            REQUIRE(new_game < binding_line);
+            REQUIRE(binding_line < transcript.find("isready\n"));
+            REQUIRE(transcript.find("go wtime 180000 btime 180000 winc 0 binc 0\nstop\n") != std::string::npos);
+            REQUIRE(transcript.find("go movetime") == std::string::npos);
+            REQUIRE(transcript.ends_with("quit\nowned-child-exit\n"));
+            REQUIRE(preview.at("probe_elapsed_ms").get<unsigned>() >= 500);
+        }
+        SECTION("an early completed move avoids stop and joins the child") {
+            auto early_arguments = arguments;
+            early_arguments.erase(std::find(early_arguments.begin(), early_arguments.end(), "--wait-for-stop"));
+            auto early_profile = profile;
+            early_profile["engine"]["arguments"] = early_arguments;
+            std::ofstream(configuration, std::ios::trunc) << early_profile.dump();
+            const auto early_candidate = control.engine_candidates().at("candidates").at(0);
+            parameters["candidate_id"] = early_candidate.at("candidate_id");
+            parameters["arguments"] = early_arguments;
+            const auto preview = submit(true).at("resource").at("data");
+            REQUIRE(preview.at("probe_bestmove") == "e2e4");
+            const std::string transcript{std::istreambuf_iterator<char>(std::ifstream(wire).rdbuf()), {}};
+            REQUIRE(transcript.find("go wtime 180000 btime 180000 winc 0 binc 0\n") != std::string::npos);
+            REQUIRE(transcript.find("stop\n") == std::string::npos);
+            REQUIRE(transcript.ends_with("quit\nowned-child-exit\n"));
+        }
+        SECTION("missing original control fails before any child launch") {
+            parameters.erase("time_control");
+            try { static_cast<void>(submit(true)); FAIL("missing actual probe control was admitted"); }
+            catch (const arena::application::CommandFailure& error) { REQUIRE(error.code() == "engine_clock_required"); }
+            REQUIRE_FALSE(fs::exists(wire));
+            REQUIRE(control.list("engine").empty());
+        }
+        SECTION("unknown original control fails before any child launch") {
+            parameters["time_control"]["initial_ms"] = 0;
+            try { static_cast<void>(submit(true)); FAIL("unknown actual probe control was admitted"); }
+            catch (const arena::application::CommandFailure& error) { REQUIRE(error.code() == "engine_clock_invalid"); }
+            REQUIRE_FALSE(fs::exists(wire));
+        }
+        SECTION("unbound profile changes are rejected before launch") {
+            parameters["uci_options"]["Threads"] = 7;
+            REQUIRE_THROWS_AS(submit(true), arena::application::CommandFailure);
+            REQUIRE_FALSE(fs::exists(wire));
+        }
+        SECTION("startup preserves registration and requires a new explicit control when declaration changes") {
+            const auto registered = submit(false).at("resource");
+            fs::remove(wire);
+            auto replacement = profile;
+            replacement["clock_option_bindings"]["bindings"]["InitialBudgetMs"] = "increment_ms";
+            std::ofstream(configuration, std::ios::trunc) << replacement.dump();
+            control.reconcile_installed_services(data);
+            REQUIRE(control.status().at("installed_engine_reconciliation").at("outcome") == "explicit_probe_clock_required");
+            REQUIRE_FALSE(fs::exists(wire));
+            REQUIRE(control.list("engine").at(0).at("revision") == registered.at("revision"));
+        }
+    }
+    fs::remove_all(root);
+}
+
+TEST_CASE("clock probe rejects non-spin and incompatible original values before readiness and joins") {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / ("arena-clock-advertisement-" + arena::domain::uuid_v7());
+    fs::create_directories(root);
+    const fs::path wire = root / "wire.log", executable = ARENA_MOCK_UCI_PATH;
+    const std::string type = GENERATE("string", "spin");
+    arena::domain::TimeControl clock;
+    clock.initial_ms = type == "spin" ? 4000000 : 180000;
+    clock.increment_ms = 0;
+    const auto result = arena::adapters::UciProcess::probe(executable, executable.parent_path(),
+        {"--clock-option", "ArbitraryClockMs", "--clock-option-type", type, "--wire-log", wire.string()},
+        {}, {{"ArbitraryClockMs", "0"}}, false, clock,
+        {{"ArbitraryClockMs", arena::domain::ClockOptionField::initial_ms}});
+    REQUIRE_FALSE(result.ok);
+    const std::string transcript{std::istreambuf_iterator<char>(std::ifstream(wire).rdbuf()), {}};
+    REQUIRE(transcript.find("setoption") == std::string::npos);
+    REQUIRE(transcript.find("isready") == std::string::npos);
+    REQUIRE(transcript.ends_with("quit\nowned-child-exit\n"));
+    fs::remove_all(root);
+}
+
+TEST_CASE("clock probe bestmove timeout sends stop and joins the exact owned child") {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / ("arena-clock-timeout-" + arena::domain::uuid_v7());
+    fs::create_directories(root);
+    const fs::path wire = root / "wire.log", executable = ARENA_MOCK_UCI_PATH;
+    arena::domain::TimeControl clock;
+    clock.initial_ms = 180000;
+    clock.increment_ms = 0;
+    arena::adapters::UciProbeTimeouts timeouts;
+    timeouts.first_bestmove = std::chrono::milliseconds(650);
+    const auto result = arena::adapters::UciProcess::probe(executable, executable.parent_path(),
+        {"--clock-option", "TestOriginalMs", "--expected-initial-ms", "180000", "--expected-increment-ms", "0",
+            "--withhold-bestmove", "--wire-log", wire.string()}, timeouts, {{"TestOriginalMs", "0"}}, false, clock,
+        {{"TestOriginalMs", arena::domain::ClockOptionField::initial_ms}});
+    REQUIRE_FALSE(result.ok);
+    REQUIRE(result.error.find("bestmove") != std::string::npos);
+    const std::string transcript{std::istreambuf_iterator<char>(std::ifstream(wire).rdbuf()), {}};
+    REQUIRE(transcript.find("go wtime 180000 btime 180000 winc 0 binc 0\nstop\n") != std::string::npos);
+    REQUIRE(transcript.ends_with("quit\nowned-child-exit\n"));
+    fs::remove_all(root);
+}
+
 TEST_CASE("UCI probe discovers identity options and a legal bestmove") {
     const std::filesystem::path executable = ARENA_MOCK_UCI_PATH;
     const auto result = arena::adapters::UciProcess::probe(

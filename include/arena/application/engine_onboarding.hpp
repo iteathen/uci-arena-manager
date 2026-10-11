@@ -1,6 +1,7 @@
 #pragma once
 
 #include "arena/application/component_verification_registry.hpp"
+#include "arena/domain/clock_option_bindings.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -30,6 +31,8 @@ struct EngineDiscoveryOptions final {
 
 class EngineOnboarding final {
   public:
+    [[nodiscard]] static domain::ClockOptionBindings clock_option_bindings(
+        const nlohmann::json& declaration, const nlohmann::json& baseline);
     [[nodiscard]] static nlohmann::json discover(
         const std::filesystem::path& manager_data_root,
         const std::vector<std::filesystem::path>& explicit_roots = {},

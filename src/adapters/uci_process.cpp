@@ -301,6 +301,23 @@ bool legal_starting_bestmove(const std::string& move) {
 
 }  // namespace
 
+domain::UciOption UciProcess::parse_option_line(const std::string& line) {
+    return parse_option(line);
+}
+
+void UciProcess::validate_clock_options(
+    const std::vector<domain::UciOption>& advertised_options,
+    const domain::ClockOptionBindings& bindings) {
+    for (const auto& [name, source] : bindings) {
+        static_cast<void>(source);
+        const auto option = std::ranges::find_if(advertised_options,
+            [&name](const domain::UciOption& value) { return value.name == name; });
+        if (option == advertised_options.end() || option->type != "spin") {
+            throw std::runtime_error("clock binding requires an advertised spin option: " + name);
+        }
+    }
+}
+
 void UciProcess::validate_option_overrides(
     const std::vector<domain::UciOption>& advertised_options,
     const std::map<std::string, std::string>& option_overrides) {
@@ -348,11 +365,17 @@ UciProbeResult UciProcess::probe(
     const std::vector<std::string>& arguments,
     const UciProbeTimeouts& timeouts,
     const std::map<std::string, std::string>& option_overrides,
-    const bool request_runtime_status) {
+    const bool request_runtime_status,
+    const std::optional<domain::TimeControl>& actual_clock,
+    const domain::ClockOptionBindings& clock_bindings) {
     UciProbeResult result;
     const auto started = Clock::now();
     ports::NativeProcess process;
     try {
+        if (actual_clock && (actual_clock->initial_ms == 0 || actual_clock->initial_ms > 9007199254740991ULL || actual_clock->increment_ms > 9007199254740991ULL)) {
+            throw std::invalid_argument("actual original clock control is invalid");
+        }
+        const auto effective_options = domain::bind_clock_options(option_overrides, clock_bindings, actual_clock);
         result.fingerprint = fingerprint(executable);
         process.start(executable, working_directory, arguments);
 
@@ -363,8 +386,10 @@ UciProbeResult UciProcess::probe(
             Clock::now() + timeouts.uci_discovery,
             result,
             true);
-        validate_option_overrides(result.options, option_overrides);
-        for (const auto& [name, value] : option_overrides) {
+        validate_clock_options(result.options, clock_bindings);
+        validate_option_overrides(result.options, effective_options);
+        if (actual_clock) process.write_line("ucinewgame");
+        for (const auto& [name, value] : effective_options) {
             process.write_line("setoption name " + name + " value " + value);
         }
         process.write_line("isready");
@@ -381,14 +406,35 @@ UciProbeResult UciProcess::probe(
                 Clock::now() + timeouts.runtime_status,
                 result);
         }
-        process.write_line("ucinewgame");
+        if (!actual_clock) process.write_line("ucinewgame");
         process.write_line("position startpos");
-        process.write_line("go movetime 500");
+        const auto receive_deadline = Clock::now() + timeouts.first_bestmove;
+        std::optional<std::string> clock_reply;
+        if (actual_clock) {
+            process.write_line("go wtime " + std::to_string(actual_clock->initial_ms) +
+                " btime " + std::to_string(actual_clock->initial_ms) + " winc " +
+                std::to_string(actual_clock->increment_ms) + " binc " + std::to_string(actual_clock->increment_ms));
+            const auto publication_deadline = std::min(receive_deadline, Clock::now() + std::chrono::milliseconds(500));
+            while (Clock::now() < publication_deadline) {
+                const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(publication_deadline - Clock::now());
+                const auto line = process.read_line(std::min(remaining, std::chrono::milliseconds(100)));
+                if (!line) {
+                    if (!process.running()) throw std::runtime_error("engine exited before bestmove");
+                    continue;
+                }
+                if (*line == "bestmove" || line->starts_with("bestmove ")) { clock_reply = *line; break; }
+                capture_runtime_model_identity(*line, result);
+            }
+            if (!clock_reply) process.write_line("stop");
+        } else {
+            process.write_line("go movetime 500");
+        }
         const std::string bestmove_line =
+            clock_reply ? *clock_reply :
             await_token(
                 process,
                 "bestmove",
-                Clock::now() + timeouts.first_bestmove,
+                receive_deadline,
                 result,
                 false);
         const auto parts = split(bestmove_line);

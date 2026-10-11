@@ -64,6 +64,7 @@ target_link_libraries(arena_lifecycle
 )
 
 add_library(arena_core
+  src/domain/clock_option_bindings.cpp
   src/domain/uuid.cpp
   src/domain/match_planner.cpp
   src/application/control_plane.cpp

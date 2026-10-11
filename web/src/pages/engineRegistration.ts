@@ -1,6 +1,13 @@
-import type { EngineCandidate, EngineData, Resource } from '../api/types'
+import type { EngineCandidate, EngineData, ProbeTimeControl, Resource } from '../api/types'
 
-export function engineRegistrationParameters(candidate: EngineCandidate) {
+export function engineRegistrationParameters(candidate: EngineCandidate, timeControl?: ProbeTimeControl) {
+  if (candidate.clock_option_bindings && !timeControl) {
+    throw new Error('Select an original clock for this local engine test.')
+  }
+  if (timeControl && (!Number.isSafeInteger(timeControl.initial_ms) || timeControl.initial_ms < 1 ||
+      !Number.isSafeInteger(timeControl.increment_ms) || timeControl.increment_ms < 0)) {
+    throw new Error('The original clock needs a positive whole initial time and a nonnegative whole increment.')
+  }
   return {
     display_name: candidate.display_name,
     executable: candidate.executable,
@@ -8,6 +15,7 @@ export function engineRegistrationParameters(candidate: EngineCandidate) {
     arguments: candidate.arguments,
     uci_options: candidate.uci_options,
     candidate_id: candidate.candidate_id,
+    ...(timeControl ? { time_control: timeControl } : {}),
   }
 }
 
@@ -125,6 +133,11 @@ function storedOptionsAreCanonical(values: Record<string, unknown> | undefined) 
   return Object.values(values ?? {}).every((value) => typeof value === 'string')
 }
 
+function immutableCandidateOptions(candidate: EngineCandidate, values: Record<string, unknown> | undefined) {
+  const clockNames = new Set(Object.keys(candidate.clock_option_bindings?.bindings ?? {}))
+  return Object.fromEntries(Object.entries(values ?? {}).filter(([name]) => !clockNames.has(name)))
+}
+
 export type CandidateRegistration = {
   state: 'unregistered' | 'registered' | 'refresh_required'
   engine?: Resource<EngineData>
@@ -170,9 +183,12 @@ export function candidateRegistration(
     samePath(current.working_directory, candidate.working_directory) &&
     sameValue(current.arguments ?? [], candidate.arguments) &&
     storedOptionsAreCanonical(current.option_overrides) &&
+    sameValue(current.clock_option_bindings ?? null, candidate.clock_option_bindings ?? null) &&
+    Object.keys(candidate.clock_option_bindings?.bindings ?? {}).every(name =>
+      Object.hasOwn(current.option_overrides ?? {}, name)) &&
     sameValue(
-      current.option_overrides ?? {},
-      normalizedCandidateOptions(candidate.uci_options),
+      immutableCandidateOptions(candidate, current.option_overrides),
+      immutableCandidateOptions(candidate, normalizedCandidateOptions(candidate.uci_options)),
     ) &&
     sameValue(current.launch_profile ?? null, candidate.launch_profile ?? null) &&
     sameValue(current.evidence_runtime ?? null, candidate.evidence_runtime ?? null) &&

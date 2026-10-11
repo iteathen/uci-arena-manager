@@ -360,7 +360,7 @@ int run_control_plane(const Options& options) {
                     for (const auto* field :
                          {"candidate_id", "display_name", "executable", "working_directory",
                           "arguments", "uci_options",
-                          "environment_references"}) {
+                          "environment_references", "time_control"}) {
                         if (body.contains(field)) {
                             parameters[field] = body.at(field);
                         }

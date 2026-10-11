@@ -69,7 +69,20 @@ export type EngineEvidenceRuntime =
       }
     }
 
+export interface ClockOptionBindings {
+  schema: 'arena_uci_clock_option_bindings_v1'
+  schema_version: 1
+  bindings: Record<string, 'initial_ms' | 'increment_ms'>
+}
+
+export interface ProbeTimeControl {
+  initial_ms: number
+  increment_ms: number
+}
+
 export interface EngineData extends Record<string, unknown> {
+  clock_option_bindings?: ClockOptionBindings
+  probe_time_control?: ProbeTimeControl
   display_name: string
   executable: string
   working_directory?: string
@@ -120,6 +133,7 @@ export interface EngineData extends Record<string, unknown> {
 }
 
 export interface EngineCandidate {
+  clock_option_bindings?: ClockOptionBindings
   schema: 'arena_engine_candidate_v1'
   schema_version: 1
   candidate_id: string

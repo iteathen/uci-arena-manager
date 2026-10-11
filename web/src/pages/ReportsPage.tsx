@@ -25,7 +25,8 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { api, discoverLocalAssets, localSetupAvailable, makeCommand } from '../api/client'
-import type { EngineData, ManagedServiceData, MatchPlanData, ReportData, Resource } from '../api/types'
+import type { EngineData, ManagedServiceData, MatchPlanData, ProbeTimeControl, ReportData, Resource } from '../api/types'
+import { EngineProbeClockInputs } from '../components/EngineProbeClockInputs'
 import { LocalSetupImportButton } from '../components/LocalSetupImportButton'
 import { PageHeader } from '../components/PageHeader'
 import { StatusPill } from '../components/StatusPill'
@@ -51,6 +52,7 @@ function sameLocalPath(left: string | undefined, right: string | undefined) {
 
 export function ReportsPage() {
   const queryClient = useQueryClient()
+  const [refreshClock, setRefreshClock] = useState<ProbeTimeControl>()
   const [reportName, setReportName] = useState('UCI Arena Manager report')
   const [reportScope, setReportScope] = useState<'current_state' | 'competition'>('current_state')
   const [competitionId, setCompetitionId] = useState<string | null>(null)
@@ -172,7 +174,7 @@ export function ReportsPage() {
             makeCommand(
               'engine.refresh',
               'engine',
-              engineRegistrationParameters(candidate),
+              engineRegistrationParameters(candidate, refreshClock),
               false,
               registration.engine.id,
               registration.engine.revision,
@@ -261,6 +263,7 @@ export function ReportsPage() {
                   <Code block mt="xs">{activeEngineBookPath(activeEngine) || 'Engine not registered'}</Code>
                 </Paper>
               </SimpleGrid>
+              {activeEngine && <EngineProbeClockInputs onChange={setRefreshClock} />}
               {snapshots.map((snapshot) => (
                 <Paper withBorder p="md" key={snapshot.snapshot_id}>
                   <Group justify="space-between">

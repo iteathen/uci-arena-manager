@@ -1,6 +1,6 @@
 import { MantineProvider } from '@mantine/core'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EnginesPage } from './EnginesPage'
 
@@ -44,6 +44,38 @@ function renderPage() {
 }
 
 describe('Engine inventory loading state', () => {
+  it('requires operator clock selection and sends it without rewriting profile options', async () => {
+    const submitted: Array<Record<string, unknown>> = []
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (init?.method === 'POST') submitted.push(JSON.parse(String(init.body)))
+      const body = url.includes('/engine-candidates') ? {
+        candidates: [{ schema: 'arena_engine_candidate_v1', schema_version: 1,
+          candidate_id: 'engcand-clock', source: 'install_receipt', state: 'ready_to_probe',
+          display_name: 'Clock engine', executable: 'E:/engine/actor.exe', working_directory: 'E:/engine', arguments: [],
+          uci_options: { OriginalClockMs: 0, RequirePolicy: true }, issues: [],
+          clock_option_bindings: { schema: 'arena_uci_clock_option_bindings_v1', schema_version: 1, bindings: { OriginalClockMs: 'initial_ms' } },
+        }],
+      } : url.includes('/components') ? { components: [] } : url.includes('/engine-probes') ? { probe_id: 'probe-clock' } : []
+      return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    })
+    renderPage()
+    const initial = await screen.findByLabelText('Test initial time (ms)')
+    const test = screen.getByRole('button', { name: 'Test only' }) as HTMLButtonElement
+    const register = screen.getByRole('button', { name: 'Register engine' }) as HTMLButtonElement
+    expect((initial as HTMLInputElement).value).toBe('')
+    expect(test.disabled).toBe(true)
+    expect(register.disabled).toBe(true)
+    fireEvent.change(initial, { target: { value: '180000' } })
+    expect(test.disabled).toBe(false)
+    fireEvent.click(test)
+    await waitFor(() => expect(submitted).toHaveLength(1))
+    expect(submitted[0]).toMatchObject({ candidate_id: 'engcand-clock', time_control: { initial_ms: 180000, increment_ms: 0 }, uci_options: { OriginalClockMs: 0, RequirePolicy: true } })
+    await screen.findByText('Test passed')
+    fireEvent.click(register)
+    await waitFor(() => expect(submitted).toHaveLength(2))
+    expect(submitted[1]).toMatchObject({ action: 'engine.register', parameters: { time_control: { initial_ms: 180000, increment_ms: 0 }, uci_options: { OriginalClockMs: 0, RequirePolicy: true } } })
+  })
   it('does not present pending queries as an empty inventory', () => {
     renderPage()
 

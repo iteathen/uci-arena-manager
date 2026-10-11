@@ -278,6 +278,8 @@ paths:
                     Bounded UCI option overrides applied before readyok and
                     persisted for subsequent launches. Every key must be
                     advertised by the probed engine.
+                time_control:
+                  $ref: "#/components/schemas/ProbeTimeControl"
       responses:
         "200":
           description: Engine passed the complete registration probe
@@ -640,6 +642,23 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    ProbeTimeControl:
+      type: object
+      additionalProperties: false
+      required: [initial_ms, increment_ms]
+      description: >
+        Explicit original clock for a local diagnostic. Required when the verified
+        candidate declares clock_option_bindings. The publication window is at
+        most 500 ms followed by standard stop and an independent receive deadline.
+      properties:
+        initial_ms:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        increment_ms:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
     EngineCandidate:
       $ref: "schemas/engine-candidate.schema.json"
     EngineProbeResult:

@@ -35,6 +35,9 @@ Common engine and service commands:
 
 ```text
 arena engine list
+arena engine candidates
+arena engine probe --candidate-id ENGCAND-ID --initial-ms 180000 --increment-ms 0
+arena engine add --candidate-id ENGCAND-ID --initial-ms 180000 --increment-ms 0
 arena engine probe C:\engines\engine.exe
 arena engine probe C:\engines\uci_arena_engine.exe --model-root C:\models\candidate
 arena engine add --executable C:\engines\engine.exe
@@ -49,13 +52,29 @@ arena daemon status
 option. For a registered UCI Arena Engine, `engine set-model` performs the same
 revision-checked full refresh as the Engines dashboard and leaves the existing
 registration unchanged if the selected model fails its probe. Every non-model
-Engine option remains exact, so operational timing reserves and forecast
+Engine baseline option remains exact, so operational timing reserves and forecast
 settings stay configured and the selected timing profile remains a reusable
 operational baseline. Only the marginal relationship between additional search
 time and move quality becomes non-exact. A SearchCore change affects that
 calibration without discarding the general timing distribution; materially
 different model architecture, inference provider, or input/output behavior may
 warrant refreshed evidence.
+
+An engine-owned `clock_option_bindings` declaration requires an explicit original
+clock for Test/Register/Refresh. Choose the diagnostic control yourself; Manager
+does not infer it from a timing policy or an earlier game. `--initial-ms` and
+`--increment-ms` must be supplied together, including for `engine set-model` when
+its candidate declares clock bindings. `--candidate-id` selects the current verified
+receipt candidate with its exact arguments and options; omit manual executable,
+working-directory and arguments when using it. Bare executable probes retain their
+ordinary launch parameters and cannot prove that a managed profile passed.
+
+Clock-controlled diagnostics send real `go` clocks, allow at most 500 ms of local
+publication time, then send standard `stop` if no completed bestmove arrived. The
+independent receive deadline remains bounded, and the owned child is joined. This
+is a readiness/publication diagnostic, with no game or playing-strength claim.
+Competition preflight and fresh/resumed games bind declared option values from
+their original competition clock; remaining clocks affect only the `go` request.
 
 On Linux, the same reference is installed as `arena(1)`:
 

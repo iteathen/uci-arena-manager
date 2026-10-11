@@ -6,6 +6,7 @@ import {
   Code,
   Group,
   Modal,
+  NumberInput,
   Paper,
   ScrollArea,
   SimpleGrid,
@@ -19,7 +20,7 @@ import { useDisclosure } from '@mantine/hooks'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, makeCommand, pickLocalPath } from '../api/client'
-import type { EngineCandidate, EngineData, Resource } from '../api/types'
+import type { EngineCandidate, EngineData, ProbeTimeControl, Resource } from '../api/types'
 import { EmptyState } from '../components/EmptyState'
 import { ComponentSetupButton } from '../components/ComponentSetupButton'
 import { PageHeader } from '../components/PageHeader'
@@ -64,6 +65,7 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
   const [workingDirectory, setWorkingDirectory] = useState('')
   const [manualModelRoot, setManualModelRoot] = useState('')
   const [candidateModelRoots, setCandidateModelRoots] = useState<Record<string, string>>({})
+  const [candidateClocks, setCandidateClocks] = useState<Record<string, { initial_ms: number | string; increment_ms: number | string }>>({})
   const [testedCandidates, setTestedCandidates] = useState<Record<string, string>>({})
   const [manualProbeId, setManualProbeId] = useState('')
   const [scanError, setScanError] = useState('')
@@ -71,11 +73,11 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
   const [engineToRemove, setEngineToRemove] = useState<Resource<EngineData> | null>(null)
 
   const probeCandidate = useMutation({
-    mutationFn: (candidate: EngineCandidate) =>
+    mutationFn: ({ candidate, timeControl }: { candidate: EngineCandidate; timeControl?: ProbeTimeControl }) =>
       api.probeEngine({
-        ...engineRegistrationParameters(candidate),
+        ...engineRegistrationParameters(candidate, timeControl),
       }),
-    onSuccess: (result, candidate) => {
+    onSuccess: (result, { candidate }) => {
       setTestedCandidates((current) => ({
         ...current,
         [candidate.candidate_id]: result.probe_id,
@@ -84,9 +86,9 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
   })
 
   const registerCandidate = useMutation({
-    mutationFn: (candidate: EngineCandidate) =>
-      api.command(makeCommand('engine.register', 'engine', engineRegistrationParameters(candidate))),
-    onSuccess: async (_, candidate) => {
+    mutationFn: ({ candidate, timeControl }: { candidate: EngineCandidate; timeControl?: ProbeTimeControl }) =>
+      api.command(makeCommand('engine.register', 'engine', engineRegistrationParameters(candidate, timeControl))),
+    onSuccess: async (_, { candidate }) => {
       setTestedCandidates((current) => {
         const next = { ...current }
         delete next[candidate.candidate_id]
@@ -103,15 +105,17 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
     mutationFn: ({
       candidate,
       engine,
+      timeControl,
     }: {
       candidate: EngineCandidate
       engine: Resource<EngineData>
+      timeControl?: ProbeTimeControl
     }) =>
       api.command(
         makeCommand(
           'engine.refresh',
           'engine',
-          engineRegistrationParameters(candidate),
+          engineRegistrationParameters(candidate, timeControl),
           false,
           engine.id,
           engine.revision,
@@ -328,13 +332,27 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
                 const registered = registration.state === 'registered'
                 const refreshRequired = registration.state === 'refresh_required'
                 const modelRootReady = !packagedModelRoot || Boolean(selectedModelRoot.trim())
+                const selectedClock = candidateClocks[candidate.candidate_id] ?? { initial_ms: '', increment_ms: 0 }
+                const clockReady = !candidate.clock_option_bindings || (
+                  typeof selectedClock.initial_ms === 'number' && Number.isSafeInteger(selectedClock.initial_ms) && selectedClock.initial_ms > 0 &&
+                  typeof selectedClock.increment_ms === 'number' && Number.isSafeInteger(selectedClock.increment_ms) && selectedClock.increment_ms >= 0
+                )
+                const timeControl = candidate.clock_option_bindings && clockReady ? selectedClock as ProbeTimeControl : undefined
+                const changeClock = (field: 'initial_ms' | 'increment_ms', value: number | string) => {
+                  setCandidateClocks(current => ({ ...current, [candidate.candidate_id]: { ...selectedClock, [field]: value } }))
+                  setTestedCandidates(current => {
+                    const next = { ...current }
+                    delete next[candidate.candidate_id]
+                    return next
+                  })
+                }
                 const tested = Boolean(testedCandidates[candidate.candidate_id])
                 const probing =
                   probeCandidate.isPending &&
-                  probeCandidate.variables?.candidate_id === candidate.candidate_id
+                  probeCandidate.variables?.candidate.candidate_id === candidate.candidate_id
                 const registering =
                   registerCandidate.isPending &&
-                  registerCandidate.variables?.candidate_id === candidate.candidate_id
+                  registerCandidate.variables?.candidate.candidate_id === candidate.candidate_id
                 const refreshing =
                   refreshCandidate.isPending &&
                   refreshCandidate.variables?.candidate.candidate_id === candidate.candidate_id
@@ -359,6 +377,17 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
                         </Badge>
                       </Group>
                       <Code block>{candidate.executable}</Code>
+                      {candidate.clock_option_bindings && (
+                        <Stack gap="xs">
+                          <Text size="sm">Choose the original clock for this local test. The test stops after at most 500 ms; tournament games use their own original clock.</Text>
+                          <Group grow>
+                            <NumberInput label="Test initial time (ms)" min={1} max={Number.MAX_SAFE_INTEGER} allowDecimal={false}
+                              value={selectedClock.initial_ms} onChange={value => changeClock('initial_ms', value)} />
+                            <NumberInput label="Test increment (ms)" min={0} max={Number.MAX_SAFE_INTEGER} allowDecimal={false}
+                              value={selectedClock.increment_ms} onChange={value => changeClock('increment_ms', value)} />
+                          </Group>
+                        </Stack>
+                      )}
                       {candidate.default_model && (
                         <Text size="sm" c="dimmed">
                           Packaged default: {candidate.default_model.display_name} ·{' '}
@@ -443,11 +472,11 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
                         </Alert>
                       ))}
                       {probeCandidate.error &&
-                        probeCandidate.variables?.candidate_id === candidate.candidate_id && (
+                        probeCandidate.variables?.candidate.candidate_id === candidate.candidate_id && (
                           <Alert color="red">{probeCandidate.error.message}</Alert>
                         )}
                       {registerCandidate.error &&
-                        registerCandidate.variables?.candidate_id === candidate.candidate_id && (
+                        registerCandidate.variables?.candidate.candidate_id === candidate.candidate_id && (
                           <Alert color="red">{registerCandidate.error.message}</Alert>
                         )}
                       {refreshCandidate.error &&
@@ -458,27 +487,28 @@ export function EnginesPage({ navigate }: { navigate: (page: string) => void }) 
                         <Button
                           variant="default"
                           loading={probing}
-                          disabled={candidate.state !== 'ready_to_probe' || registered || !modelRootReady}
+                          disabled={candidate.state !== 'ready_to_probe' || registered || !modelRootReady || !clockReady}
                           onClick={() => {
                             registerCandidate.reset()
                             refreshCandidate.reset()
-                            probeCandidate.mutate(selectedCandidate)
+                            probeCandidate.mutate({ candidate: selectedCandidate, timeControl })
                           }}
                         >
                           Test only
                         </Button>
                         <Button
                           loading={registering || refreshing}
-                          disabled={candidate.state !== 'ready_to_probe' || registered || !modelRootReady}
+                          disabled={candidate.state !== 'ready_to_probe' || registered || !modelRootReady || !clockReady}
                           onClick={() => {
                             probeCandidate.reset()
                             if (refreshRequired && registration.engine) {
                               refreshCandidate.mutate({
                                 candidate: selectedCandidate,
                                 engine: registration.engine,
+                                timeControl,
                               })
                             } else {
-                              registerCandidate.mutate(selectedCandidate)
+                              registerCandidate.mutate({ candidate: selectedCandidate, timeControl })
                             }
                           }}
                         >

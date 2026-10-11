@@ -50,6 +50,11 @@ List registered UCI engines.
 Probe a UCI executable without registering it. Use
 .BI "--model-root " PATH
 to apply an advertised ModelRoot option before readiness validation.
+Use --candidate-id instead of manual executable, working-directory and arguments
+to test the exact current verified candidate. Engines declaring original-clock
+bindings require paired --initial-ms and --increment-ms, including for add and
+set-model. This local diagnostic sends real clocks and requests standard stop
+after at most 500 ms; it does not create a game or qualify playing strength.
 .TP
 .B engine add
 Probe and register a UCI engine. The optional

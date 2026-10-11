@@ -107,6 +107,12 @@ engine_contract:
     schema: arena_uci_engine_launch_profile_v1
     component_capability: uci_engine_launch_profile_v1
     rules:
+      - An optional producer-owned clock_option_bindings declaration maps one
+        or two existing advertised spin options to actual initial_ms/increment_ms.
+        Only those per-game values are mutable; every other launch option remains
+        opaque and exact. Manager never reads timing policy/evidence to infer a
+        clock. Explicit local probe control and competition original TimeControl
+        supply their respective values before new-game readiness.
       - A component that declares the versioned launch-profile capability must
         select one profile through its current receipt's bounded preserved
         configuration path. Manager never interprets an unrelated component's
@@ -150,7 +156,7 @@ engine_contract:
       - An absent, ambiguous, unverifiable, or busy managed Engine remains
         safely stale with a bounded reconciliation result. It cannot prevent
         Manager startup or create a second Engine authority.
-      - An operator-selected ModelRoot keeps every other Engine-owned launch
+      - An operator-selected ModelRoot keeps every other Engine-owned baseline launch
         argument and UCI option exact, including timing reserves and forecast
         settings derived from selected Evidence. When that launch profile
         names a timing profile, Manager retains its identity as a reusable
@@ -199,8 +205,9 @@ engine_contract:
         persists component_id, onboarding_source, recommended, and
         default_model as non-authoritative discovery provenance.
       - UCI option scalars are normalized to bounded string values at the
-        registration boundary and that canonical map is reused for every
-        tournament, Evidence, and bot-facing launch.
+        registration boundary and that canonical baseline map is reused for every
+        tournament, Evidence, and bot-facing launch. Declared original-clock values
+        bind only from the receiving owner's actual original control.
       - Tournament participant selectors distinguish duplicate display names
         with component version and stable resource identity while retaining
         the preferred-engine indicator.
@@ -277,6 +284,10 @@ local_match_planner:
     - Engine-specific overrides do not mutate catalog defaults.
     - Plans are deterministic for the same normalized inputs and seed.
     - Every scheduled game records both engine fingerprints and options.
+    - Producer-declared clock options are bound from the competition's original
+      initial_ms/increment_ms before every fresh or resumed game's isready. The
+      recorded effective options retain those exact values independently of
+      remaining clocks. Missing/invalid actual control fails before child launch.
     - Before admitting the first game, Manager repeats the complete UCI probe
       for every distinct participant with that competition's effective option
       set and verifies the executable fingerprint still equals the registered

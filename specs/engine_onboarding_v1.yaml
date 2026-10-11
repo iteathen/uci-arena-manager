@@ -87,8 +87,9 @@ probe:
       same engine.register dry-run path used immediately before persistence.
     - A passing probe performs process launch, uciok, readyok, typed option
       discovery, and a legal start-position bestmove.
-    - The generic fresh-position probe requests `go movetime 500` for every
-      standard UCI engine, under the independent first-bestmove deadline.
+    - The generic fresh-position probe without an explicit original clock requests
+      `go movetime 500`, under the independent first-bestmove deadline. Declared
+      clock-option candidates follow actual_clock_option_binding instead.
       This is a bounded publication request, not fixed-depth qualification;
       no reported depth, node count, or search strength is required or inferred.
     - Each protocol phase owns an independent bounded deadline. Time spent in
@@ -128,13 +129,15 @@ probe:
       authority.
     - Probe and registration validate that every requested UCI option was
       advertised by the engine, apply the options before readyok and the legal
-      bestmove check, and retain the same normalized values for later games.
+      bestmove check, and retain baseline normalized values for later games.
+      Declared clock options bind their effective values only from original control.
     - Dashboard and CLI may explicitly replace a receipt candidate's
       advertised ModelRoot with an operator-selected directory. For a managed
-      launch profile every other argument and option remains exact, and the
+      launch profile every other argument and option remains exact except the
+      explicitly declared original-clock values, and the
       complete probe must load the selected deployment and republish its
       post-selection runtime identity before the selection can be persisted.
-    - A custom ModelRoot retains every other Engine-owned UCI option, including
+    - A custom ModelRoot retains every other Engine-owned baseline UCI option, including
       timing reserves and forecast settings already derived from selected
       Evidence. If the managed launch profile names a timing profile, its
       identity remains bound to the registration as a reusable operational
@@ -158,6 +161,45 @@ probe:
       search-core, and timing-contract field before the legal bestmove can
       authorize registration. Conservative and ordinary UCI candidates do not
       require this optional Engine capability.
+
+actual_clock_option_binding:
+  declaration: arena_uci_clock_option_bindings_v1
+  owner: producing_engine_launch_profile
+  shape:
+    schema: arena_uci_clock_option_bindings_v1
+    schema_version: 1
+    bindings: bounded_option_name_to_initial_ms_or_increment_ms
+  rules:
+    - The optional clock_option_bindings declaration is closed and contains one
+      or two names already present in the opaque profile's uci_options. Each
+      named option must be advertised as spin and accept the actual clock value.
+    - Only explicitly declared per-game option values are excluded from managed
+      parameter identity matching. Every other argument and option remains exact;
+      the ModelRoot exception retains its existing separately owned behavior.
+    - Never infer an actual clock from policy contents, evidence metadata,
+      remaining clocks, prior game/probe values, a model name or provider identity.
+    - Test/Register/Refresh require an explicit positive original initial_ms and
+      nonnegative increment_ms when a declaration exists. Missing, unknown or
+      malformed control rejects before child launch. The local probe creates no
+      game/history resource and makes no playing-strength or population claim.
+    - A clock-bound probe sends ucinewgame, binds actual declared clock options,
+      then isready before position admission. It sends real-clock go with that
+      original initial/increment control. After at most the existing 500ms local
+      publication window it requests stop and consumes the completed bestmove
+      under the existing independent receive deadline. Never mix movetime and
+      clock budgets, infer an allocation strategy or wait the whole game clock.
+    - Ordinary probes without explicit clock control retain go movetime 500.
+    - Dashboard Test/Register, output-activation refresh, and CLI probe/add/set-model
+      carry that same explicit control. CLI candidate-id selects the current verified
+      candidate and retains its exact arguments/options; bare executable probing
+      cannot establish receipt-profile acceptance.
+    - Persist the profile's baseline options and declaration separately from the
+      explicit probe_time_control. A competition preflight and every fresh or
+      resumed game bind from that competition's original TimeControl before
+      isready, never from residual clocks or registered probe values.
+    - Rebinding is only new-game preparation. No profile/policy/hash/Require flag
+      is rewritten during an active game. Failure preserves registration and
+      joins the owned child through the existing process lifecycle.
 
 registration:
   confirmation: explicit_only
@@ -191,7 +233,8 @@ registration:
       the legacy option_overrides spelling remains input-compatible for
       existing automation but cannot conflict with uci_options. String,
       boolean, and integer inputs are normalized once to UCI strings before
-      persistence and every later launch uses those exact values. Retained
+      persistence and later launches use those exact baseline values except declared
+      original-clock options bound from that game's TimeControl. Retained
       pre-normalization registrations are accepted through the same bounded
       conversion and become canonical on explicit refresh.
     - Registrations retained from an earlier Manager version may lack the
@@ -214,6 +257,10 @@ registration:
       digest, launch arguments, options, or launch-profile identity differs.
       This is reconciliation of existing Installer authority, not implicit
       discovery registration.
+    - Startup reconciliation compares the clock declaration independently from
+      baseline options. When a changed clock-bound candidate needs a new probe,
+      it reports explicit_probe_clock_required and preserves the registration
+      without launching a child or deriving a clock from a retained probe value.
     - A persisted operator model selection is explicit registration authority
       and is never replaced during startup. Legacy managed registrations whose
       selection authority is not provable also remain unchanged and require an
@@ -280,7 +327,7 @@ acceptance:
   - The Engines dashboard and CLI can select another directory through the
     advertised ModelRoot option, show the packaged default separately, and
     persist the custom path only after a successful post-selection probe.
-  - Selecting a custom ModelRoot keeps every other managed option exact,
+  - Selecting a custom ModelRoot keeps every other managed baseline option exact,
     including configured timing reserves and forecast settings, and keeps the
     selected timing-profile identity active as a reusable operational baseline.
     Only the packaged runtime identity and marginal move-quality calibration

@@ -30,6 +30,22 @@
     "working_directory": {"type": "string", "minLength": 1},
     "arguments": {"type": "array", "items": {"type": "string"}},
     "uci_options": {"type": "object"},
+    "clock_option_bindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "schema_version", "bindings"],
+      "properties": {
+        "schema": {"const": "arena_uci_clock_option_bindings_v1"},
+        "schema_version": {"const": 1},
+        "bindings": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 2,
+          "propertyNames": {"pattern": "^[A-Za-z0-9 _-]{1,128}$"},
+          "additionalProperties": {"enum": ["initial_ms", "increment_ms"]}
+        }
+      }
+    },
     "component_id": {"type": "string"},
     "component_version": {"type": "string"},
     "recommended": {"type": "boolean"},

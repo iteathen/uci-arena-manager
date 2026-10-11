@@ -465,12 +465,26 @@ int main(int argc, char** argv) {
         auto* engine = app.add_subcommand("engine", "Manage UCI engines");
         engine->require_subcommand(1);
         auto* engine_list = engine->add_subcommand("list", "List registered engines");
+        auto* engine_candidates = engine->add_subcommand("candidates", "List verified engine candidates");
+        std::uint64_t probe_initial_ms{}, probe_increment_ms{};
+        const auto clock_options = [&](CLI::App* subcommand) {
+            auto* initial = subcommand->add_option("--initial-ms", probe_initial_ms, "Explicit original initial clock for this local diagnostic")
+                ->check(CLI::Range(std::uint64_t{1}, std::uint64_t{9007199254740991ULL}));
+            auto* increment = subcommand->add_option("--increment-ms", probe_increment_ms, "Explicit original increment for this local diagnostic")
+                ->check(CLI::Range(std::uint64_t{0}, std::uint64_t{9007199254740991ULL}));
+            initial->needs(increment);
+            increment->needs(initial);
+            return initial;
+        };
         auto* engine_probe = engine->add_subcommand("probe", "Probe an engine without registering");
+        std::string probe_candidate_id;
         std::filesystem::path probe_executable;
         std::filesystem::path probe_working_directory;
         std::filesystem::path probe_model_root;
         std::vector<std::string> probe_arguments;
-        engine_probe->add_option("executable", probe_executable)->required();
+        engine_probe->add_option("executable", probe_executable);
+        engine_probe->add_option("--candidate-id", probe_candidate_id, "Use the current verified candidate with its exact profile; omit manual executable/arguments");
+        const auto* probe_clock_option = clock_options(engine_probe);
         engine_probe->add_option("--working-directory", probe_working_directory);
         engine_probe->add_option("--arg", probe_arguments);
         engine_probe->add_option(
@@ -485,10 +499,13 @@ int main(int argc, char** argv) {
         std::filesystem::path engine_model_root;
         std::vector<std::string> engine_arguments;
         bool engine_dry_run = false;
+        std::string engine_candidate_id;
         engine_add->add_option(
             "--name", engine_name,
             "Optional display name; defaults to the identity reported by the engine");
-        engine_add->add_option("--executable", engine_executable)->required();
+        engine_add->add_option("--executable", engine_executable);
+        engine_add->add_option("--candidate-id", engine_candidate_id, "Use the current verified candidate with its exact profile; omit manual executable/arguments");
+        const auto* add_clock_option = clock_options(engine_add);
         engine_add->add_option("--working-directory", engine_working_directory);
         engine_add->add_option("--arg", engine_arguments);
         engine_add->add_option(
@@ -502,6 +519,7 @@ int main(int argc, char** argv) {
             "Select ModelRoot while retaining reusable timing evidence");
         std::string engine_set_model_id;
         std::filesystem::path selected_model_root;
+        const auto* model_clock_option = clock_options(engine_set_model);
         engine_set_model->add_option("id", engine_set_model_id)->required();
         engine_set_model
             ->add_option(
@@ -692,6 +710,19 @@ int main(int argc, char** argv) {
             endpoint,
             data_directory,
             std::chrono::milliseconds(startup_wait_ms));
+        const auto candidate_parameters = [&](const std::string& candidate_id) {
+            const json discovery = client.get("/api/v1/engine-candidates");
+            json selected = nullptr;
+            for (const auto& candidate : discovery.at("candidates")) {
+                if (candidate.value("candidate_id", "") != candidate_id) continue;
+                if (!selected.is_null()) throw std::runtime_error("verified candidate id is ambiguous");
+                selected = candidate;
+            }
+            if (selected.is_null() || selected.value("state", "") != "ready_to_probe") throw std::runtime_error("verified candidate is unavailable");
+            json parameters = json::object();
+            for (const auto* field : {"display_name", "executable", "working_directory", "arguments", "uci_options", "candidate_id"}) parameters[field] = selected.at(field);
+            return parameters;
+        };
         if (*status || *health) {
             print_json(client.get("/api/v1/system/status"), output);
         } else if (*doctor) {
@@ -745,16 +776,23 @@ int main(int argc, char** argv) {
             if (!probe_model_root.empty()) {
                 options["ModelRoot"] = probe_model_root.string();
             }
-            print_json(
-                client.post(
-                    "/api/v1/engine-probes",
-                    {
-                        {"executable", probe_executable.string()},
-                        {"working_directory", probe_working_directory.string()},
-                        {"arguments", probe_arguments},
-                        {"uci_options", std::move(options)},
-                    }),
-                output);
+            json parameters = {
+                {"executable", probe_executable.string()}, {"working_directory", probe_working_directory.string()},
+                {"arguments", probe_arguments}, {"uci_options", std::move(options)},
+            };
+            if (!probe_candidate_id.empty()) {
+                if (!probe_executable.empty() || !probe_working_directory.empty() || !probe_arguments.empty()) {
+                    throw std::runtime_error("candidate-id cannot be combined with manual executable, working-directory, or arguments");
+                }
+                parameters = candidate_parameters(probe_candidate_id);
+                if (!probe_model_root.empty()) parameters["uci_options"]["ModelRoot"] = probe_model_root.string();
+            } else if (probe_executable.empty()) {
+                throw std::runtime_error("engine probe requires an executable or verified candidate-id");
+            }
+            if (probe_clock_option->count()) parameters["time_control"] = {{"initial_ms", probe_initial_ms}, {"increment_ms", probe_increment_ms}};
+            print_json(client.post("/api/v1/engine-probes", parameters), output);
+        } else if (*engine_candidates) {
+            print_json(client.get("/api/v1/engine-candidates"), output);
         } else if (*engine_list) {
             print_json(client.get("/api/v1/resources/engine"), output);
         } else if (*engine_add) {
@@ -765,18 +803,20 @@ int main(int argc, char** argv) {
             if (!engine_model_root.empty()) {
                 options["ModelRoot"] = engine_model_root.string();
             }
-            print_json(
-                client.post("/api/v1/commands",
-                            command("engine.register", "engine",
-                                    {
-                                        {"display_name", engine_name},
-                                        {"executable", engine_executable.string()},
-                                        {"working_directory", engine_working_directory.string()},
-                                        {"arguments", engine_arguments},
-                                        {"uci_options", std::move(options)},
-                                    },
-                                    engine_dry_run)),
-                output);
+            json parameters = {{"display_name", engine_name}, {"executable", engine_executable.string()},
+                {"working_directory", engine_working_directory.string()}, {"arguments", engine_arguments}, {"uci_options", std::move(options)}};
+            if (!engine_candidate_id.empty()) {
+                if (!engine_executable.empty() || !engine_working_directory.empty() || !engine_arguments.empty()) {
+                    throw std::runtime_error("candidate-id cannot be combined with manual executable, working-directory, or arguments");
+                }
+                parameters = candidate_parameters(engine_candidate_id);
+                if (!engine_name.empty()) parameters["display_name"] = engine_name;
+                if (!engine_model_root.empty()) parameters["uci_options"]["ModelRoot"] = engine_model_root.string();
+            } else if (engine_executable.empty()) {
+                throw std::runtime_error("engine add requires an executable or verified candidate-id");
+            }
+            if (add_clock_option->count()) parameters["time_control"] = {{"initial_ms", probe_initial_ms}, {"increment_ms", probe_increment_ms}};
+            print_json(client.post("/api/v1/commands", command("engine.register", "engine", parameters, engine_dry_run)), output);
         } else if (*engine_set_model) {
             const json engines = client.get("/api/v1/resources/engine");
             json registered = nullptr;
@@ -833,23 +873,20 @@ int main(int argc, char** argv) {
                     "the selected engine candidate does not publish ModelRoot");
             }
             options["ModelRoot"] = selected_model_root.string();
+            json parameters = {
+                {"display_name", registered_data.value("display_name", "")},
+                {"executable", selected_candidate.at("executable")}, {"working_directory", selected_candidate.at("working_directory")},
+                {"arguments", selected_candidate.at("arguments")}, {"uci_options", std::move(options)},
+                {"candidate_id", selected_candidate.at("candidate_id")},
+            };
+            if (model_clock_option->count()) parameters["time_control"] = {{"initial_ms", probe_initial_ms}, {"increment_ms", probe_increment_ms}};
             print_json(
                 client.post(
                     "/api/v1/commands",
                     command(
                         "engine.refresh",
                         "engine",
-                        {
-                            {"display_name",
-                             registered_data.value("display_name", "")},
-                            {"executable", selected_candidate.at("executable")},
-                            {"working_directory",
-                             selected_candidate.at("working_directory")},
-                            {"arguments", selected_candidate.at("arguments")},
-                            {"uci_options", std::move(options)},
-                            {"candidate_id",
-                             selected_candidate.at("candidate_id")},
-                        },
+                        parameters,
                         false,
                         engine_set_model_id,
                         registered.at("revision").get<std::uint64_t>())),

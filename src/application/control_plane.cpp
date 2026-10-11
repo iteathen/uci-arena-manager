@@ -362,6 +362,26 @@ std::map<std::string, std::string> uci_option_overrides(
     }
 }
 
+std::optional<domain::TimeControl> probe_clock_control(const json& parameters, const bool required) {
+    if (!parameters.contains("time_control")) {
+        if (required) throw CommandFailure("engine_clock_required", "Choose an actual initial time and increment for the local probe", 422);
+        return std::nullopt;
+    }
+    const json& value = parameters.at("time_control");
+    const auto valid_integer = [](const json& number, bool positive) {
+        return number.is_number_integer() && number >= (positive ? 1 : 0) && number <= 9007199254740991ULL;
+    };
+    if (!value.is_object() || value.size() != 2U || !value.contains("initial_ms") ||
+        !value.contains("increment_ms") || !valid_integer(value.at("initial_ms"), true) ||
+        !valid_integer(value.at("increment_ms"), false)) {
+        throw CommandFailure("engine_clock_invalid", "Actual initial time and increment must be bounded whole milliseconds", 422);
+    }
+    domain::TimeControl actual;
+    actual.initial_ms = value.at("initial_ms").get<std::uint64_t>();
+    actual.increment_ms = value.at("increment_ms").get<std::uint64_t>();
+    return actual;
+}
+
 bool is_model_root_only_override(
     const json& requested_options,
     const json& candidate_options) {
@@ -1151,6 +1171,18 @@ void ControlPlane::reconcile_installed_engine() {
         }
         const json candidate_options = engine_option_values_json(
             uci_option_overrides(candidate.at("uci_options")));
+        const json declaration = candidate.value("clock_option_bindings", json{});
+        const auto bindings = declaration.is_null() ? domain::ClockOptionBindings{} :
+            EngineOnboarding::clock_option_bindings(declaration, candidate.at("uci_options"));
+        json immutable_current = current.value("option_overrides", json::object());
+        json immutable_candidate = candidate_options;
+        bool clock_names_present = true;
+        for (const auto& [name, unused] : bindings) {
+            static_cast<void>(unused);
+            clock_names_present = clock_names_present && immutable_current.contains(name);
+            immutable_current.erase(name);
+            immutable_candidate.erase(name);
+        }
         const bool current_generation =
             current.value("candidate_id", "") ==
                 candidate.value("candidate_id", "") &&
@@ -1164,8 +1196,8 @@ void ControlPlane::reconcile_installed_engine() {
                 candidate.value("working_directory", "") &&
             current.value("arguments", json::array()) ==
                 candidate.at("arguments") &&
-            current.value("option_overrides", json::object()) ==
-                candidate_options &&
+            clock_names_present && current.value("clock_option_bindings", json{}) == declaration &&
+            immutable_current == immutable_candidate &&
             current.at("launch_profile") == candidate.at("launch_profile");
         if (current_generation) {
             set_installed_engine_reconciliation({
@@ -1175,6 +1207,15 @@ void ControlPlane::reconcile_installed_engine() {
                 {"outcome", "current"},
                 {"resource_id", resource.id},
                 {"revision", resource.revision},
+            });
+            return;
+        }
+
+        if (!bindings.empty()) {
+            set_installed_engine_reconciliation({
+                {"schema", "arena_installed_engine_reconciliation_v1"}, {"state", "complete"},
+                {"observed_at", domain::utc_now()}, {"outcome", "explicit_probe_clock_required"},
+                {"resource_id", resource.id}, {"revision", resource.revision},
             });
             return;
         }
@@ -1455,6 +1496,9 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
     const json normalized_options = engine_option_values_json(option_overrides);
     json expected_runtime = nullptr;
     json selected_candidate = nullptr;
+    domain::ClockOptionBindings clock_bindings;
+    json clock_declaration = nullptr;
+    json stored_options = normalized_options;
     bool model_root_overridden = false;
     const bool candidate_selected = parameters.contains("candidate_id") &&
         parameters.at("candidate_id").is_string() &&
@@ -1488,8 +1532,20 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
             const json normalized_candidate_options =
                 engine_option_values_json(
                     uci_option_overrides(candidate.at("uci_options")));
+            json requested_identity = normalized_options;
+            json candidate_identity = normalized_candidate_options;
+            if (candidate.contains("clock_option_bindings")) {
+                clock_declaration = candidate.at("clock_option_bindings");
+                clock_bindings = EngineOnboarding::clock_option_bindings(clock_declaration, candidate.at("uci_options"));
+                for (const auto& [name, source] : clock_bindings) {
+                    static_cast<void>(source);
+                    requested_identity.erase(name);
+                    candidate_identity.erase(name);
+                    stored_options[name] = normalized_candidate_options.at(name);
+                }
+            }
             model_root_overridden = is_model_root_only_override(
-                normalized_options, normalized_candidate_options);
+                requested_identity, candidate_identity);
             if (candidate.contains("launch_profile") &&
                 candidate.at("launch_profile").is_object()) {
                 std::error_code working_error;
@@ -1500,7 +1556,7 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
                         working_error) &&
                     !working_error;
                 if (json(arguments) != candidate.at("arguments") ||
-                    (normalized_options != normalized_candidate_options &&
+                    (requested_identity != candidate_identity &&
                      !model_root_overridden) ||
                     !same_working_directory) {
                     throw CommandFailure(
@@ -1533,13 +1589,14 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
             "the registered engine component no longer matches the current verified candidate",
             409);
     }
+    const auto actual_clock = probe_clock_control(parameters, !clock_bindings.empty());
     const auto probe = adapters::UciProcess::probe(
         executable,
         working_directory,
         arguments,
         adapters::UciProbeTimeouts{},
-        option_overrides,
-        !expected_runtime.is_null());
+        uci_option_overrides(stored_options),
+        !expected_runtime.is_null(), actual_clock, clock_bindings);
     if (!probe.ok) {
         throw CommandFailure("uci_probe_failed", probe.error, 422);
     }
@@ -1582,7 +1639,7 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
         {"executable", std::filesystem::absolute(executable).string()},
         {"working_directory", std::filesystem::absolute(working_directory).string()},
         {"arguments", arguments},
-        {"option_overrides", normalized_options},
+        {"option_overrides", stored_options},
         {"discovered_options", options},
         {"engine_name", probe.engine_name},
         {"engine_author", probe.engine_author},
@@ -1593,6 +1650,8 @@ json ControlPlane::register_engine(const json& request, const std::string& actor
         {"desired_state", "stopped"},
         {"observed_state", "stopped"},
     };
+    if (!clock_declaration.is_null()) data["clock_option_bindings"] = clock_declaration;
+    if (actual_clock) data["probe_time_control"] = {{"initial_ms", actual_clock->initial_ms}, {"increment_ms", actual_clock->increment_ms}};
     if (!probe.runtime_model_fingerprint.empty() &&
         !probe.runtime_provider.empty()) {
         data["runtime_model_identity"] = {

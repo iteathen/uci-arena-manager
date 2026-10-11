@@ -1,6 +1,8 @@
 #include <iostream>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <cstdint>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -17,6 +19,15 @@ int main(int argc, char** argv) {
     std::string required_model_root;
     bool allow_model_root = false;
     bool publication_only = false;
+    std::string clock_option;
+    std::string clock_option_type = "spin";
+    std::uint64_t expected_initial = 0, expected_increment = 0;
+    std::string wire_log;
+    bool wait_for_stop = false, new_game_seen = false, clock_bound_after_new_game = false;
+    std::uint64_t bound_initial = 0;
+    std::string cached_move;
+    bool accept_remaining_clocks = false;
+    bool withhold_bestmove = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
         if (argument == "--delay-ms" && index + 1 < argc) {
@@ -39,6 +50,22 @@ int main(int argc, char** argv) {
             allow_model_root = true;
         } else if (argument == "--publication-only") {
             publication_only = true;
+        } else if (argument == "--clock-option" && index + 1 < argc) {
+            clock_option = argv[++index];
+        } else if (argument == "--clock-option-type" && index + 1 < argc) {
+            clock_option_type = argv[++index];
+        } else if (argument == "--expected-initial-ms" && index + 1 < argc) {
+            expected_initial = std::stoull(argv[++index]);
+        } else if (argument == "--expected-increment-ms" && index + 1 < argc) {
+            expected_increment = std::stoull(argv[++index]);
+        } else if (argument == "--wire-log" && index + 1 < argc) {
+            wire_log = argv[++index];
+        } else if (argument == "--wait-for-stop") {
+            wait_for_stop = true;
+        } else if (argument == "--accept-remaining-clocks") {
+            accept_remaining_clocks = true;
+        } else if (argument == "--withhold-bestmove") {
+            withhold_bestmove = true;
         }
     }
     std::string position;
@@ -47,6 +74,7 @@ int main(int argc, char** argv) {
     const std::vector<std::string> scholar_mate{
         "e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "h5f7"};
     for (std::string line; std::getline(std::cin, line);) {
+        if (!wire_log.empty()) std::ofstream(wire_log, std::ios::app) << line << '\n';
         if (line == "uci") {
             std::cout << "id name Arena Mock Engine\n"
                       << "id author UCI Arena Manager\n"
@@ -58,7 +86,18 @@ int main(int argc, char** argv) {
             } else {
                 std::cout << "info string model loaded:backend:onnx:path:fixture:fingerprint:8104116015256418347:provider:cpu:provider_numeric_fingerprint:5805769137532863231\n";
             }
+            if (!clock_option.empty()) {
+                std::cout << "option name " << clock_option
+                          << " type " << clock_option_type << " default 0 min 0 max 3600000\n";
+            }
             std::cout << "uciok\n" << std::flush;
+        } else if (!clock_option.empty() && line.starts_with("setoption name " + clock_option + " value ")) {
+            bound_initial = std::stoull(line.substr(("setoption name " + clock_option + " value ").size()));
+            clock_bound_after_new_game = new_game_seen;
+        } else if (line == "ucinewgame") {
+            new_game_seen = true;
+            clock_bound_after_new_game = false;
+            cached_move.clear();
         } else if (line.starts_with("setoption name ModelRoot value ")) {
             const std::filesystem::path supplied_model_root = line.substr(
                 std::string("setoption name ModelRoot value ").size());
@@ -72,6 +111,7 @@ int main(int argc, char** argv) {
                     equivalent_error);
             }
         } else if (line == "isready") {
+            if (!clock_option.empty() && (!clock_bound_after_new_game || bound_initial != expected_initial)) return 2;
             if (ready_delay_ms > 0) {
                 std::this_thread::sleep_for(
                     std::chrono::milliseconds(ready_delay_ms));
@@ -92,6 +132,21 @@ int main(int argc, char** argv) {
         } else if (line.starts_with("position ")) {
             position = line;
         } else if (line.starts_with("go ")) {
+            if (!clock_option.empty()) {
+                const std::string expected = "go wtime " + std::to_string(expected_initial) +
+                    " btime " + std::to_string(expected_initial) + " winc " +
+                    std::to_string(expected_increment) + " binc " + std::to_string(expected_increment);
+                if (!accept_remaining_clocks && line != expected) return 2;
+                if (accept_remaining_clocks) {
+                    std::istringstream clocks(line);
+                    std::string go, wt, bt, wi, bi;
+                    std::uint64_t white = 0, black = 0, white_inc = 0, black_inc = 0;
+                    if (!(clocks >> go >> wt >> white >> bt >> black >> wi >> white_inc >> bi >> black_inc) ||
+                        go != "go" || wt != "wtime" || bt != "btime" || wi != "winc" || bi != "binc" ||
+                        white > expected_initial || black > expected_initial ||
+                        white_inc != expected_increment || black_inc != expected_increment || line.find("movetime") != std::string::npos) return 2;
+                }
+            }
             if (publication_only) {
                 std::istringstream request(line);
                 std::string go, budget, extra;
@@ -134,8 +189,14 @@ int main(int argc, char** argv) {
             if (!publication_only) {
                 std::cout << "info depth 1 score cp 12 nodes 20 pv " << move << "\n";
             }
-            std::cout << "bestmove " << move << "\n" << std::flush;
+            if (withhold_bestmove) continue;
+            if (wait_for_stop) cached_move = move;
+            else std::cout << "bestmove " << move << "\n" << std::flush;
+        } else if (line == "stop" && !cached_move.empty()) {
+            std::cout << "bestmove " << cached_move << "\n" << std::flush;
+            cached_move.clear();
         } else if (line == "quit") {
+            if (!wire_log.empty()) std::ofstream(wire_log, std::ios::app) << "owned-child-exit\n";
             return 0;
         }
     }

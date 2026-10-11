@@ -1,4 +1,5 @@
 #pragma once
+#include "arena/domain/clock_option_bindings.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -17,6 +18,7 @@ struct UciGameEngine {
     std::filesystem::path working_directory;
     std::vector<std::string> arguments;
     std::map<std::string, std::string> options;
+    domain::ClockOptionBindings clock_bindings;
 };
 
 struct UciGameState {
