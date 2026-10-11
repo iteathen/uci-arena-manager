@@ -416,14 +416,16 @@ int main(int argc, char** argv) {
         app.require_subcommand(1);
         std::string endpoint{"http://127.0.0.1:47831"};
         std::filesystem::path data_directory{default_manager_data_directory()};
-        arena::application::ManagerInstallationRoots requested_roots;
         std::string output{"human"};
         app.add_option("--endpoint", endpoint, "Service endpoint");
-        auto* data_option = app.add_option("--data-dir", data_directory, "Service data directory");
+        [[maybe_unused]] auto* data_option = app.add_option("--data-dir", data_directory, "Service data directory");
+#ifdef _WIN32
+        arena::application::ManagerInstallationRoots requested_roots;
         app.add_option("--install-root", requested_roots.install, "Selected Installer component root");
         app.add_option("--cache-root", requested_roots.cache, "Selected Installer cache root");
         app.add_option("--workspace-root", requested_roots.workspace, "Selected Installer workspace root");
         app.add_option("--knowledge-root", requested_roots.knowledge, "Selected Installer knowledge root");
+#endif
         app.add_option("--output", output, "Output: human, json, or jsonl")
             ->check(CLI::IsMember({"human", "json", "jsonl"}));
 
@@ -657,16 +659,16 @@ int main(int argc, char** argv) {
         }
 
         desktop_host_mode = *ui && desktop_host;
-        const bool complete_roots_requested = !requested_roots.install.empty() || !requested_roots.cache.empty() ||
-            !requested_roots.workspace.empty() || !requested_roots.knowledge.empty();
         std::optional<arena::application::ManagerInstallationRoots> installation_roots;
 #ifdef _WIN32
         const std::string install_scope = arena::platform::is_windows_per_user_install() ? "per-user" : "per-machine";
         const auto setup_executable = current_executable_directory() / "arena-setup.exe";
 #else
-        const std::string install_scope = "per-machine";
         const auto setup_executable = current_executable_directory() / "arena-setup";
 #endif
+#ifdef _WIN32
+        const bool complete_roots_requested = !requested_roots.install.empty() || !requested_roots.cache.empty() ||
+            !requested_roots.workspace.empty() || !requested_roots.knowledge.empty();
         if (complete_roots_requested || data_option->count() == 0) {
             std::optional<arena::application::ManagerInstallationRoots> requested;
             if (complete_roots_requested) {
@@ -679,6 +681,9 @@ int main(int argc, char** argv) {
             if (installation_roots) data_directory = installation_roots->data;
         }
         const bool setup_authorized = desktop_host && installation_roots.has_value();
+#else
+        const bool setup_authorized = desktop_host;
+#endif
         if (startup_wait_ms > 0 && !desktop_host_mode) {
             throw std::invalid_argument(
                 "--startup-wait-ms is available only to the native desktop host");

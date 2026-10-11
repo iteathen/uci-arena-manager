@@ -21,6 +21,8 @@ using ManagerLayoutQuery = std::function<std::optional<nlohmann::json>()>;
 [[nodiscard]] std::optional<nlohmann::json> query_manager_package_layout(const std::filesystem::path& setup, std::string_view scope);
 [[nodiscard]] std::vector<std::string> manager_root_arguments(const ManagerInstallationRoots& roots);
 [[nodiscard]] std::vector<std::string> manager_setup_root_arguments(const ManagerInstallationRoots& roots);
+[[nodiscard]] std::vector<std::string> manager_setup_root_arguments(
+    const std::optional<ManagerInstallationRoots>& roots, const std::filesystem::path& legacy_data);
 [[nodiscard]] std::vector<std::string> manager_service_arguments(const std::filesystem::path& data, const std::filesystem::path& web);
 [[nodiscard]] std::filesystem::path manager_browser_profile_root(const std::filesystem::path& data, bool per_user,
     const std::filesystem::path& private_user_profile);

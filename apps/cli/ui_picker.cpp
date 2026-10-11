@@ -422,20 +422,22 @@ json run_setup_elevated(
 
 void require_current_setup_roots(
     const std::filesystem::path& setup_executable,
-    const arena::application::ManagerInstallationRoots& roots) {
+    const std::optional<arena::application::ManagerInstallationRoots>& roots) {
 #ifdef _WIN32
+    if (!roots) throw std::runtime_error("Native setup requires admitted Installer root authority");
     const std::string scope = arena::platform::is_windows_per_user_install() ? "per-user" : "per-machine";
-#else
-    const std::string scope = "per-machine";
-#endif
     static_cast<void>(arena::application::resolve_manager_installation_roots(roots,
         [&]() { return arena::application::query_manager_package_layout(setup_executable, scope); }, scope));
+#else
+    static_cast<void>(setup_executable);
+    static_cast<void>(roots);
+#endif
 }
 
 json run_setup(
     const std::filesystem::path& setup_executable,
     const std::filesystem::path& manager_data_root,
-    const arena::application::ManagerInstallationRoots& fixed_setup_roots,
+    const std::optional<arena::application::ManagerInstallationRoots>& fixed_setup_roots,
     const SetupRequest& request,
     const bool apply) {
     if (!std::filesystem::is_regular_file(setup_executable) ||
@@ -444,10 +446,10 @@ json run_setup(
             "The adjacent arena-setup executable is unavailable; repair UCI Arena Suite Setup");
     }
     require_current_setup_roots(setup_executable, fixed_setup_roots);
-    if (manager_data_root.lexically_normal() != fixed_setup_roots.data.lexically_normal()) {
+#ifdef _WIN32
+    if (manager_data_root.lexically_normal() != fixed_setup_roots->data.lexically_normal()) {
         throw std::runtime_error("Manager data root differs from Installer root authority");
     }
-#ifdef _WIN32
     const bool per_user_install =
         arena::platform::is_windows_per_user_install();
 #else
@@ -495,7 +497,7 @@ json run_setup(
         }
     } guard{result_path};
 
-    std::vector<std::string> arguments = arena::application::manager_setup_root_arguments(fixed_setup_roots);
+    std::vector<std::string> arguments = arena::application::manager_setup_root_arguments(fixed_setup_roots, manager_data_root);
     arguments.insert(arguments.end(), {
 #ifdef _WIN32
         "--install-scope",
@@ -637,7 +639,7 @@ json materialize_lichess_credential(
     const std::string_view credential,
     const std::filesystem::path& manager_data_root,
     const std::filesystem::path& setup_executable,
-    const arena::application::ManagerInstallationRoots& fixed_setup_roots) {
+    const std::optional<arena::application::ManagerInstallationRoots>& fixed_setup_roots) {
     if (!valid_direct_lichess_token(credential)) {
         throw std::invalid_argument(
             "the API key must be one bounded value without whitespace");
@@ -676,7 +678,7 @@ json materialize_lichess_credential(
 json qualify_and_import_lichess_profiles(
     const std::filesystem::path& manager_data_root,
     const std::filesystem::path& setup_executable,
-    const arena::application::ManagerInstallationRoots& fixed_setup_roots) {
+    const std::optional<arena::application::ManagerInstallationRoots>& fixed_setup_roots) {
     require_current_setup_roots(setup_executable, fixed_setup_roots);
     arena::application::ProcessSupervisor process;
     const json qualification =
@@ -984,9 +986,11 @@ void run_ui_picker(
     const std::filesystem::path& setup_executable,
     const bool allow_setup,
     const std::optional<arena::application::ManagerInstallationRoots>& installation_roots) {
+#ifdef _WIN32
     if (allow_setup && (!installation_roots || installation_roots->data.lexically_normal() != manager_data_root.lexically_normal())) {
         throw std::runtime_error("Native setup requires admitted Installer root authority");
     }
+#endif
 #ifdef _WIN32
     const bool per_user = arena::platform::is_windows_per_user_install();
 #else
@@ -1351,7 +1355,7 @@ void run_ui_picker(
         },
         {drogon::Post, drogon::Options});
     if (allow_setup) {
-        const auto fixed_setup_roots = *installation_roots;
+        const auto fixed_setup_roots = installation_roots;
         application.registerHandler(
             "/v1/bot-qualification",
             [bearer_token,

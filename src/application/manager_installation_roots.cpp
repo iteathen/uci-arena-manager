@@ -54,6 +54,11 @@ std::vector<std::string> manager_root_arguments(const ManagerInstallationRoots& 
 std::vector<std::string> manager_setup_root_arguments(const ManagerInstallationRoots& roots) {
     auto result = manager_root_arguments(roots); result[0] = "--data-root"; return result;
 }
+std::vector<std::string> manager_setup_root_arguments(const std::optional<ManagerInstallationRoots>& roots,
+    const std::filesystem::path& legacy_data) {
+    return roots ? manager_setup_root_arguments(*roots) :
+        std::vector<std::string>{"--data-root", legacy_data.string()};
+}
 std::vector<std::string> manager_service_arguments(const std::filesystem::path& data, const std::filesystem::path& web) {
     return {"--data-dir", absolute_root(data.string()).string(), "--web-root", absolute_root(web.string()).string()};
 }

@@ -34,6 +34,13 @@ TEST_CASE("Desktop consumes a complete selected root tuple and setup receives ev
     REQUIRE_FALSE(parse_desktop_manager_roots({}).has_value());
 }
 
+TEST_CASE("Legacy Linux setup forwards only its data root without Windows selection", "[manager-roots]") {
+    const auto roots = fixture_roots();
+    REQUIRE(manager_setup_root_arguments(std::nullopt, roots.data) ==
+        std::vector<std::string>{"--data-root", roots.data.string()});
+    REQUIRE(manager_setup_root_arguments(roots, roots.data) == manager_setup_root_arguments(roots));
+}
+
 TEST_CASE("Partial duplicate relative and unknown desktop roots cannot start a selected installation", "[manager-roots]") {
     auto arguments = manager_root_arguments(fixture_roots());
     REQUIRE_THROWS(parse_desktop_manager_roots({"--data-dir", arguments[1]}));
