@@ -1,6 +1,7 @@
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <filesystem>
 
 namespace {
 
@@ -42,6 +43,18 @@ bool has_argument_pair(
 }  // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 5 && std::string_view(argv[1]) == "--install-scope" &&
+        std::string_view(argv[3]) == "--json" && std::string_view(argv[4]) == "layout") {
+        const std::string scope = argv[2];
+        if (scope != "per-user" && scope != "per-machine") return 2;
+        std::string root = std::filesystem::current_path().generic_string();
+        replace_all(root, "\\", "\\\\"); replace_all(root, "\"", "\\\"");
+        std::cout << "{\"schema\":\"arena_package_layout_selection_v1\",\"scope\":\"" << scope
+            << "\",\"integration_root\":\"" << root << "\",\"roots\":{\"data\":\"" << root
+            << "/data\",\"install\":\"" << root << "/installed\",\"cache\":\"" << root
+            << "/cache\",\"workspace\":\"" << root << "/workspaces\",\"knowledge\":\"" << root << "/knowledge\"}}\n";
+        return std::filesystem::path(argv[0]).filename().string().find("layout-exit2") != std::string::npos ? 2 : 0;
+    }
     if (argc < 4) {
         return 2;
     }

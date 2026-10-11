@@ -330,6 +330,17 @@ bool NativeProcess::running() const {
 
 std::uint64_t NativeProcess::pid() const { return impl_->process_id; }
 
+std::optional<std::uint32_t> NativeProcess::exit_code() const {
+    // Exit status may become observable just before the process handle is signaled.
+    // Join that exact child within a bounded interval before admitting its status.
+    if (impl_->process == nullptr || WaitForSingleObject(impl_->process, 250) != WAIT_OBJECT_0) {
+        return std::nullopt;
+    }
+    DWORD code = 0;
+    return GetExitCodeProcess(impl_->process, &code)
+        ? std::optional<std::uint32_t>{code} : std::nullopt;
+}
+
 std::uint64_t NativeProcess::dropped_observational_lines() const {
     std::scoped_lock lock(impl_->mutex);
     return impl_->dropped;

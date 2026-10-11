@@ -74,6 +74,7 @@ add_library(arena_core
   src/application/broker_policy.cpp
   src/application/service_catalog.cpp
   src/application/process_supervisor.cpp
+  src/application/manager_installation_roots.cpp
   src/application/tournament_executor.cpp
   src/adapters/sqlite_store.cpp
   src/adapters/uci_process.cpp
@@ -163,7 +164,7 @@ if(WIN32)
     uci-arena-manager
     PRIVATE
       webview::core
-      arena_lifecycle
+      arena_core
       "${MSWebView2_INCLUDE_DIR}/../x64/WebView2LoaderStatic.lib"
       ole32
       shell32
@@ -181,7 +182,7 @@ if(WIN32)
   )
 else()
   add_executable(uci-arena-manager apps/launcher/main.cpp)
-  target_link_libraries(uci-arena-manager PRIVATE webview::core arena_lifecycle)
+  target_link_libraries(uci-arena-manager PRIVATE webview::core arena_core)
 endif()
 
 if(MSVC)
@@ -284,6 +285,7 @@ if(ARENA_BUILD_TESTS)
     tests/unit/client_key_store_tests.cpp
     tests/unit/component_verification_registry_tests.cpp
     tests/unit/manager_lifecycle_tests.cpp
+    tests/unit/manager_installation_roots_tests.cpp
     tests/unit/domain_tests.cpp
     tests/unit/engine_onboarding_tests.cpp
     tests/unit/match_planner_tests.cpp

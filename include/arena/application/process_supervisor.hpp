@@ -20,6 +20,7 @@ enum class ProcessCommandFailureKind {
     timeout,
     output_limit,
     invalid_output,
+    unsuccessful_exit,
 };
 
 class ProcessCommandFailure final : public std::runtime_error {
@@ -51,7 +52,8 @@ class ProcessSupervisor final {
         const std::filesystem::path& working_directory,
         const std::vector<std::string>& arguments,
         std::chrono::milliseconds timeout = std::chrono::seconds(15),
-        std::size_t maximum_output_bytes = 1024 * 1024) const;
+        std::size_t maximum_output_bytes = 1024 * 1024,
+        bool require_successful_exit = false) const;
 
   private:
     mutable std::mutex mutex_;

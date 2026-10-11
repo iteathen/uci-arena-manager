@@ -25,6 +25,7 @@ class NativeProcess final {
     void write_line(const std::string& line);
     [[nodiscard]] std::optional<std::string> read_line(std::chrono::milliseconds timeout);
     [[nodiscard]] bool running() const;
+    [[nodiscard]] std::optional<std::uint32_t> exit_code() const;
     [[nodiscard]] std::uint64_t pid() const;
     [[nodiscard]] std::uint64_t dropped_observational_lines() const;
     void stop(std::chrono::milliseconds graceful_timeout);

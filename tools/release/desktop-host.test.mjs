@@ -26,7 +26,7 @@ test("native host setup authority is narrow, typed, and unavailable to normal br
     path.join(root, "apps", "cli", "ui_picker.cpp"),
     "utf8",
   );
-  assert.match(cli, /if \(desktop_host\)[\s\S]*setup=1/u);
+  assert.match(cli, /if \(setup_authorized\)[\s\S]*setup=1/u);
   assert.match(helper, /arena_ui_setup_request_v1/);
   assert.match(helper, /component id is not available to desktop setup/);
   assert.match(helper, /\/v1\/setup-plan/);
