@@ -16,6 +16,11 @@ node tools/spec-preflight.mjs --task "<description>" --changed-files <likely pat
 
 Read the active specs returned by preflight and rerun it when touched paths change materially. Repository-boundary/provider/broker/packaging work also follows `specs/suite_lego_boundaries_v1.yaml` and the canonical suite architecture in `iteathen/uci-arena-installer`.
 
+Timing-policy/profile projections follow `specs/move_time_projection_boundary_v1.yaml`.
+Manager may forward actual consumer clocks through declared UCI/profile bindings;
+timing-policy calculations and qualification remain with their existing owners.
+Current probe/competition admission remains in `specs/engine_onboarding_v1.yaml`.
+
 ## Local constraints
 
 Current Manager specs/contracts own Manager behavior. Keep one control truth for service paths, provider registration, broker actions, persistent state, UI authority, and process control; cross-repository exchange uses published contracts rather than private source.

@@ -1,5 +1,21 @@
 schema_version: 1
 specs:
+  - spec_id: manager_move_time_projection_boundary_v1
+    path: specs/move_time_projection_boundary_v1.yaml
+    owner: manager_provider_projection
+    applies_to:
+      - specs/engine_onboarding_v1.yaml
+      - specs/product_contract_v1.yaml
+      - specs/bot_onboarding_v1.yaml
+      - specs/external_service_adapters_v1.yaml
+      - src/application/engine_onboarding.cpp
+      - src/application/service_catalog.cpp
+      - src/application/control_plane.cpp
+      - src/application/tournament_executor.cpp
+      - src/adapters/uci_process.cpp
+      - src/adapters/uci_game_runner.cpp
+      - web/src/pages/BotsPage.tsx
+      - web/src/pages/ServicesPage.tsx
   - spec_id: arena_foundation_v1
     path: specs/00_READ_FIRST.yaml
     owner: governance

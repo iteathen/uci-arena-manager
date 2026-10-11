@@ -1,0 +1,61 @@
+meta:
+  spec_id: manager_move_time_projection_boundary_v1
+  version: 1
+  status: active
+  owner: manager_provider_projection
+  reconciles: https://github.com/iteathen/uci-arena-manager/pull/124
+  accepted_discussion: SP-004
+
+purpose: >
+  Keep Manager a typed control plane and consumer-clock forwarder without
+  acquiring chess-time allocation, policy learning, search or transport-reserve
+  semantics. Current engine_onboarding_v1 and product_contract_v1 govern actual
+  probes and competitions; this boundary does not change their wire behavior.
+
+ownership:
+  manager:
+    owns:
+      - receipt_verified_component_discovery
+      - typed_provider_operation_invocation
+      - bounded_status_and_readiness_projection
+      - operator_authorization
+      - exact_consumer_owned_clock_forwarding
+    does_not_own:
+      - per_move_timing_policy_allocation
+      - useful_block_or_strategy_inference
+      - search_attention_or_move_selection
+      - provider_transport_reserve_semantics
+      - evidence_policy_qualification
+  engine_or_conforming_runtime: runtime_chess_time_application_and_move_resolution
+  evidence_provider: policy_production_orchestration_and_qualification_lifecycle
+  declared_analysis_runtime: timing_and_statistical_algorithms
+  lichess_provider: lichess_transport_api_timing_and_reserve
+  installer: opaque_artifact_composition_and_installation
+
+clock_forwarding:
+  decision: user_accepted_SP_004
+  rules:
+    - Manager may forward actual original and remaining UCI clocks and increment unchanged through declared protocol/profile bindings.
+    - Formatting a clock into its declared UCI representation and invoking the existing protocol operation does not grant timing-policy authority.
+    - Original competition TimeControl and explicit probe_time_control are consumer facts, distinct from remaining clocks, prior probe values and diagnostic durations.
+    - Optional clock_option_bindings follows engine_onboarding_v1 exactly; only named original-clock options vary, while all unrelated profile identity/options remain exact.
+    - Test/Register/Refresh retain explicit control admission, readiness and independent publication/receive bounds; a diagnostic is not playing-strength evidence.
+    - Competition preflight and every fresh/resumed game bind the competition's original control before isready, never reconstruct it from remaining clocks or policy contents.
+    - Rebinding is new-game preparation only. An active game's admitted policy/profile/hash/Require flag is not rewritten; failure preserves registration and joins its owned child.
+    - Manager does not turn clocks, increment, useful blocks, strategy coefficients or transport reserves into a per-move timing-policy allocation.
+
+projection_rules:
+  - Timing-policy and transport-profile status remain separate typed readiness dimensions; one cannot qualify the other.
+  - A configured artifact path is not qualification. Owner-published verdicts and compatibility remain authoritative.
+  - Manager does not inspect raw population evidence or replay statistical/policy math to derive a verdict.
+  - A future useful-block/strategy artifact is projected through a declared versioned owner contract; its details are not guessed from filenames or similar fields.
+  - Raw strategy coefficients are not arbitrary editable controls merely because they are JSON.
+  - Selection, requalification, activation and rollback invoke an available typed owning operation; this spec invents no missing provider operation.
+  - Current Vector is the independent JavaScript/Device-JS product over public cuda-js/Tensor/MCGS contracts; cancelled C++ chess/search is not a substitute.
+  - Generic UCI engines and independently published SDK/referee/process helpers retain their declared compatibility and roles.
+
+validation:
+  - Public profile identity remains exact except the existing ModelRoot rule and explicitly declared consumer-owned clock options.
+  - Current owner-reported missing/incompatible/rejected policy remains explicit; do not silently disable a required policy to obtain readiness.
+  - Forwarding clocks preserves their consumer authority while policy allocation and qualification remain externally owned.
+  - No new runtime capability, broad policy support, population learning or installed architecture completion is asserted by this governance amendment.
