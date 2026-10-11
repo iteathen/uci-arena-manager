@@ -1,4 +1,6 @@
 #pragma once
+#include "arena/domain/clock_option_bindings.hpp"
+#include "arena/adapters/uci_process.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -17,6 +19,7 @@ struct UciGameEngine {
     std::filesystem::path working_directory;
     std::vector<std::string> arguments;
     std::map<std::string, std::string> options;
+    domain::ClockOptionBindings clock_bindings;
 };
 
 struct UciGameState {
@@ -63,7 +66,8 @@ class UciGameRunner final {
     [[nodiscard]] static UciGameResult play(
         const UciGameRequest& request,
         const CancellationProbe& cancelled,
-        const PlyCommit& commit_ply);
+        const PlyCommit& commit_ply,
+        const UciProbeTimeouts& startup_timeouts = {});
 };
 
 }  // namespace arena::adapters

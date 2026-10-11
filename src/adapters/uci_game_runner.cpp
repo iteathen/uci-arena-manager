@@ -1,4 +1,5 @@
 #include "arena/adapters/uci_game_runner.hpp"
+#include "arena/adapters/uci_process.hpp"
 
 #include "arena/ports/native_process.hpp"
 
@@ -31,7 +32,8 @@ std::string await_token(
     ports::NativeProcess& process,
     const std::string_view token,
     const Clock::time_point deadline,
-    const UciGameRunner::CancellationProbe& cancelled) {
+    const UciGameRunner::CancellationProbe& cancelled,
+    std::vector<domain::UciOption>* options = nullptr) {
     while (Clock::now() < deadline) {
         if (cancelled()) {
             throw std::runtime_error("game cancelled");
@@ -47,6 +49,10 @@ std::string await_token(
             }
             continue;
         }
+        if (options && line->starts_with("option ")) {
+            if (options->size() >= 1024U) throw std::runtime_error("engine option advertisement exceeds bound");
+            options->push_back(UciProcess::parse_option_line(*line));
+        }
         if (*line == token || line->starts_with(std::string(token) + " ")) {
             return *line;
         }
@@ -58,20 +64,29 @@ void initialize_engine(
     ports::NativeProcess& process,
     const UciGameEngine& engine,
     const bool chess960,
-    const UciGameRunner::CancellationProbe& cancelled) {
+    const domain::TimeControl& original_clock,
+    const UciGameRunner::CancellationProbe& cancelled,
+    const UciProbeTimeouts& timeouts) {
+    const auto effective = domain::bind_clock_options(engine.options, engine.clock_bindings, original_clock);
     process.start(engine.executable, engine.working_directory, engine.arguments);
-    const auto deadline = Clock::now() + std::chrono::seconds(15);
     process.write_line("uci");
-    await_token(process, "uciok", deadline, cancelled);
+    std::vector<domain::UciOption> options;
+    await_token(process, "uciok", Clock::now() + timeouts.uci_discovery, cancelled,
+        engine.clock_bindings.empty() ? nullptr : &options);
+    if (!engine.clock_bindings.empty()) {
+        UciProcess::validate_clock_options(options, engine.clock_bindings);
+        UciProcess::validate_option_overrides(options, effective);
+        process.write_line("ucinewgame");
+    }
     if (chess960) {
         process.write_line("setoption name UCI_Chess960 value true");
     }
-    for (const auto& [name, value] : engine.options) {
+    for (const auto& [name, value] : effective) {
         process.write_line("setoption name " + name + " value " + value);
     }
     process.write_line("isready");
-    await_token(process, "readyok", deadline, cancelled);
-    process.write_line("ucinewgame");
+    await_token(process, "readyok", Clock::now() + timeouts.ready_after_options, cancelled);
+    if (engine.clock_bindings.empty()) process.write_line("ucinewgame");
 }
 
 void stop_engine(ports::NativeProcess& process) noexcept {
@@ -248,7 +263,8 @@ std::pair<std::string, std::string> finished_result(
 UciGameResult UciGameRunner::play(
     const UciGameRequest& request,
     const CancellationProbe& cancelled,
-    const PlyCommit& commit_ply) {
+    const PlyCommit& commit_ply,
+    const UciProbeTimeouts& startup_timeouts) {
     UciGameResult result;
     result.state = request.resume;
     if (result.state.white_time_ms == 0) {
@@ -288,8 +304,17 @@ UciGameResult UciGameRunner::play(
     ports::NativeProcess white;
     ports::NativeProcess black;
     try {
-        initialize_engine(white, request.white, request.chess960, cancelled);
-        initialize_engine(black, request.black, request.chess960, cancelled);
+        if (startup_timeouts.uci_discovery <= std::chrono::milliseconds::zero() ||
+            startup_timeouts.ready_after_options <= std::chrono::milliseconds::zero()) {
+            throw std::invalid_argument("game startup admission phase bounds must be positive");
+        }
+        domain::TimeControl original_clock;
+        original_clock.initial_ms = request.initial_time_ms;
+        original_clock.increment_ms = request.increment_ms;
+        static_cast<void>(domain::bind_clock_options(request.white.options, request.white.clock_bindings, original_clock));
+        static_cast<void>(domain::bind_clock_options(request.black.options, request.black.clock_bindings, original_clock));
+        initialize_engine(white, request.white, request.chess960, original_clock, cancelled, startup_timeouts);
+        initialize_engine(black, request.black, request.chess960, original_clock, cancelled, startup_timeouts);
 
         for (std::size_t ply = result.state.uci_moves.size();
              ply < request.max_plies;

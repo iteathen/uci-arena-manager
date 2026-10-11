@@ -188,6 +188,31 @@ TEST_CASE("installed engine receipts resolve provider-declared UCI entrypoints")
     fs::remove_all(root);
 }
 
+TEST_CASE("clock option declaration accepts the shared grammar and rejects foreign authority") {
+    using arena::application::EngineOnboarding;
+    const json baseline = {{"1 Original-Clock", "0"}, {"Increment_ms", "0"}};
+    const json declaration = {{"schema", "arena_uci_clock_option_bindings_v1"}, {"schema_version", 1},
+        {"bindings", {{"1 Original-Clock", "initial_ms"}, {"Increment_ms", "increment_ms"}}}};
+    const auto bindings = EngineOnboarding::clock_option_bindings(declaration, baseline);
+    arena::domain::TimeControl actual;
+    actual.initial_ms = 180000;
+    actual.increment_ms = 17;
+    const auto effective = arena::domain::bind_clock_options({{"1 Original-Clock", "0"}, {"Increment_ms", "0"}}, bindings, actual);
+    REQUIRE(effective.at("1 Original-Clock") == "180000");
+    REQUIRE(effective.at("Increment_ms") == "17");
+    REQUIRE(baseline.at("1 Original-Clock") == "0");
+    REQUIRE_THROWS(EngineOnboarding::clock_option_bindings(declaration, json::object()));
+    auto malformed = declaration;
+    const auto fault = GENERATE("foreign", "version", "extra", "empty", "unknown", "escape");
+    if (fault == std::string("foreign")) malformed["bindings"]["1 Original-Clock"] = "remaining_ms";
+    else if (fault == std::string("version")) malformed["schema_version"] = 2;
+    else if (fault == std::string("extra")) malformed["policy_control"] = {180000, 0};
+    else if (fault == std::string("empty")) malformed["bindings"] = json::object();
+    else if (fault == std::string("unknown")) malformed["bindings"] = {{"UnknownClock", "initial_ms"}};
+    else malformed["bindings"] = {{"Original\nClock", "initial_ms"}};
+    REQUIRE_THROWS(EngineOnboarding::clock_option_bindings(malformed, baseline));
+    REQUIRE_THROWS(arena::domain::bind_clock_options({{"1 Original-Clock", "0"}, {"Increment_ms", "0"}}, bindings, std::nullopt));
+}
 TEST_CASE("optional evidence capability binds the inventoried supplier without changing UCI admission") {
     const std::string component_id = GENERATE("uci_arena.vector", "example.alternate-engine");
     const fs::path root = fs::temp_directory_path() / ("arena-evidence-capability-" + arena::domain::uuid_v7());
@@ -410,6 +435,29 @@ TEST_CASE("managed engine receipt projects its Engine-owned launch profile") {
         arena::application::EngineOnboarding::discover(data_root, {}, false);
     REQUIRE(compatible.at("candidates").size() == 1);
     REQUIRE(compatible.at("candidates").at(0).at("state") == "ready_to_probe");
+
+    json clock_bound = managed_launch_profile(
+        active_root, executable, "example.engine", "1.2.3");
+    clock_bound["uci_options"]["InitialBudgetMs"] = 0;
+    const json clock_declaration = {
+        {"schema", "arena_uci_clock_option_bindings_v1"},
+        {"schema_version", 1},
+        {"bindings", {{"InitialBudgetMs", "initial_ms"}}},
+    };
+    clock_bound["clock_option_bindings"] = clock_declaration;
+    std::ofstream(configuration, std::ios::trunc) << clock_bound.dump(2);
+    const json clock_discovered =
+        arena::application::EngineOnboarding::discover(data_root, {}, false);
+    REQUIRE(clock_discovered.at("candidates").at(0).at("state") == "ready_to_probe");
+    REQUIRE(clock_discovered.at("candidates").at(0).contains("clock_option_bindings"));
+    REQUIRE(clock_discovered.at("candidates").at(0).at("clock_option_bindings") == clock_declaration);
+    REQUIRE(clock_discovered.at("candidates").at(0).at("uci_options").at("InitialBudgetMs") == 0);
+
+    clock_bound["clock_option_bindings"]["bindings"]["InitialBudgetMs"] = "remaining_ms";
+    std::ofstream(configuration, std::ios::trunc) << clock_bound.dump(2);
+    const json bad_clock =
+        arena::application::EngineOnboarding::discover(data_root, {}, false);
+    REQUIRE(bad_clock.at("candidates").at(0).at("state") == "unavailable");
 
     json stale = managed_launch_profile(
         active_root, executable, "example.engine", "1.2.2");

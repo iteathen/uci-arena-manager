@@ -12,6 +12,29 @@ import {
 } from './engineRegistration'
 
 describe('selected service output activation', () => {
+  it('requires explicit original control for a declared clock port and keeps baseline options intact', () => {
+    const source = Object.assign(candidate(), {
+      clock_option_bindings: { schema: 'arena_uci_clock_option_bindings_v1' as const, schema_version: 1 as const, bindings: { InitialBudgetMs: 'initial_ms' as const } },
+    })
+    source.uci_options.InitialBudgetMs = 0
+    expect(() => engineRegistrationParameters(source)).toThrow()
+    const parameters = engineRegistrationParameters(source, { initial_ms: 180000, increment_ms: 0 })
+    expect(parameters).toMatchObject({ time_control: { initial_ms: 180000, increment_ms: 0 }, uci_options: { InitialBudgetMs: 0 } })
+    expect(source.uci_options.InitialBudgetMs).toBe(0)
+    expect(() => engineRegistrationParameters(source, { initial_ms: 0, increment_ms: 0 })).toThrow()
+  })
+  it('only declared clock values are exempt from immutable registration identity', () => {
+    const source = Object.assign(candidate(), {
+      clock_option_bindings: { schema: 'arena_uci_clock_option_bindings_v1' as const, schema_version: 1 as const, bindings: { InitialBudgetMs: 'initial_ms' as const } },
+    })
+    source.uci_options.InitialBudgetMs = 0
+    const engine = registered(source)
+    engine.data.clock_option_bindings = source.clock_option_bindings
+    engine.data.option_overrides!.InitialBudgetMs = '180000'
+    expect(candidateRegistration(source, [engine]).state).toBe('registered')
+    engine.data.option_overrides!.Threads = '7'
+    expect(candidateRegistration(source, [engine]).state).toBe('refresh_required')
+  })
   it('refreshes only the selected resource when a component has duplicate registrations', () => {
     const source = candidate()
     const first = registered(source)
@@ -75,7 +98,7 @@ function registered(source = candidate()): Resource<EngineData> {
     updated_at: '2026-01-01T00:00:00Z',
     labels: {},
     data: {
-      ...engineRegistrationParameters(source),
+      ...engineRegistrationParameters(source, source.clock_option_bindings ? { initial_ms: 180000, increment_ms: 0 } : undefined),
       option_overrides: Object.fromEntries(
         Object.entries(source.uci_options).map(([name, value]) => [name, String(value)]),
       ),

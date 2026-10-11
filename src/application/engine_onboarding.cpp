@@ -253,6 +253,37 @@ bool bounded_identity_token(const json& value, const bool decimal_only = false) 
                });
 }
 
+void validate_clock_option_bindings(const json& profile) {
+    if (!profile.contains("clock_option_bindings")) return;
+    static_cast<void>(EngineOnboarding::clock_option_bindings(profile.at("clock_option_bindings"), profile.at("uci_options")));
+}
+
+domain::ClockOptionBindings parse_clock_option_bindings(const json& declaration, const json& baseline) {
+    if (!declaration.is_object() || declaration.size() != 3U ||
+        declaration.value("schema", "") != "arena_uci_clock_option_bindings_v1" ||
+        !declaration.contains("schema_version") ||
+        !declaration.at("schema_version").is_number_integer() ||
+        declaration.at("schema_version") != 1 ||
+        !declaration.contains("bindings") ||
+        !declaration.at("bindings").is_object() ||
+        declaration.at("bindings").empty() ||
+        declaration.at("bindings").size() > 2U) {
+        throw std::runtime_error("managed clock option declaration is invalid");
+    }
+    domain::ClockOptionBindings bindings;
+    for (const auto& [name, source] : declaration.at("bindings").items()) {
+        const auto alpha = [](unsigned char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); };
+        const bool valid_name = !name.empty() && name.size() <= 128U &&
+            std::ranges::all_of(name, [&](unsigned char c) { return alpha(c) || (c >= '0' && c <= '9') || c == '_' || c == ' ' || c == '-'; });
+        if (!valid_name || !baseline.is_object() || !baseline.contains(name) || !source.is_string() ||
+            (source != "initial_ms" && source != "increment_ms")) {
+            throw std::runtime_error("managed clock option source is invalid");
+        }
+        bindings.emplace(name, source == "initial_ms" ? domain::ClockOptionField::initial_ms : domain::ClockOptionField::increment_ms);
+    }
+    return bindings;
+}
+
 json validated_managed_launch_profile(
     const json& receipt,
     const fs::path& active_root,
@@ -389,6 +420,7 @@ json validated_managed_launch_profile(
             throw std::runtime_error("managed launch UCI option is invalid");
         }
     }
+    validate_clock_option_bindings(profile);
     return profile;
 }
 
@@ -584,6 +616,9 @@ void append_admitted_component_candidate(
             metadata["arguments"] =
                 launch_profile.at("engine").at("arguments");
             metadata["uci_options"] = launch_profile.at("uci_options");
+            if (launch_profile.contains("clock_option_bindings")) {
+                metadata["clock_option_bindings"] = launch_profile.at("clock_option_bindings");
+            }
             json timing{{"available", false}};
             const json& evidence = launch_profile.at("evidence");
             if (evidence.contains("timing_profile") &&
@@ -1080,6 +1115,11 @@ void append_path_candidates(
 }
 
 }  // namespace
+
+domain::ClockOptionBindings EngineOnboarding::clock_option_bindings(
+    const json& declaration, const json& baseline) {
+    return parse_clock_option_bindings(declaration, baseline);
+}
 
 static json discover_impl(
     const fs::path& manager_data_root,

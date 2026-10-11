@@ -30,7 +30,8 @@ import { useDisclosure } from '@mantine/hooks'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { api, makeCommand } from '../api/client'
-import type { EngineData, ManagedServiceData, Resource } from '../api/types'
+import type { EngineData, ManagedServiceData, ProbeTimeControl, Resource } from '../api/types'
+import { EngineProbeClockInputs } from '../components/EngineProbeClockInputs'
 import type { ImportedEngineOutput } from './engineRegistration'
 import { PageHeader } from '../components/PageHeader'
 import { ComponentSetupButton } from '../components/ComponentSetupButton'
@@ -62,6 +63,7 @@ import {
 
 export function ServicesPage({ navigate }: { navigate: (page: string) => void }) {
   const queryClient = useQueryClient()
+  const [refreshClock, setRefreshClock] = useState<ProbeTimeControl>()
   const profiles = useQuery({ queryKey: ['service-profiles'], queryFn: api.serviceProfiles })
   const components = useQuery({
     queryKey: ['components'],
@@ -218,7 +220,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
           makeCommand(
             'engine.refresh',
             'engine',
-            engineRegistrationParameters(candidate),
+            engineRegistrationParameters(candidate, refreshClock),
             false,
             registration.engine.id,
             registration.engine.revision,
@@ -378,7 +380,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
           jobId
             ? { job_id: jobId }
             : engineId
-              ? { engine_id: engineId }
+              ? { engine_id: engineId, ...(refreshClock ? { time_control: refreshClock } : {}) }
               : campaign && targetId
                 ? { target_id: targetId, campaign, configuration: {} }
                 : { target_id: targetId ?? null },
@@ -425,6 +427,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
       {managedOutputEngines.length > 1 && <Select mb="md" label="Engine for book and timing outputs"
         placeholder="Choose a registered engine" value={outputEngineId} onChange={setOutputEngineId}
         data={managedOutputEngines.map(engine => ({ value: engine.id, label: engine.data.display_name }))} />}
+      {(managedOutputEngines.length > 0 || eligibleEvidenceEngines.length > 0) && <EngineProbeClockInputs onChange={setRefreshClock} />}
       <SimpleGrid cols={{ base: 1, md: 2 }} mb="xl">
         <Paper withBorder className="service-profile profile-live">
           <Group justify="space-between" align="flex-start">
@@ -889,7 +892,7 @@ export function ServicesPage({ navigate }: { navigate: (page: string) => void })
                               evidenceControl.isPending &&
                               evidenceControl.variables?.action === 'target_register'
                             }
-                            disabled={evidenceControl.isPending}
+                            disabled={evidenceControl.isPending || (Boolean(preferredEvidenceEngine.data.clock_option_bindings) && !refreshClock)}
                             title="Repeat the complete UCI probe and register this exact deployment with Evidence Service."
                             onClick={() =>
                               evidenceControl.mutate({

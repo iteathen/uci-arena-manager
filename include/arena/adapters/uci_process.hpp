@@ -1,6 +1,7 @@
 #pragma once
 
 #include "arena/domain/types.hpp"
+#include "arena/domain/clock_option_bindings.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -49,6 +50,10 @@ struct UciProbeTimeouts final {
 
 class UciProcess final {
   public:
+    [[nodiscard]] static domain::UciOption parse_option_line(const std::string& line);
+    static void validate_clock_options(
+        const std::vector<domain::UciOption>& advertised_options,
+        const domain::ClockOptionBindings& bindings);
     static void validate_option_overrides(
         const std::vector<domain::UciOption>& advertised_options,
         const std::map<std::string, std::string>& option_overrides);
@@ -59,7 +64,9 @@ class UciProcess final {
         const std::vector<std::string>& arguments,
         const UciProbeTimeouts& timeouts = {},
         const std::map<std::string, std::string>& option_overrides = {},
-        bool request_runtime_status = false);
+        bool request_runtime_status = false,
+        const std::optional<domain::TimeControl>& actual_clock = std::nullopt,
+        const domain::ClockOptionBindings& clock_bindings = {});
 };
 
 }  // namespace arena::adapters

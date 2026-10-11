@@ -294,6 +294,20 @@ void add_receipt_default_model_option(
     options.emplace("ModelRoot", model_root.string());
 }
 
+domain::TimeControl original_clock_control(const json& competition) {
+    const json& time = competition.at("time_control");
+    if (!time.is_object() || !time.contains("initial_ms") || !time.contains("increment_ms") ||
+        !time.at("initial_ms").is_number_integer() || !time.at("increment_ms").is_number_integer() ||
+        time.at("initial_ms") <= 0 || time.at("increment_ms") < 0 ||
+        time.at("initial_ms") > 9007199254740991ULL || time.at("increment_ms") > 9007199254740991ULL) {
+        throw std::runtime_error("competition original clock is missing or invalid");
+    }
+    domain::TimeControl actual;
+    actual.initial_ms = time.at("initial_ms").get<std::uint64_t>();
+    actual.increment_ms = time.at("increment_ms").get<std::uint64_t>();
+    return actual;
+}
+
 adapters::UciGameEngine game_engine(
     const std::shared_ptr<ports::Store>& store,
     const json& competition,
@@ -328,6 +342,11 @@ adapters::UciGameEngine game_engine(
             engine.options[name] = value;
         }
     }
+    if (data.contains("clock_option_bindings")) {
+        engine.clock_bindings = EngineOnboarding::clock_option_bindings(data.at("clock_option_bindings"),
+            data.value("option_overrides", json::object()));
+        engine.options = domain::bind_clock_options(engine.options, engine.clock_bindings, original_clock_control(competition));
+    }
     return engine;
 }
 
@@ -344,11 +363,13 @@ void validate_competition_engines(
         engine_ids.insert(engine_id.get<std::string>());
     }
 
+    std::vector<std::pair<json, adapters::UciGameEngine>> prepared;
     for (const auto& engine_id : engine_ids) {
-        const json registered = engine_data(store, engine_id);
-        const adapters::UciGameEngine engine =
-            game_engine(
-                store, competition, engine_id, component_invocation_gate);
+        prepared.emplace_back(engine_data(store, engine_id),
+            game_engine(store, competition, engine_id, component_invocation_gate));
+    }
+    for (const auto& [registered, engine] : prepared) {
+        const std::string& engine_id = engine.resource_id;
         json expected_runtime = nullptr;
         if (registered.contains("launch_profile") &&
             registered.at("launch_profile").is_object() &&
@@ -365,7 +386,9 @@ void validate_competition_engines(
             engine.arguments,
             adapters::UciProbeTimeouts{},
             engine.options,
-            !expected_runtime.is_null());
+            !expected_runtime.is_null(),
+            engine.clock_bindings.empty() ? std::nullopt : std::optional{original_clock_control(competition)},
+            engine.clock_bindings);
         if (!probe.ok) {
             throw std::runtime_error(
                 "engine preflight failed before game admission for " +

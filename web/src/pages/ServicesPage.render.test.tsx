@@ -13,7 +13,7 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
-it('can add another engine after a target exists and retains mixed-profile campaign access', async () => {
+it.each([false, true])('can add another engine with explicit diagnostic clock=%s and retains campaign access', async (clockBound) => {
   const commands: Array<Record<string, unknown>> = []
   const service = { id: 'service', revision: 1, kind: 'managed_service', labels: {}, data: {
     profile_id: 'uci_arena_evidence', display_name: 'Evidence', integration_state: 'available',
@@ -27,6 +27,7 @@ it('can add another engine after a target exists and retains mixed-profile campa
   const engines = ['GPU engine', 'Alternative engine'].map((name, index) => ({ id: `engine-${index}`, data: {
     display_name: name, component_id: `supplier-${index}`, onboarding_source: 'install_receipt',
     evidence_runtime: { available: true },
+    ...(clockBound && index === 1 ? { clock_option_bindings: { schema: 'arena_uci_clock_option_bindings_v1', schema_version: 1, bindings: { OriginalMs: 'initial_ms' } } } : {}),
   } }))
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
@@ -47,9 +48,15 @@ it('can add another engine after a target exists and retains mixed-profile campa
     fireEvent.click(within(listbox as HTMLElement).getByText(option))
   }
   await selectOption('Engine for Evidence', 'Alternative engine')
+  if (clockBound) {
+    expect((screen.getByRole('button', { name: 'Use selected engine' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(await screen.findByLabelText('Test initial time (ms)'), { target: { value: '180000' } })
+  }
   fireEvent.click(screen.getByRole('button', { name: 'Use selected engine' }))
   await waitFor(() => expect(commands.some(command => command.action === 'service.evidence_target_register')).toBe(true))
-  expect(commands.find(command => command.action === 'service.evidence_target_register')?.parameters).toEqual({ engine_id: 'engine-1' })
+  expect(commands.find(command => command.action === 'service.evidence_target_register')?.parameters).toEqual({ engine_id: 'engine-1',
+    ...(clockBound ? { time_control: { initial_ms: 180000, increment_ms: 0 } } : {}),
+  })
   await selectOption('Evidence target', 'Retained deployment')
   fireEvent.click(screen.getByRole('button', { name: 'Run first evidence campaign' }))
   await waitFor(() => expect(commands.some(command => command.action === 'service.evidence_campaign_enqueue')).toBe(true))
