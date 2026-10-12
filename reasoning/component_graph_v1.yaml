@@ -1,0 +1,104 @@
+schema: uci_arena_component_reasoning_graph_v1
+graph_id: uci_arena_manager
+version: 1
+status: initial_owner_directed
+component: uci_arena_manager
+global_graph:
+  repository: iteathen/uci-arena-installer
+  path: reasoning/suite_graph_v1.yaml
+
+imports:
+  objectives: [G-O1, G-O2]
+  premises: [G-P4, G-P5, G-P7, G-P11]
+  targets: [G-T2, G-T5, G-T6, G-T7, G-T8, G-T9, G-T11, G-T14]
+
+local_objectives:
+  - id: M-O1
+    statement: >
+      Make engines, matches, tournaments, providers, histories, evidence, and system state
+      straightforward for an operator to configure, run, understand, and control.
+    derived_from: [G-O2]
+    confidence: 0.995
+  - id: M-O2
+    statement: >
+      Expose the proving-ground capabilities needed for controlled engine comparison without
+      absorbing the semantic ownership of engines or providers.
+    derived_from: [G-O1, G-T2, G-T5]
+    confidence: 0.98
+
+premises:
+  - id: M-P1
+    statement: Manager is a control plane and projection owner, not a second engine or provider.
+    confidence: 0.995
+  - id: M-P2
+    statement: >
+      One authoritative local API/state model reduces contradictory GUI, CLI, service, and
+      provider interpretations.
+    confidence: 0.97
+  - id: M-P3
+    statement: >
+      Operators need both high-level workflows and enough truthful detail to diagnose why a
+      match, provider, or component is unavailable.
+    confidence: 0.97
+  - id: M-P4
+    statement: >
+      Arbitrary engines and providers remain useful only if registration, options, resources,
+      and status are represented through neutral public contracts.
+    confidence: 0.98
+
+implicit_assertions:
+  - id: M-A1
+    statement: >
+      Hiding a failure behind a simplified success-shaped UI harms usability because it causes
+      incorrect operator decisions.
+    derived_from: [G-O2, M-P3]
+    confidence: 0.99
+  - id: M-A2
+    statement: >
+      Provider-specific semantics implemented inside Manager create duplicated authority and
+      increase the probability of cross-component desynchronization.
+    derived_from: [M-P1, G-P4]
+    confidence: 0.98
+  - id: M-A3
+    statement: >
+      Engine comparison is more useful when engines can be registered and substituted without
+      Manager code knowing their internal model/search implementation.
+    derived_from: [G-P5, M-P4]
+    confidence: 0.97
+  - id: M-A4
+    statement: >
+      A usable control plane should reduce routine work but retain explicit confirmation for
+      consequential, destructive, credential-bearing, or externally visible actions.
+    derived_from: [G-O2, G-T14]
+    confidence: 0.98
+
+implementation_targets:
+  - {id: M-T1, name: engine_registration_and_probe_usability, supports: [M-O1, M-O2]}
+  - {id: M-T2, name: match_and_tournament_orchestration, supports: [M-O2, G-T2]}
+  - {id: M-T3, name: single_control_plane_truth, supports: [M-O1, G-T6]}
+  - {id: M-T4, name: typed_provider_operations_and_projection, supports: [M-O1, G-T5]}
+  - {id: M-T5, name: clear_health_status_history_and_failure_surfaces, supports: [M-O1, G-T9]}
+  - {id: M-T6, name: low_operator_burden_for_common_workflows, supports: [M-O1, G-T7]}
+  - {id: M-T7, name: explicit_authorization_for_consequential_actions, supports: [G-T14]}
+  - {id: M-T8, name: responsive_local_ui_and_api, supports: [M-O1]}
+  - {id: M-T9, name: neutral_evidence_and_artifact_projection, supports: [M-O2, G-T4]}
+  - {id: M-T10, name: provider_and_engine_substitution, supports: [M-O2, G-T5]}
+
+dominance_relations:
+  - {id: M-D1, stronger: M-T3, weaker: M-T6, context: convenience_would_create_second_state_authority, confidence: 0.98, consequence: major}
+  - {id: M-D2, stronger: M-T7, weaker: M-T6, context: convenience_would_hide_consequential_external_or_destructive_action, confidence: 0.995, consequence: critical}
+  - {id: M-D3, stronger: M-T4, weaker: M-T6, context: shortcut_requires_private_provider_storage_or_semantics, confidence: 0.99, consequence: major}
+  - {id: M-D4, stronger: M-T5, weaker: M-T6, context: simplified_ui_would_misstate_failure_or_readiness, confidence: 0.97, consequence: major}
+
+importance_relations:
+  - {id: M-I1, more_important: M-T6, less_important: M-T5, context: routine_healthy_workflow_after_truthful_state_is_available, confidence: 0.83}
+  - {id: M-I2, more_important: M-T5, less_important: M-T8, context: active_failure_diagnosis, confidence: 0.94}
+  - {id: M-I3, more_important: M-T2, less_important: M-T9, context: core_controlled_competition_workflow, confidence: 0.88}
+
+exports:
+  - id: M-X1
+    statement: typed operator intent and selected competition configuration
+    supports_global: [G-T2, G-T7]
+  - id: M-X2
+    statement: bounded truthful suite/provider/engine status projection
+    supports_global: [G-T7, G-T9]
