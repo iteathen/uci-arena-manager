@@ -9,7 +9,7 @@ global_graph:
 
 imports:
   objectives: [G-O1, G-O2]
-  premises: [G-P4, G-P5, G-P7, G-P11]
+  premises: [G-P4, G-P5, G-P7, G-P11, G-P17, G-P20, G-P21, G-P23, G-P26]
   targets: [G-T2, G-T5, G-T6, G-T7, G-T8, G-T9, G-T11, G-T14]
 
 local_objectives:
