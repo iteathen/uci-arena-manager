@@ -11,7 +11,7 @@ global_graph:
 imports:
   objectives: [G-O1, G-O2]
   premises: [G-P4, G-P5, G-P6, G-P7, G-P17, G-P20, G-P21, G-P23, G-P26]
-  targets: [G-T2, G-T5, G-T6, G-T7, G-T8, G-T9, G-T11, G-T14]
+  targets: [G-T2, G-T4, G-T5, G-T6, G-T7, G-T8, G-T9, G-T11, G-T14]
 
 local_objectives:
   - id: M-O1
@@ -33,8 +33,8 @@ premises:
     confidence: 0.995
   - id: M-P2
     statement: >
-      One authoritative local API/state model reduces contradictory GUI, CLI, service, and
-      provider interpretations.
+      When GUI, CLI, service, and provider projections independently determine the same
+      lifecycle or result facts, they can disagree about the underlying operation.
     confidence: 0.97
   - id: M-P3
     statement: >
@@ -61,9 +61,9 @@ premises:
     confidence: 0.995
   - id: M-P7
     statement: >
-      Optional providers such as Book Forge, Evidence Service, and Lichess integration add
-      proving-ground capability but should not make the core local engine/match/tournament
-      arena unusable when absent or degraded.
+      Optional providers such as Book Forge, Evidence Service, and Lichess supply distinct
+      capabilities; their absence does not by itself establish failure of unrelated local
+      engine, match, or tournament operations.
     confidence: 0.99
   - id: M-P8
     statement: >
@@ -103,8 +103,8 @@ implicit_assertions:
     confidence: 0.97
   - id: M-A4
     statement: >
-      A usable control plane should reduce routine work but retain explicit confirmation for
-      consequential, destructive, credential-bearing, or externally visible actions.
+      Removing confirmation from destructive, credential-bearing, or externally visible
+      actions can reduce clicks while increasing unintended consequential operations.
     derived_from: [G-O2, G-T14]
     confidence: 0.98
 
