@@ -6,6 +6,16 @@ Universal engineering and design guidance comes from the account-global `AGENTS.
 
 UCI Arena Manager is the installed local control-plane product: service, CLI, native desktop host, web dashboard, privileged broker boundary, persistent Manager state, provider adapters, and operator-facing orchestration. It does not own Engine or provider behavior.
 
+## Decision reasoning
+
+Before a substantive architecture, design, implementation-selection, or cross-component
+decision, read `reasoning/component_graph_v1.yaml` and the canonical suite graph at
+`iteathen/uci-arena-installer/reasoning/suite_graph_v1.yaml`.
+
+The local graph owns Manager reasoning only; cross-component assumptions belong in the suite
+graph. Accepted Manager specs/contracts remain behavior authority. A graph/spec contradiction
+requires review instead of silently changing either one.
+
 ## Local routing
 
 Before substantive work run:
