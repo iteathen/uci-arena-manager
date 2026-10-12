@@ -46,6 +46,31 @@ premises:
       and status are represented through neutral public contracts.
     confidence: 0.98
 
+  - id: M-P5
+    statement: >
+      Controlled competition requires material comparison conditions such as color, opening,
+      time control, effective engine options, identities, and schedule randomization/seed to
+      be paired, balanced, fixed, or recorded so results remain interpretable.
+    confidence: 0.995
+  - id: M-P6
+    statement: >
+      Operator-selected engine, model, asset, timing, and competition configuration is part of
+      the requested experiment; discovery and defaults do not have authority to silently
+      replace explicit user intent.
+    confidence: 0.995
+  - id: M-P7
+    statement: >
+      Optional providers such as Book Forge, Evidence Service, and Lichess integration add
+      proving-ground capability but should not make the core local engine/match/tournament
+      arena unusable when absent or degraded.
+    confidence: 0.99
+  - id: M-P8
+    statement: >
+      UI and CLI state are projections of backend-owned lifecycle and evidence authority;
+      client convenience state cannot create a new resource, result, readiness, or success
+      fact.
+    confidence: 0.995
+
 implicit_assertions:
   - id: M-A1
     statement: >
@@ -72,6 +97,38 @@ implicit_assertions:
     derived_from: [G-O2, G-T14]
     confidence: 0.98
 
+  - id: M-A5
+    statement: >
+      An unpaired or materially unbalanced schedule can make color/opening/order effects look
+      like engine strength differences.
+    derived_from: [M-P5, G-P17]
+    confidence: 0.995
+  - id: M-A6
+    statement: >
+      Auto-detection or discovery of an engine, book, tablebase, timing artifact, or service
+      proves only that a candidate was found; it does not prove compatibility, qualification,
+      trust, or operator selection.
+    derived_from: [M-P6, G-P21]
+    confidence: 0.995
+  - id: M-A7
+    statement: >
+      Hiding experimental controls to simplify the planner can silently change the experiment
+      rather than merely improve presentation.
+    derived_from: [M-P5, M-P6, G-P21]
+    confidence: 0.98
+  - id: M-A8
+    statement: >
+      An unavailable optional provider should degrade its own capability and guidance rather
+      than make unrelated local competition appear unhealthy or unusable.
+    derived_from: [M-P7, G-O2]
+    confidence: 0.99
+  - id: M-A9
+    statement: >
+      Front-end optimism, cached state, or display convenience cannot establish that a
+      lifecycle mutation, match result, or provider operation actually completed.
+    derived_from: [M-P8]
+    confidence: 0.995
+
 implementation_targets:
   - {id: M-T1, name: engine_registration_and_probe_usability, supports: [M-O1, M-O2]}
   - {id: M-T2, name: match_and_tournament_orchestration, supports: [M-O2, G-T2]}
@@ -83,6 +140,29 @@ implementation_targets:
   - {id: M-T8, name: responsive_local_ui_and_api, supports: [M-O1]}
   - {id: M-T9, name: neutral_evidence_and_artifact_projection, supports: [M-O2, G-T4]}
   - {id: M-T10, name: provider_and_engine_substitution, supports: [M-O2, G-T5]}
+
+target_derivations:
+  M-T1: [M-O1, M-O2, M-P4, M-P6]
+  M-T2: [M-O2, M-P5, M-P6, G-P17, G-P26]
+  M-T3: [M-O1, M-P1, M-P2, M-P8, G-P23]
+  M-T4: [M-O1, M-O2, M-P1, M-P4, G-P23]
+  M-T5: [M-O1, M-P3, M-P8, G-P20]
+  M-T6: [M-O1, M-P3, M-P6, M-P7]
+  M-T7: [M-O1, M-P6, G-P21]
+  M-T8: [M-O1, M-P3]
+  M-T9: [M-O2, M-P1, G-P4, G-P6]
+  M-T10: [M-O2, M-P4, G-P5]
+
+assertion_relevance:
+  M-A1: [M-T5, M-T6]
+  M-A2: [M-T3, M-T4, M-T10]
+  M-A3: [M-T1, M-T2, M-T10]
+  M-A4: [M-T6, M-T7]
+  M-A5: [M-T2, M-T9]
+  M-A6: [M-T1, M-T4, M-T6, M-T9]
+  M-A7: [M-T2, M-T6]
+  M-A8: [M-T4, M-T5, M-T6]
+  M-A9: [M-T3, M-T5, M-T8]
 
 dominance_relations:
   - {id: M-D1, stronger: M-T3, weaker: M-T6, context: convenience_would_create_second_state_authority, confidence: 0.98, consequence: major}
