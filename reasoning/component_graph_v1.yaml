@@ -1,0 +1,267 @@
+schema: uci_arena_component_reasoning_graph_v1
+graph_id: uci_arena_manager
+version: 1
+status: initial_owner_directed
+component: uci_arena_manager
+concern_areas: [C03, C04, C06, C08, C09, C10, C11, C12]
+global_graph:
+  repository: iteathen/uci-arena-installer
+  path: reasoning/suite_graph_v1.yaml
+
+imports:
+  objectives: [G-O1, G-O2]
+  premises: [G-P4, G-P5, G-P6, G-P7, G-P17, G-P20, G-P21, G-P23, G-P26]
+  targets: [G-T2, G-T4, G-T5, G-T6, G-T7, G-T8, G-T9, G-T11, G-T14]
+
+local_objectives:
+  - id: M-O1
+    statement: >
+      Make engines, matches, tournaments, providers, histories, evidence, and system state
+      straightforward for an operator to configure, run, understand, and control.
+    derived_from: [G-O2]
+    confidence: 0.995
+  - id: M-O2
+    statement: >
+      Expose the proving-ground capabilities needed for controlled engine comparison without
+      absorbing the semantic ownership of engines or providers.
+    derived_from: [G-O1, G-T2, G-T5]
+    confidence: 0.98
+
+premises:
+  - id: M-P1
+    statement: Manager is a control plane and projection owner, not a second engine or provider.
+    confidence: 0.995
+  - id: M-P2
+    statement: >
+      When GUI, CLI, service, and provider projections independently determine the same
+      lifecycle or result facts, they can disagree about the underlying operation.
+    confidence: 0.97
+  - id: M-P3
+    statement: >
+      Operators need both high-level workflows and enough truthful detail to diagnose why a
+      match, provider, or component is unavailable.
+    confidence: 0.97
+  - id: M-P4
+    statement: >
+      Arbitrary engines and providers remain useful only if registration, options, resources,
+      and status are represented through neutral public contracts.
+    confidence: 0.98
+
+  - id: M-P5
+    statement: >
+      Controlled competition requires material comparison conditions such as color, opening,
+      time control, effective engine options, identities, and schedule randomization/seed to
+      be paired, balanced, fixed, or recorded so results remain interpretable.
+    confidence: 0.995
+  - id: M-P6
+    statement: >
+      Operator-selected engine, model, asset, timing, and competition configuration is part of
+      the requested experiment; discovery and defaults do not have authority to silently
+      replace explicit user intent.
+    confidence: 0.995
+  - id: M-P7
+    statement: >
+      Optional providers such as Book Forge, Evidence Service, and Lichess supply distinct
+      capabilities; their absence does not by itself establish failure of unrelated local
+      engine, match, or tournament operations.
+    confidence: 0.99
+  - id: M-P8
+    statement: >
+      UI and CLI state are projections of backend-owned lifecycle and evidence authority;
+      client convenience state cannot create a new resource, result, readiness, or success
+      fact.
+    confidence: 0.995
+
+premise_metadata:
+  M-P1: {kind: structural}
+  M-P2: {kind: empirical_regular}
+  M-P3: {kind: empirical_regular}
+  M-P4: {kind: structural}
+  M-P5: {kind: structural}
+  M-P6: {kind: structural}
+  M-P7: {kind: structural}
+  M-P8: {kind: structural}
+
+implicit_assertions:
+  - id: M-A1
+    statement: >
+      Hiding a failure behind a simplified success-shaped UI harms usability because it causes
+      incorrect operator decisions.
+    derived_from: [G-O2, M-P3]
+    confidence: 0.99
+  - id: M-A2
+    statement: >
+      Provider-specific semantics implemented inside Manager create duplicated authority and
+      increase the probability of cross-component desynchronization.
+    derived_from: [M-P1, G-P4]
+    confidence: 0.98
+  - id: M-A3
+    statement: >
+      Engine comparison is more useful when engines can be registered and substituted without
+      Manager code knowing their internal model/search implementation.
+    derived_from: [G-P5, M-P4]
+    confidence: 0.97
+  - id: M-A4
+    statement: >
+      Removing confirmation from destructive, credential-bearing, or externally visible
+      actions can reduce clicks while increasing unintended consequential operations.
+    derived_from: [G-O2, G-T14]
+    confidence: 0.98
+
+  - id: M-A5
+    statement: >
+      An unpaired or materially unbalanced schedule can make color/opening/order effects look
+      like engine strength differences.
+    derived_from: [M-P5, G-P17]
+    confidence: 0.995
+  - id: M-A6
+    statement: >
+      Auto-detection or discovery of an engine, book, tablebase, timing artifact, or service
+      proves only that a candidate was found; it does not prove compatibility, qualification,
+      trust, or operator selection.
+    derived_from: [M-P6, G-P21]
+    confidence: 0.995
+  - id: M-A7
+    statement: >
+      Hiding experimental controls to simplify the planner can silently change the experiment
+      rather than merely improve presentation.
+    derived_from: [M-P5, M-P6, G-P21]
+    confidence: 0.98
+  - id: M-A8
+    statement: >
+      An unavailable optional provider should degrade its own capability and guidance rather
+      than make unrelated local competition appear unhealthy or unusable.
+    derived_from: [M-P7, G-O2]
+    confidence: 0.99
+  - id: M-A9
+    statement: >
+      Front-end optimism, cached state, or display convenience cannot establish that a
+      lifecycle mutation, match result, or provider operation actually completed.
+    derived_from: [M-P8]
+    confidence: 0.995
+
+assertion_metadata:
+  M-A1: {inference: structural, boundary: "A simple UI may summarize healthy state; it must not fabricate or suppress material failure meaning."}
+  M-A2: {inference: conditional, boundary: "Manager can own orchestration semantics and typed adapters without owning provider domain semantics."}
+  M-A3: {inference: conditional, boundary: "Substitutability does not require every engine/provider to expose identical optional capabilities."}
+  M-A4: {inference: structural, boundary: "Routine low-risk actions need not receive the same confirmation burden as destructive, credential-bearing, or externally consequential actions."}
+  M-A5: {inference: structural, boundary: "Unpaired designs can be valid when the statistical design explicitly models the asymmetry and claims only what it supports."}
+  M-A6: {inference: structural, boundary: "Discovery remains useful as a candidate-finding operation despite lacking selection/qualification authority."}
+  M-A7: {inference: conditional, boundary: "Controls may be hidden when genuinely irrelevant to the chosen experiment and their omission cannot alter semantics."}
+  M-A8: {inference: structural, boundary: "A provider can be required for workflows that explicitly depend on it; unrelated workflows should retain their own health meaning."}
+  M-A9: {inference: structural, boundary: "Client-side anticipation may improve responsiveness but cannot become final authority."}
+
+implementation_targets:
+  - id: M-T1
+    name: make_conforming_engine_admission_practical_and_exact
+    statement: >
+      Let operators admit and identify conforming engines with their effective behavior-changing
+      configuration accurately enough for fair use in Arena experiments.
+    supports: [M-O1, M-O2]
+  - id: M-T2
+    name: make_controlled_competition_practical_and_reproducible
+    statement: >
+      Let operators define, execute, pause/resume, and inspect matches/tournaments whose
+      material comparison conditions are explicit and reproducible.
+    supports: [M-O2, G-T2]
+  - id: M-T3
+    name: maintain_one_authoritative_operator_visible_control_state
+    statement: >
+      Keep lifecycle, resource, configuration, and command outcomes coherent across service,
+      CLI, desktop, and web projections.
+    supports: [M-O1, G-T6]
+  - id: M-T4
+    name: interoperate_with_independent_components_without_absorbing_their_semantics
+    statement: >
+      Control and observe external providers/components through bounded public capabilities
+      while leaving their domain state and validation rules with their owners.
+    supports: [M-O1, G-T5]
+  - id: M-T5
+    name: present_truthful_actionable_system_state
+    statement: >
+      Show health, readiness, history, evidence authority, lifecycle, and failures clearly
+      enough for the operator to understand what is true and what action is available.
+    supports: [M-O1, G-T9]
+  - id: M-T6
+    name: minimize_routine_operator_burden
+    statement: >
+      Reduce unnecessary steps, duplicate configuration, and prerequisite hunting in common
+      workflows without hiding material experiment semantics or authority.
+    supports: [M-O1, G-T7]
+  - id: M-T7
+    name: preserve_explicit_operator_authority_for_consequential_actions
+    statement: >
+      Require clear operator intent for destructive, credential-bearing, externally visible,
+      rated, or otherwise consequential actions.
+    supports: [G-T14]
+  - id: M-T8
+    name: keep_operator_interaction_responsive
+    statement: >
+      Keep local control and observation responsive enough that the UI/control plane does not
+      become a practical obstacle to using the proving ground.
+    supports: [M-O1]
+  - id: M-T9
+    name: preserve_evidence_and_artifact_meaning_in_operator_projections
+    statement: >
+      Project evidence, knowledge, qualification, and artifact identities without upgrading,
+      flattening, or inventing their authority.
+    supports: [M-O2, G-T4]
+  - id: M-T10
+    name: support_conforming_engine_and_provider_substitution
+    statement: >
+      Allow independent conforming engines/providers to participate without product-name
+      dispatch or Manager knowledge of their private implementations.
+    supports: [M-O2, G-T5]
+
+target_semantics:
+  status: problem_characterized
+  solution_selected_by_reasoning_graph: false
+
+causal_relations:
+  - {id: M-C1, cause: M-T1, effect: M-T2, relation: enabler, confidence: 0.97}
+  - {id: M-C2, cause: M-T3, effect: M-T5, relation: necessary_condition_for_truthful_projection, confidence: 0.98}
+  - {id: M-C3, cause: M-T4, effect: M-T10, relation: enabler, confidence: 0.96}
+  - {id: M-C4, cause: M-T5, effect: M-T6, relation: enabler, confidence: 0.91}
+  - {id: M-C5, cause: M-T9, effect: M-T2, relation: evidence_interpretability_enabler, confidence: 0.90}
+
+target_derivations:
+  M-T1: [M-O1, M-O2, M-P4, M-P6]
+  M-T2: [M-O2, M-P5, M-P6, G-P17, G-P26]
+  M-T3: [M-O1, M-P1, M-P2, M-P8, G-P23]
+  M-T4: [M-O1, M-O2, M-P1, M-P4, G-P23]
+  M-T5: [M-O1, M-P3, M-P8, G-P20]
+  M-T6: [M-O1, M-P3, M-P6, M-P7]
+  M-T7: [M-O1, M-P6, G-P21]
+  M-T8: [M-O1, M-P3]
+  M-T9: [M-O2, M-P1, G-P4, G-P6]
+  M-T10: [M-O2, M-P4, G-P5]
+
+assertion_relevance:
+  M-A1: [M-T5, M-T6]
+  M-A2: [M-T3, M-T4, M-T10]
+  M-A3: [M-T1, M-T2, M-T10]
+  M-A4: [M-T6, M-T7]
+  M-A5: [M-T2, M-T9]
+  M-A6: [M-T1, M-T4, M-T6, M-T9]
+  M-A7: [M-T2, M-T6]
+  M-A8: [M-T4, M-T5, M-T6]
+  M-A9: [M-T3, M-T5, M-T8]
+
+dominance_relations:
+  - {id: M-D1, stronger: M-T3, weaker: M-T6, context: convenience_would_create_second_state_authority, strength: strict_necessary_condition, basis: [M-P2, M-P8, M-A9], confidence: 0.98, consequence: major}
+  - {id: M-D2, stronger: M-T7, weaker: M-T6, context: convenience_would_hide_consequential_external_or_destructive_action, strength: strict_necessary_condition, basis: [M-P6, M-A4], confidence: 0.995, consequence: critical}
+  - {id: M-D3, stronger: M-T4, weaker: M-T6, context: shortcut_requires_private_provider_storage_or_semantics, strength: strong_conditional, basis: [M-P1, M-P4, M-A2], confidence: 0.99, consequence: major}
+  - {id: M-D4, stronger: M-T5, weaker: M-T6, context: simplified_ui_would_misstate_failure_or_readiness, strength: strong_conditional, basis: [M-P3, M-P8, M-A1], confidence: 0.97, consequence: major}
+
+importance_relations:
+  - {id: M-I1, more_important: M-T6, less_important: M-T5, context: routine_healthy_workflow_after_truthful_state_is_available, confidence: 0.83}
+  - {id: M-I2, more_important: M-T5, less_important: M-T8, context: active_failure_diagnosis, confidence: 0.94}
+  - {id: M-I3, more_important: M-T2, less_important: M-T9, context: core_controlled_competition_workflow, confidence: 0.88}
+
+exports:
+  - id: M-X1
+    statement: typed operator intent and selected competition configuration
+    supports_global: [G-T2, G-T7]
+  - id: M-X2
+    statement: bounded truthful suite/provider/engine status projection
+    supports_global: [G-T7, G-T9]
